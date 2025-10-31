@@ -1,0 +1,13 @@
+{
+  "task_id": "test-task-001",
+  "skill": "analyze_pr",
+  "parameters": {
+    "pr_url": "https://github.com/SamuelOshin/XlideLand-RealEstate/pull/13",
+    "focus_areas": ["security", "performance", "best_practices"]
+  },
+  "context": [],
+  "message": {
+    "role": "user",
+    "content": "Please analyze this pull request for security and performance issues"
+  }
+}

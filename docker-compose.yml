@@ -1,0 +1,77 @@
+# docker-compose.yml
+
+version: '3.8'
+
+services:
+  # ============================================================================
+  # Code Review Agent Service
+  # ============================================================================
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: code_review_agent
+    ports:
+      - "8000:8000"
+    environment:
+      # Environment (set to production in Docker)
+      - ENVIRONMENT=production
+      - LOG_LEVEL=INFO
+      
+      # GitHub Configuration (set via .env file)
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET:-}
+      
+      # LLM Configuration (Gemini as default)
+      - LLM_PROVIDER=${LLM_PROVIDER:-google}
+      - LLM_MODEL=${LLM_MODEL:-gemini-1.5-flash}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      
+      # Telex Configuration
+      - TELEX_URL=${TELEX_URL:-}
+      - TELEX_API_KEY=${TELEX_API_KEY:-}
+    volumes:
+      # Mount config directory for agent card and prompts
+      - ./config:/app/config:ro
+      # Optional: Mount logs directory
+      - ./logs:/app/logs
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - code_review_network
+
+networks:
+  code_review_network:
+    driver: bridge
+
+# ============================================================================
+# Usage Instructions
+# ============================================================================
+# 
+# 1. Create .env file with required variables:
+#    cp .env.example .env
+#    # Edit .env with your actual credentials
+#
+# 2. Build and run:
+#    docker-compose up --build
+#
+# 3. Run in background:
+#    docker-compose up -d
+#
+# 4. View logs:
+#    docker-compose logs -f app
+#
+# 5. Stop:
+#    docker-compose down
+#
+# 6. Run tests in container:
+#    docker-compose run --rm app pytest -v
+#
+# ============================================================================

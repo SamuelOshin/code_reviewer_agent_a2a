@@ -1,0 +1,10 @@
+{
+  "jsonrpc": "2.0",
+  "method": "analyze_pr",
+  "params": {
+    "pr_url": "https://github.com/SamuelOshin/XlideLand-RealEstate/pull/13",
+    "send_to_telex": false,
+    "focus_areas": ["security", "performance"]
+  },
+  "id": 1
+}

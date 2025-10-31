@@ -1,0 +1,155 @@
+{
+  "id": "code-review-agent",
+  "name": "Code Review Agent",
+  "version": "1.0.0",
+  "description": "AI-powered code review agent that analyzes GitHub Pull Requests for security vulnerabilities, performance issues, and best practices.",
+  "author": "SamuelOshin",
+  "homepage": "https://github.com/SamuelOshin/code_reviewer_agent_a2a",
+  "repository": "https://github.com/SamuelOshin/code_reviewer_agent_a2a",
+  "license": "MIT",
+  "tags": ["code-review", "security", "performance", "github", "ai-agent"],
+  
+  "endpoints": {
+    "tasks": "/a2a/tasks",
+    "status": "/health",
+    "agent": "/.well-known/agent.json"
+  },
+  
+  "protocol": {
+    "version": "1.0",
+    "type": "a2a"
+  },
+  
+  "capabilities": {
+    "skills": [
+      {
+        "id": "analyze_pr",
+        "name": "Analyze Pull Request",
+        "description": "Performs comprehensive code review of GitHub Pull Requests with AI-powered analysis",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "pr_url": {
+              "type": "string",
+              "format": "uri",
+              "description": "GitHub PR URL (e.g., https://github.com/owner/repo/pull/123)",
+              "example": "https://github.com/facebook/react/pull/12345"
+            },
+            "focus_areas": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": ["security", "performance", "best_practices"]
+              },
+              "description": "Areas to focus the analysis on",
+              "default": ["security", "performance", "best_practices"]
+            }
+          },
+          "required": ["pr_url"]
+        },
+        "output_schema": {
+          "type": "object",
+          "properties": {
+            "risk_level": {
+              "type": "string",
+              "enum": ["CRITICAL", "HIGH", "MEDIUM", "LOW", "MINIMAL"]
+            },
+            "approval_recommendation": {
+              "type": "string",
+              "enum": ["APPROVE", "APPROVE_WITH_SUGGESTIONS", "REQUEST_CHANGES", "REJECT"]
+            },
+            "security_issues": {
+              "type": "integer"
+            },
+            "performance_issues": {
+              "type": "integer"
+            },
+            "best_practice_issues": {
+              "type": "integer"
+            },
+            "executive_summary": {
+              "type": "string"
+            }
+          }
+        },
+        "examples": [
+          {
+            "input": {
+              "pr_url": "https://github.com/microsoft/vscode/pull/12345",
+              "focus_areas": ["security", "performance"]
+            },
+            "output": {
+              "risk_level": "MEDIUM",
+              "approval_recommendation": "APPROVE_WITH_SUGGESTIONS",
+              "security_issues": 2,
+              "performance_issues": 5,
+              "executive_summary": "PR introduces new features with minor security and performance concerns..."
+            }
+          }
+        ]
+      }
+    ],
+    
+    "modalities": ["text"],
+    "artifact_types": ["markdown", "json"],
+    "streaming": false,
+    "async": true
+  },
+  
+  "features": {
+    "security_analysis": {
+      "enabled": true,
+      "checks": [
+        "SQL Injection",
+        "XSS Vulnerabilities",
+        "Hardcoded Secrets",
+        "Command Injection",
+        "Path Traversal",
+        "Weak Cryptography"
+      ]
+    },
+    "performance_analysis": {
+      "enabled": true,
+      "checks": [
+        "N+1 Queries",
+        "Inefficient Loops",
+        "Blocking I/O",
+        "Memory Leaks",
+        "Database Optimization"
+      ]
+    },
+    "llm_powered": {
+      "enabled": true,
+      "providers": ["google-gemini", "openai", "anthropic"],
+      "default": "google-gemini",
+      "model": "gemini-2.0-flash-lite"
+    }
+  },
+  
+  "integrations": [
+    {
+      "name": "GitHub",
+      "type": "source",
+      "description": "Fetches PR data, diffs, and file contents from GitHub"
+    },
+    {
+      "name": "Telex",
+      "type": "communication",
+      "description": "Sends analysis results via A2A protocol"
+    }
+  ],
+  
+  "authentication": {
+    "type": "none",
+    "note": "Agent uses configured GitHub token internally"
+  },
+  
+  "metadata": {
+    "created_at": "2025-10-30T00:00:00Z",
+    "updated_at": "2025-10-31T00:00:00Z",
+    "environment": "production",
+    "health_check": "/health",
+    "documentation": "https://github.com/SamuelOshin/code_reviewer_agent_a2a/blob/main/README.md",
+    "support": "https://github.com/SamuelOshin/code_reviewer_agent_a2a/issues"
+  }
+}

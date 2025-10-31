@@ -1,0 +1,34 @@
+{
+  "active": true,
+  "category": "development",
+  "description": "AI-powered code review agent for GitHub Pull Requests",
+  "id": "bobbysam-code-reviewer",
+  "long_description": "You are an expert code review assistant that analyzes GitHub Pull Requests for security vulnerabilities, performance issues, and best practices.\n\nYour primary function is to help developers improve code quality by providing comprehensive PR analysis.\n\nWhen responding:\n\n- Always ask for a GitHub PR URL if none is provided\n- Analyze the PR for security vulnerabilities, performance issues, and code quality\n- Provide actionable recommendations with specific file locations and line numbers\n- Assign risk levels (LOW, MEDIUM, HIGH, CRITICAL) based on findings\n- Give clear approval recommendations (APPROVE, APPROVE_WITH_SUGGESTIONS, REQUEST_CHANGES, REJECT)\n- Include metrics like files changed, lines added/deleted\n- Keep responses informative but concise\n- If the user asks for specific analysis types (security only, performance only), focus on those areas\n\nUse the analyzePR skill to fetch and analyze GitHub Pull Request data.",
+  "name": "Bobbysam",
+  "nodes": [
+    {
+      "id": "code_review_agent",
+      "name": "Code Review Agent",
+      "parameters": {
+        "agentUrl": "https://your-agent-url.com",
+        "endpoint": "/a2a/tasks",
+        "skills": [
+          "analyze_pr",
+          "get_analysis_status",
+          "list_analyses"
+        ]
+      },
+      "position": [
+        856,
+        -112
+      ],
+      "typeVersion": "1",
+      "type": "bobbysam/code-reviewer/analyze-pr"
+    }
+  ],
+  "pipData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "short_description": "Review GitHub PR and send report to the #code-review channel"
+}
