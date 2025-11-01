@@ -48,7 +48,7 @@ async def health_check() -> Dict[str, Any]:
     else:
         health_status["checks"]["llm"] = f"ok - {settings.LLM_PROVIDER}"
     
-    if not settings.TELEX_URL:
+    if not settings.TELEX_WEBHOOK_URL:
         health_status["checks"]["telex"] = "warning - not configured"
     else:
         health_status["checks"]["telex"] = "ok"

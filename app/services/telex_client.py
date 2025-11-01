@@ -40,8 +40,8 @@ class TelexClient:
             base_url = "https://ping.staging.telex.im"
             self.webhook_url = f"{base_url}/a2a/webhooks/{settings.TELEX_WEBHOOK_HOOK_ID}"
         else:
-            # Fallback to old TELEX_URL
-            self.webhook_url = settings.TELEX_URL
+            # Fallback to old TELEX_WEBHOOK_URL
+            self.webhook_url = settings.TELEX_WEBHOOK_URL
             
         self.timeout = 30.0  # 30 second timeout
         self.max_retries = 3

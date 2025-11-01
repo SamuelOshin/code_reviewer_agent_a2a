@@ -56,7 +56,7 @@ async def lifespan(app: FastAPI):
     logger.info(f"Environment: {settings.ENVIRONMENT}")
     logger.info(f"LLM Provider: {settings.LLM_PROVIDER} ({settings.LLM_MODEL})")
     logger.info(f"GitHub Token: {'✓ Configured' if settings.GITHUB_TOKEN else '✗ Not configured'}")
-    logger.info(f"Telex URL: {settings.TELEX_URL or 'Not configured'}")
+    logger.info(f"Telex URL: {settings.TELEX_WEBHOOK_URL or 'Not configured'}")
     
     # Initialize JSON-RPC handler
     jsonrpc_handler = JSONRPCHandler()
@@ -121,7 +121,7 @@ async def handle_analyze_pr(pr_url: str, send_to_telex: bool = True, focus_areas
     
     # Send to Telex if requested
     telex_sent = False
-    if send_to_telex and settings.TELEX_URL:
+    if send_to_telex and settings.TELEX_WEBHOOK_URL:
         try:
             await telex_client.send_review_summary(result)
             telex_sent = True
