@@ -14,7 +14,7 @@ import json
 import logging
 from pathlib import Path
 from contextlib import asynccontextmanager
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -221,7 +221,7 @@ async def handle_introspect() -> Dict[str, Any]:
     }
 
 
-async def handle_message_send(message: Dict[str, Any]) -> Dict[str, Any]:
+async def handle_message_send(message: Dict[str, Any], configuration: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
     JSON-RPC method: message/send
     
@@ -231,6 +231,7 @@ async def handle_message_send(message: Dict[str, Any]) -> Dict[str, Any]:
     
     Args:
         message: Message object from Telex
+        configuration: Optional configuration from Telex (workflow settings, etc.)
         
     Returns:
         A2A Task response
@@ -238,7 +239,7 @@ async def handle_message_send(message: Dict[str, Any]) -> Dict[str, Any]:
     logger.info(f"RPC: message/send called")
     
     message_handler: MessageHandler = app.state.message_handler
-    result = await message_handler.handle_message_send(message)
+    result = await message_handler.handle_message_send(message, configuration)
     
     return result
 

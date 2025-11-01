@@ -26,7 +26,7 @@ class MessageHandler:
         self.analyzer = CodeAnalyzerService()
         self.formatter = SummaryFormatter()
     
-    async def handle_message_send(self, message: Dict[str, Any]) -> Dict[str, Any]:
+    async def handle_message_send(self, message: Dict[str, Any], configuration: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Handle message/send JSON-RPC method from Telex
         
@@ -50,11 +50,14 @@ class MessageHandler:
         
         Args:
             message: Message object from Telex
+            configuration: Optional configuration from Telex (workflow settings, etc.)
             
         Returns:
             A2A Task response
         """
         logger.info(f"Handling message/send: {message.get('messageId')}")
+        if configuration:
+            logger.info(f"Configuration: {configuration}")
         
         # Parse message
         message_id = message.get("messageId", str(uuid.uuid4()))

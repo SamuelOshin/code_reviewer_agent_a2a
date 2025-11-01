@@ -31,21 +31,42 @@ router = APIRouter(prefix="/a2a", tags=["a2a"])
 
 
 @router.post("/tasks")
-async def handle_a2a_task(task_request: A2ATaskRequest):
+async def handle_a2a_task(request: Request):
     """
     A2A Task Endpoint - Receives task requests from Telex
     
-    This endpoint allows Telex (or other A2A clients) to send task requests
-    to this agent. The agent processes the task and returns an A2A response
-    matching the Telex JSON-RPC 2.0 format.
+    This endpoint accepts both:
+    1. Direct A2ATaskRequest format
+    2. JSON-RPC 2.0 format (with message/send method)
     
     Args:
-        task_request: A2A task request with skill name and parameters
+        request: FastAPI request object
         
     Returns:
         A2A task response in JSON-RPC 2.0 format with task result
     """
-    logger.info(f"Received A2A task: {task_request.task_id} for skill: {task_request.skill}")
+    try:
+        body = await request.json()
+        
+        # Check if it's a JSON-RPC request
+        if body.get("jsonrpc") == "2.0" and body.get("method") == "message/send":
+            logger.info(f"Received JSON-RPC message/send request")
+            
+            # Get handler from app state and forward to message/send handler
+            if hasattr(request.app.state, "jsonrpc_handler"):
+                rpc_handler = request.app.state.jsonrpc_handler
+                result = await rpc_handler.handle_request(body)
+                return JSONResponse(content=result)
+            else:
+                raise HTTPException(status_code=500, detail="RPC handler not configured")
+        
+        # Otherwise treat as direct A2ATaskRequest
+        task_request = A2ATaskRequest.model_validate(body)
+        logger.info(f"Received A2A task: {task_request.task_id} for skill: {task_request.skill}")
+        
+    except Exception as e:
+        logger.error(f"Failed to parse A2A task request: {e}")
+        raise HTTPException(status_code=422, detail=f"Invalid request format: {str(e)}")
     
     # Generate context ID for this conversation
     context_id = str(uuid.uuid4())
