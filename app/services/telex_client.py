@@ -23,17 +23,29 @@ logger = logging.getLogger(__name__)
 class TelexClient:
     """Client for sending code review summaries to Telex via A2A protocol"""
     
-    def __init__(self, telex_url: Optional[str] = None):
+    def __init__(self, webhook_url: Optional[str] = None):
         """
         Initialize Telex client
         
         Args:
-            telex_url: Optional override for Telex URL (defaults to settings)
+            webhook_url: Optional override for Telex webhook URL (defaults to settings)
         """
-        self.telex_url = telex_url or settings.TELEX_URL
+        # Build webhook URL from settings
+        if webhook_url:
+            self.webhook_url = webhook_url
+        elif settings.TELEX_WEBHOOK_URL:
+            self.webhook_url = settings.TELEX_WEBHOOK_URL
+        elif settings.TELEX_WEBHOOK_HOOK_ID:
+            # Build URL from hook ID
+            base_url = "https://ping.staging.telex.im"
+            self.webhook_url = f"{base_url}/a2a/webhooks/{settings.TELEX_WEBHOOK_HOOK_ID}"
+        else:
+            # Fallback to old TELEX_URL
+            self.webhook_url = settings.TELEX_URL
+            
         self.timeout = 30.0  # 30 second timeout
         self.max_retries = 3
-        logger.info(f"TelexClient initialized with URL: {self.telex_url}")
+        logger.info(f"TelexClient initialized with webhook URL: {self.webhook_url}")
     
     async def send_review_summary(
         self,
@@ -194,7 +206,7 @@ class TelexClient:
                 
                 async with httpx.AsyncClient(timeout=self.timeout) as client:
                     response = await client.post(
-                        self.telex_url,
+                        self.webhook_url,
                         json=message.model_dump(mode="json"),
                         headers={
                             "Content-Type": "application/json",
@@ -261,8 +273,10 @@ class TelexClient:
             True if Telex is healthy, False otherwise
         """
         try:
+            # Try pinging Telex base URL
+            base_url = "https://ping.staging.telex.im"
             async with httpx.AsyncClient(timeout=5.0) as client:
-                response = await client.get(f"{self.telex_url}/health")
+                response = await client.get(f"{base_url}/health")
                 return response.status_code == 200
         except Exception as e:
             logger.warning(f"Telex health check failed: {e}")

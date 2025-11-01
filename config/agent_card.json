@@ -125,6 +125,7 @@
   "endpoints": {
     "rpc": "/rpc",
     "a2a_tasks": "/a2a/tasks",
+    "a2a_webhooks": "/a2a/webhooks/{hook_id}",
     "webhooks": "/webhooks/github",
     "health": "/health",
     "agent_card": "/.well-known/agent.json"
@@ -132,7 +133,8 @@
   "protocol": {
     "type": "jsonrpc",
     "version": "2.0",
-    "a2a_support": true
+    "a2a_support": true,
+    "webhook_support": true
   },
   "authentication": {
     "webhook_signature": {

@@ -37,9 +37,8 @@ class Settings(BaseSettings):
     LLM_MAX_TOKENS: int = 4000
     
     # Telex Integration
-    TELEX_URL: str = ""  # Primary Telex endpoint
-    TELEX_WEBHOOK_URL: str = ""  # Webhook URL (deprecated, use TELEX_URL)
-    TELEX_API_KEY: str = ""
+    TELEX_WEBHOOK_URL: str = ""  # Telex webhook endpoint for sending notifications
+    TELEX_WEBHOOK_HOOK_ID: str = ""  # Your hook ID from Telex (used if TELEX_WEBHOOK_URL not set)
     TELEX_CHANNEL: str = "#code-reviews"
     
     # A2A Configuration
