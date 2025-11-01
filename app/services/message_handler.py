@@ -9,6 +9,7 @@ parameters and conversation history from the parts array.
 import logging
 import uuid
 import re
+import httpx
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
 
@@ -88,7 +89,62 @@ class MessageHandler:
                 prompt="Please provide a GitHub Pull Request URL to analyze (e.g., https://github.com/owner/repo/pull/123)"
             )
         
-        # Analyze the PR
+        # Check if blocking or non-blocking
+        is_blocking = configuration.get("blocking", True) if configuration else True
+        push_config = configuration.get("pushNotificationConfig") if configuration else None
+        
+        if not is_blocking and push_config:
+            # Non-blocking mode - return quick acknowledgment and process in background
+            logger.info(f"Non-blocking mode detected, will push results to webhook")
+            
+            # Start background task (don't await)
+            import asyncio
+            asyncio.create_task(
+                self._process_and_push(pr_url, task_id, message_id, message, push_config)
+            )
+            
+            # Return immediate acknowledgment
+            ack_msg = A2AMessage(
+                messageId=str(uuid.uuid4()),
+                role="agent",
+                parts=[
+                    MessagePart(
+                        kind="text",
+                        text=f"🔍 Analyzing PR... I'll send you the results shortly!"
+                    )
+                ],
+                kind="message",
+                taskId=task_id,
+                timestamp=datetime.now(timezone.utc)
+            )
+            
+            task = A2ATask(
+                id=task_id,
+                contextId=message.get("contextId", str(uuid.uuid4())),
+                status=TaskStatus(
+                    state="in_progress",
+                    timestamp=datetime.now(timezone.utc),
+                    message=ack_msg,
+                    progress=0.1
+                ),
+                artifacts=[],
+                history=[ack_msg],
+                kind="task"
+            )
+            
+            return task.dict()
+        
+        # Blocking mode - analyze and return result immediately
+        return await self._analyze_and_return(pr_url, task_id, message_id, message)
+    
+    async def _analyze_and_return(
+        self,
+        pr_url: str,
+        task_id: str,
+        message_id: str,
+        message: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Analyze PR and return result (blocking mode)"""
         try:
             logger.info(f"Analyzing PR: {pr_url}")
             analysis_result = await self.analyzer.analyze_pr(pr_url)
@@ -159,7 +215,10 @@ class MessageHandler:
                 kind="task"
             )
             
-            return task.dict()
+            # Return the task as a dict (JSON-RPC handler will wrap it)
+            result = task.dict()
+            logger.info(f"Returning task result: {result.get('id')}, state: {result['status']['state']}")
+            return result
             
         except Exception as e:
             logger.error(f"Error analyzing PR {pr_url}: {e}", exc_info=True)
@@ -193,6 +252,57 @@ class MessageHandler:
             )
             
             return task.dict()
+    
+    async def _process_and_push(
+        self,
+        pr_url: str,
+        task_id: str,
+        message_id: str,
+        message: Dict[str, Any],
+        push_config: Dict[str, Any]
+    ):
+        """Process PR analysis and push result to Telex webhook (non-blocking mode)"""
+        try:
+            # Analyze PR
+            result = await self._analyze_and_return(pr_url, task_id, message_id, message)
+            
+            # Push to Telex webhook
+            webhook_url = push_config.get("url")
+            token = push_config.get("token")
+            
+            if not webhook_url:
+                logger.error("No webhook URL in pushNotificationConfig")
+                return
+            
+            headers = {
+                "Content-Type": "application/json"
+            }
+            
+            # Add authentication if provided
+            auth_schemes = push_config.get("authentication", {}).get("schemes", [])
+            if "Bearer" in auth_schemes and token:
+                headers["Authorization"] = f"Bearer {token}"
+            
+            # Wrap in JSON-RPC format
+            rpc_response = {
+                "jsonrpc": "2.0",
+                "id": message_id,
+                "result": result
+            }
+            
+            logger.info(f"Pushing result to webhook: {webhook_url}")
+            
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    webhook_url,
+                    json=rpc_response,
+                    headers=headers
+                )
+                response.raise_for_status()
+                logger.info(f"Successfully pushed result to Telex (status: {response.status_code})")
+                
+        except Exception as e:
+            logger.error(f"Error processing and pushing result: {e}", exc_info=True)
     
     def _extract_pr_url(self, interpreted_text: Optional[str], conversation_history: List[Dict[str, Any]]) -> Optional[str]:
         """
