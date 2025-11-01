@@ -97,11 +97,13 @@ class MessageHandler:
             # Non-blocking mode - return quick acknowledgment and process in background
             logger.info(f"Non-blocking mode detected, will push results to webhook")
             
-            # Start background task (don't await)
+            # Start background task with error handling
             import asyncio
-            asyncio.create_task(
-                self._process_and_push(pr_url, task_id, message_id, message, push_config)
+            task = asyncio.create_task(
+                self._process_and_push_safe(pr_url, task_id, message_id, message, push_config)
             )
+            # Add done callback to log any exceptions
+            task.add_done_callback(self._log_task_exception)
             
             # Return immediate acknowledgment
             ack_msg = A2AMessage(
@@ -136,6 +138,88 @@ class MessageHandler:
         
         # Blocking mode - analyze and return result immediately
         return await self._analyze_and_return(pr_url, task_id, message_id, message)
+    
+    def _log_task_exception(self, task):
+        """Log any exceptions from background tasks"""
+        try:
+            task.result()
+        except Exception as e:
+            logger.error(f"Background task failed: {e}", exc_info=True)
+    
+    async def _process_and_push_safe(
+        self,
+        pr_url: str,
+        task_id: str,
+        message_id: str,
+        message: Dict[str, Any],
+        push_config: Dict[str, Any]
+    ):
+        """Wrapper for _process_and_push with comprehensive error handling"""
+        try:
+            logger.info(f"Background task started for PR: {pr_url}")
+            await self._process_and_push(pr_url, task_id, message_id, message, push_config)
+            logger.info(f"Background task completed successfully for PR: {pr_url}")
+        except Exception as e:
+            logger.error(f"Fatal error in background task: {e}", exc_info=True)
+            # Try to send error to Telex webhook
+            try:
+                await self._push_error_to_telex(task_id, message_id, message, push_config, str(e))
+            except Exception as push_error:
+                logger.error(f"Failed to push error to Telex: {push_error}")
+    
+    async def _push_error_to_telex(
+        self,
+        task_id: str,
+        message_id: str,
+        message: Dict[str, Any],
+        push_config: Dict[str, Any],
+        error_message: str
+    ):
+        """Push error result to Telex webhook"""
+        error_msg = A2AMessage(
+            messageId=str(uuid.uuid4()),
+            role="agent",
+            parts=[
+                MessagePart(
+                    kind="text",
+                    text=f"❌ Analysis failed: {error_message}"
+                )
+            ],
+            kind="message",
+            taskId=task_id,
+            timestamp=datetime.now(timezone.utc)
+        )
+        
+        task_obj = A2ATask(
+            id=task_id,
+            contextId=message.get("contextId", str(uuid.uuid4())),
+            status=TaskStatus(
+                state="failed",
+                timestamp=datetime.now(timezone.utc),
+                message=error_msg
+            ),
+            artifacts=[],
+            history=[error_msg],
+            kind="task"
+        )
+        
+        # Push to webhook
+        webhook_url = push_config.get("url")
+        token = push_config.get("token")
+        
+        headers = {"Content-Type": "application/json"}
+        auth_schemes = push_config.get("authentication", {}).get("schemes", [])
+        if "Bearer" in auth_schemes and token:
+            headers["Authorization"] = f"Bearer {token}"
+        
+        rpc_response = {
+            "jsonrpc": "2.0",
+            "id": message_id,
+            "result": task_obj.dict()
+        }
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            await client.post(webhook_url, json=rpc_response, headers=headers)
     
     async def _analyze_and_return(
         self,
