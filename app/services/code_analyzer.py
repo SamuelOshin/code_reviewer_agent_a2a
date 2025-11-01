@@ -65,15 +65,22 @@ class CodeAnalyzerService:
             logger.info(f"Starting analysis for PR: {pr_url}")
             
             # Step 1: Fetch PR data from GitHub
+            logger.info("Step 1: Fetching PR data from GitHub...")
             pr_data, diff_content, files = await self._fetch_pr_data(pr_url)
+            logger.info(f"PR data fetched successfully: PR#{pr_data.number}")
             
             # Step 2: Parse diff content
+            logger.info("Step 2: Parsing diff content...")
             parsed_diffs = DiffParser.parse(diff_content)
+            logger.info(f"Parsed {len(parsed_diffs)} file diffs")
             
             # Step 3: Prepare file changes for analysis
+            logger.info("Step 3: Preparing file changes...")
             file_changes = self._prepare_file_changes(parsed_diffs)
+            logger.info(f"Prepared {len(file_changes)} file changes")
             
             # Step 4: Run rule-based checks (fast, synchronous)
+            logger.info("Step 4: Running rule-based checks...")
             rule_security_issues = SecurityChecker.check(file_changes)
             rule_performance_issues = PerformanceChecker.check(file_changes)
             

@@ -157,15 +157,20 @@ class MessageHandler:
         """Wrapper for _process_and_push with comprehensive error handling"""
         try:
             logger.info(f"Background task started for PR: {pr_url}")
+            logger.info(f"Task details - ID: {task_id}, Message: {message_id}")
+            logger.info(f"Push config available: {bool(push_config)}")
+            
             await self._process_and_push(pr_url, task_id, message_id, message, push_config)
             logger.info(f"Background task completed successfully for PR: {pr_url}")
         except Exception as e:
             logger.error(f"Fatal error in background task: {e}", exc_info=True)
+            logger.error(f"Error type: {type(e).__name__}")
+            logger.error(f"Error occurred at PR: {pr_url}")
             # Try to send error to Telex webhook
             try:
                 await self._push_error_to_telex(task_id, message_id, message, push_config, str(e))
             except Exception as push_error:
-                logger.error(f"Failed to push error to Telex: {push_error}")
+                logger.error(f"Failed to push error to Telex: {push_error}", exc_info=True)
     
     async def _push_error_to_telex(
         self,
@@ -231,10 +236,15 @@ class MessageHandler:
         """Analyze PR and return result (blocking mode)"""
         try:
             logger.info(f"Analyzing PR: {pr_url}")
+            logger.info("About to call analyzer.analyze_pr...")
+            
             analysis_result = await self.analyzer.analyze_pr(pr_url)
+            logger.info(f"Analysis completed successfully, PR#{analysis_result.pr_number}")
             
             # Format summary
+            logger.info("Formatting summary for Telex...")
             summary_text = self.formatter.format_for_telex(analysis_result)
+            logger.info(f"Summary formatted, length: {len(summary_text)} chars")
             
             # Create response message
             response_msg = A2AMessage(
@@ -384,23 +394,47 @@ class MessageHandler:
             if "Bearer" in auth_schemes and token:
                 headers["Authorization"] = f"Bearer {token}"
             
-            # Wrap in JSON-RPC format
-            rpc_response = {
+            # Telex webhook expects a message/send JSON-RPC request (not result)
+            # This sends the completed task back to Telex
+            rpc_request = {
                 "jsonrpc": "2.0",
-                "id": message_id,
-                "result": result_serialized
+                "method": "message/send",
+                "params": {
+                    "message": {
+                        "messageId": result_serialized["status"]["message"]["messageId"],
+                        "role": "agent",
+                        "parts": result_serialized["status"]["message"]["parts"],
+                        "kind": "message",
+                        "taskId": result_serialized["id"],
+                        "timestamp": result_serialized["status"]["timestamp"]
+                    }
+                },
+                "id": message_id
             }
             
             logger.info(f"Pushing result to webhook: {webhook_url}")
             
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(
-                    webhook_url,
-                    json=rpc_response,
-                    headers=headers
-                )
-                response.raise_for_status()
-                logger.info(f"Successfully pushed result to Telex (status: {response.status_code})")
+            # Use longer timeout for Telex webhook (they can be slow)
+            # Connect: 10s, Read: 60s (Telex processing time)
+            timeout = httpx.Timeout(10.0, read=60.0)
+            
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                try:
+                    response = await client.post(
+                        webhook_url,
+                        json=rpc_request,
+                        headers=headers
+                    )
+                    response.raise_for_status()
+                    logger.info(f"Successfully pushed result to Telex (status: {response.status_code})")
+                except httpx.TimeoutException as timeout_err:
+                    logger.warning(f"Webhook push timed out after 60s: {timeout_err}")
+                    logger.info("Result was prepared successfully but Telex webhook didn't respond in time")
+                    # Don't raise - analysis was successful, webhook timeout is not critical
+                except httpx.HTTPStatusError as http_err:
+                    logger.error(f"Webhook returned error status: {http_err.response.status_code}")
+                    logger.error(f"Response body: {http_err.response.text}")
+                    raise
                 
         except Exception as e:
             logger.error(f"Error processing and pushing result: {e}", exc_info=True)
