@@ -9,6 +9,8 @@ Uses async context manager pattern for proper resource management.
 from typing import Optional, List, Dict, Any
 import re
 import base64
+import asyncio
+from functools import partial
 from github import Github, GithubException
 from app.core.config import settings
 from app.core.exceptions import GitHubMCPError
@@ -28,16 +30,24 @@ class GitHubMCPService:
     async def __aenter__(self):
         """Context manager entry - initializes GitHub client"""
         try:
+            logger.info("Creating GitHub client with token...")
+            logger.info(f"Token present: {bool(self.token)}, Length: {len(self.token) if self.token else 0}")
+            
             self._client = Github(self.token)
-            # Test the connection
-            user = self._client.get_user()
-            logger.info(f"GitHub API client initialized successfully (user: {user.login})")
+            logger.info("GitHub client object created, testing connection...")
+            
+            # Test the connection - run blocking call in thread pool
+            loop = asyncio.get_event_loop()
+            user = await loop.run_in_executor(None, self._client.get_user)
+            login = await loop.run_in_executor(None, lambda: user.login)
+            
+            logger.info(f"GitHub API client initialized successfully (user: {login})")
             return self
         except GithubException as e:
-            logger.error(f"Failed to initialize GitHub client: {e}")
+            logger.error(f"GitHub API error: {e.status}, {e.data}")
             raise GitHubMCPError(f"GitHub API initialization failed: {str(e)}")
         except Exception as e:
-            logger.error(f"Failed to initialize GitHub client: {e}")
+            logger.error(f"Failed to initialize GitHub client: {type(e).__name__}: {e}", exc_info=True)
             raise GitHubMCPError(f"GitHub API initialization failed: {str(e)}")
     
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -71,6 +81,22 @@ class GitHubMCPService:
         owner, repo, pr_number = match.groups()
         return owner, repo, int(pr_number)
     
+    async def _run_sync(self, func, *args, **kwargs):
+        """
+        Run a synchronous function in a thread pool to avoid blocking the event loop
+        
+        Args:
+            func: Synchronous function to run
+            *args, **kwargs: Arguments to pass to the function
+        
+        Returns:
+            Result of the function
+        """
+        loop = asyncio.get_event_loop()
+        if args or kwargs:
+            return await loop.run_in_executor(None, partial(func, *args, **kwargs))
+        return await loop.run_in_executor(None, func)
+    
     async def get_pull_request(
         self, 
         owner: str, 
@@ -96,54 +122,61 @@ class GitHubMCPService:
         
         try:
             logger.info(f"Fetching PR {owner}/{repo}#{pr_number}")
-            repository = self._client.get_repo(f"{owner}/{repo}")
-            pr = repository.get_pull(pr_number)
+            
+            # Run blocking GitHub API calls in thread pool
+            repository = await self._run_sync(self._client.get_repo, f"{owner}/{repo}")
+            pr = await self._run_sync(repository.get_pull, pr_number)
+            
+            # Access attributes in thread pool too (they might make API calls)
+            def _extract_pr_data():
+                from app.models.github import GitHubUser
+                return {
+                    "id": pr.id,
+                    "number": pr.number,
+                    "title": pr.title,
+                    "body": pr.body or "",
+                    "state": pr.state,
+                    "user": GitHubUser(
+                        login=pr.user.login,
+                        id=pr.user.id,
+                        avatar_url=pr.user.avatar_url,
+                        html_url=pr.user.html_url,
+                        type=pr.user.type,
+                        site_admin=pr.user.site_admin
+                    ),
+                    "created_at": pr.created_at,
+                    "updated_at": pr.updated_at,
+                    "merged_at": pr.merged_at,
+                    "closed_at": pr.closed_at,
+                    "html_url": pr.html_url,
+                    "diff_url": pr.diff_url,
+                    "patch_url": pr.patch_url,
+                    "head": {
+                        "ref": pr.head.ref,
+                        "sha": pr.head.sha,
+                        "label": pr.head.label,
+                        "repo": pr.head.repo.full_name if pr.head.repo else None
+                    },
+                    "base": {
+                        "ref": pr.base.ref,
+                        "sha": pr.base.sha,
+                        "label": pr.base.label,
+                        "repo": pr.base.repo.full_name if pr.base.repo else None
+                    },
+                    "additions": pr.additions,
+                    "deletions": pr.deletions,
+                    "changed_files": pr.changed_files,
+                    "commits": pr.commits,
+                    "mergeable": pr.mergeable,
+                    "mergeable_state": pr.mergeable_state,
+                    "merged": pr.merged,
+                    "draft": pr.draft
+                }
+            
+            pr_data = await self._run_sync(_extract_pr_data)
             
             # Convert PyGithub PR to our PullRequest model
-            from app.models.github import GitHubUser
-            
-            return PullRequest(
-                id=pr.id,
-                number=pr.number,
-                title=pr.title,
-                body=pr.body or "",
-                state=pr.state,
-                user=GitHubUser(
-                    login=pr.user.login,
-                    id=pr.user.id,
-                    avatar_url=pr.user.avatar_url,
-                    html_url=pr.user.html_url,
-                    type=pr.user.type,
-                    site_admin=pr.user.site_admin
-                ),
-                created_at=pr.created_at,
-                updated_at=pr.updated_at,
-                merged_at=pr.merged_at,
-                closed_at=pr.closed_at,
-                html_url=pr.html_url,
-                diff_url=pr.diff_url,
-                patch_url=pr.patch_url,
-                head={
-                    "ref": pr.head.ref,
-                    "sha": pr.head.sha,
-                    "label": pr.head.label,
-                    "repo": pr.head.repo.full_name if pr.head.repo else None
-                },
-                base={
-                    "ref": pr.base.ref,
-                    "sha": pr.base.sha,
-                    "label": pr.base.label,
-                    "repo": pr.base.repo.full_name if pr.base.repo else None
-                },
-                additions=pr.additions,
-                deletions=pr.deletions,
-                changed_files=pr.changed_files,
-                commits=pr.commits,
-                mergeable=pr.mergeable,
-                mergeable_state=pr.mergeable_state,
-                merged=pr.merged,
-                draft=pr.draft
-            )
+            return PullRequest(**pr_data)
         except GithubException as e:
             logger.error(f"Failed to fetch PR {owner}/{repo}#{pr_number}: {e}")
             raise GitHubMCPError(f"Failed to fetch PR: {str(e)}")
@@ -173,11 +206,13 @@ class GitHubMCPService:
         
         try:
             logger.info(f"Fetching diff for PR {owner}/{repo}#{pr_number}")
-            repository = self._client.get_repo(f"{owner}/{repo}")
-            pr = repository.get_pull(pr_number)
+            
+            # Run blocking calls in thread pool
+            repository = await self._run_sync(self._client.get_repo, f"{owner}/{repo}")
+            pr = await self._run_sync(repository.get_pull, pr_number)
             
             # Get diff by fetching files and aggregating patches
-            files = pr.get_files()
+            files = await self._run_sync(lambda: list(pr.get_files()))
             diff_parts = []
             
             for file in files:
@@ -220,12 +255,15 @@ class GitHubMCPService:
         
         try:
             logger.info(f"Fetching files for PR {owner}/{repo}#{pr_number}")
-            repository = self._client.get_repo(f"{owner}/{repo}")
-            pr = repository.get_pull(pr_number)
+            
+            # Run blocking calls in thread pool
+            repository = await self._run_sync(self._client.get_repo, f"{owner}/{repo}")
+            pr = await self._run_sync(repository.get_pull, pr_number)
+            files = await self._run_sync(lambda: list(pr.get_files()))
             
             # Convert PyGithub files to our PullRequestFile models
             pr_files = []
-            for file in pr.get_files():
+            for file in files:
                 pr_files.append(PullRequestFile(
                     filename=file.filename,
                     status=file.status,

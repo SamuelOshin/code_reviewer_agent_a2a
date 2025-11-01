@@ -190,14 +190,23 @@ class CodeAnalyzerService:
         Returns:
             Tuple of (PullRequest, diff_content, files)
         """
-        async with GitHubMCPService() as github_service:
-            # Parse PR URL to extract owner, repo, and PR number
-            owner, repo, pr_number = github_service.parse_pr_url(pr_url)
-            
-            # Fetch PR and diff data
-            pr, pr_diff = await github_service.get_pr_with_diff(owner, repo, pr_number)
-            
-            return pr, pr_diff.raw_diff, pr_diff.files
+        try:
+            logger.info("Entering GitHubMCPService context manager...")
+            async with GitHubMCPService() as github_service:
+                logger.info("GitHubMCPService initialized, parsing PR URL...")
+                # Parse PR URL to extract owner, repo, and PR number
+                owner, repo, pr_number = github_service.parse_pr_url(pr_url)
+                logger.info(f"Parsed URL: {owner}/{repo}#{pr_number}")
+                
+                # Fetch PR and diff data
+                logger.info("Fetching PR and diff data...")
+                pr, pr_diff = await github_service.get_pr_with_diff(owner, repo, pr_number)
+                logger.info(f"Successfully fetched PR and diff data")
+                
+                return pr, pr_diff.raw_diff, pr_diff.files
+        except Exception as e:
+            logger.error(f"Error in _fetch_pr_data: {type(e).__name__}: {e}", exc_info=True)
+            raise
     
     def _prepare_file_changes(self, parsed_diffs: List[FileDiff]) -> List[Dict[str, Any]]:
         """
