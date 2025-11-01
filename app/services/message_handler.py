@@ -348,7 +348,24 @@ class MessageHandler:
         """Process PR analysis and push result to Telex webhook (non-blocking mode)"""
         try:
             # Analyze PR
-            result = await self._analyze_and_return(pr_url, task_id, message_id, message)
+            result_dict = await self._analyze_and_return(pr_url, task_id, message_id, message)
+            
+            # Serialize properly using Pydantic's model serialization
+            # This ensures datetime objects are converted to ISO strings
+            from pydantic import BaseModel
+            
+            # Convert any remaining datetime objects to ISO strings
+            def serialize_datetime(obj):
+                if isinstance(obj, dict):
+                    return {k: serialize_datetime(v) for k, v in obj.items()}
+                elif isinstance(obj, list):
+                    return [serialize_datetime(item) for item in obj]
+                elif isinstance(obj, datetime):
+                    return obj.isoformat()
+                else:
+                    return obj
+            
+            result_serialized = serialize_datetime(result_dict)
             
             # Push to Telex webhook
             webhook_url = push_config.get("url")
@@ -371,7 +388,7 @@ class MessageHandler:
             rpc_response = {
                 "jsonrpc": "2.0",
                 "id": message_id,
-                "result": result
+                "result": result_serialized
             }
             
             logger.info(f"Pushing result to webhook: {webhook_url}")
