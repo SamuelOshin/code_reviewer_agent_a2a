@@ -377,6 +377,10 @@ class MessageHandler:
             
             result_serialized = serialize_datetime(result_dict)
             
+            # Create a lightweight version for webhook (to avoid 413 payload too large)
+            # Only include summary stats, not all findings
+            result_lightweight = self._create_lightweight_result(result_serialized)
+            
             # Push to Telex webhook
             webhook_url = push_config.get("url")
             token = push_config.get("token")
@@ -395,26 +399,27 @@ class MessageHandler:
                 headers["Authorization"] = f"Bearer {token}"
             
             # Telex webhook expects a message/send JSON-RPC request with full task
-            # Include artifacts in the response so Telex can display them
+            # Use lightweight version to avoid HTTP 413 (payload too large)
             rpc_request = {
                 "jsonrpc": "2.0",
                 "method": "message/send",
                 "params": {
                     "message": {
-                        "messageId": result_serialized["status"]["message"]["messageId"],
+                        "messageId": result_lightweight["status"]["message"]["messageId"],
                         "role": "agent",
-                        "parts": result_serialized["status"]["message"]["parts"],
+                        "parts": result_lightweight["status"]["message"]["parts"],
                         "kind": "message",
-                        "taskId": result_serialized["id"],
-                        "timestamp": result_serialized["status"]["timestamp"]
+                        "taskId": result_lightweight["id"],
+                        "timestamp": result_lightweight["status"]["timestamp"]
                     },
-                    # Include the full task with artifacts
-                    "task": result_serialized
+                    # Include lightweight task with summarized artifacts
+                    "task": result_lightweight
                 },
                 "id": message_id
             }
             
-            logger.info(f"Pushing result to webhook: {webhook_url}")
+            logger.info(f"Pushing lightweight result to webhook: {webhook_url}")
+            logger.info(f"Artifact size reduced - including only critical/high severity issues")
             
             # Use longer timeout for Telex webhook (they can be slow)
             # Connect: 10s, Read: 60s (Telex processing time)
@@ -483,6 +488,88 @@ class MessageHandler:
                         return url
         
         return None
+    
+    def _create_lightweight_result(self, full_result: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Create a lightweight version of the result for webhook push
+        to avoid HTTP 413 (payload too large) errors.
+        
+        Only includes:
+        - Message text (summary)
+        - High-level stats (counts, not full findings)
+        - Critical/high severity issues only
+        
+        Args:
+            full_result: Complete analysis result with all findings
+            
+        Returns:
+            Lightweight result suitable for webhook push
+        """
+        lightweight = {
+            "id": full_result["id"],
+            "contextId": full_result["contextId"],
+            "status": full_result["status"],
+            "kind": full_result["kind"],
+            "history": full_result["history"],
+        }
+        
+        # Create a summary artifact with just counts and critical issues
+        if full_result.get("artifacts"):
+            artifact_data = full_result["artifacts"][0]["parts"][0]["data"]
+            
+            # Filter to only high/critical severity issues
+            security_critical = [
+                f for f in artifact_data.get("security_findings", [])
+                if f.get("severity") in ["high", "critical"]
+            ][:10]  # Max 10
+            
+            performance_critical = [
+                f for f in artifact_data.get("performance_findings", [])
+                if f.get("severity") in ["high", "critical"] and f.get("impact") == "HIGH"
+            ][:10]  # Max 10
+            
+            best_practice_critical = [
+                f for f in artifact_data.get("best_practice_findings", [])
+                if f.get("severity") in ["high", "medium"]
+            ][:10]  # Max 10
+            
+            lightweight_artifact = {
+                "artifactId": full_result["artifacts"][0]["artifactId"],
+                "name": full_result["artifacts"][0]["name"],
+                "parts": [{
+                    "kind": "json",
+                    "data": {
+                        "pr_number": artifact_data.get("pr_number"),
+                        "pr_title": artifact_data.get("pr_title"),
+                        "author": artifact_data.get("author"),
+                        "repository": artifact_data.get("repository"),
+                        "executive_summary": artifact_data.get("executive_summary"),
+                        "risk_level": artifact_data.get("risk_level"),
+                        "approval_recommendation": artifact_data.get("approval_recommendation"),
+                        "key_concerns": artifact_data.get("key_concerns", []),
+                        # Summary counts
+                        "stats": {
+                            "security_total": len(artifact_data.get("security_findings", [])),
+                            "performance_total": len(artifact_data.get("performance_findings", [])),
+                            "best_practice_total": len(artifact_data.get("best_practice_findings", [])),
+                            "files_changed": artifact_data.get("files_changed"),
+                            "lines_added": artifact_data.get("lines_added"),
+                            "lines_deleted": artifact_data.get("lines_deleted"),
+                        },
+                        # Only critical/high severity issues (max 10 each)
+                        "security_findings": security_critical,
+                        "performance_findings": performance_critical,
+                        "best_practice_findings": best_practice_critical,
+                    }
+                }],
+                "metadata": full_result["artifacts"][0].get("metadata", {})
+            }
+            
+            lightweight["artifacts"] = [lightweight_artifact]
+        else:
+            lightweight["artifacts"] = []
+        
+        return lightweight
     
     async def _create_input_required_response(
         self,
