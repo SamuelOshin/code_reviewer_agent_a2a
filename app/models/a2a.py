@@ -26,10 +26,11 @@ class TaskState(str, Enum):
 
 class MessagePart(BaseModel):
     """Part of a message - matches Telex A2A structure"""
-    kind: str  # "text", "image", "file"
+    kind: str  # "text", "image", "file", "data"
     text: Optional[str] = None
     file_url: Optional[str] = None
     mime_type: Optional[str] = None
+    data: Optional[List[Dict[str, Any]]] = None  # For conversation history (kind="data")
 
 
 class A2AMessage(BaseModel):

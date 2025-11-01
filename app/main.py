@@ -26,6 +26,7 @@ from app.core.logging import setup_logging
 from app.services.jsonrpc_handler import JSONRPCHandler
 from app.services.code_analyzer import CodeAnalyzerService
 from app.services.telex_client import TelexClient
+from app.services.message_handler import MessageHandler
 from app.schemas.rpc import (
     AnalyzePRRequest,
     AnalyzePRResponse,
@@ -68,6 +69,7 @@ async def lifespan(app: FastAPI):
     app.state.jsonrpc_handler = jsonrpc_handler
     app.state.code_analyzer = CodeAnalyzerService()
     app.state.telex_client = TelexClient()
+    app.state.message_handler = MessageHandler()
     
     logger.info(f"Registered {len(jsonrpc_handler.list_methods())} JSON-RPC methods")
     logger.info("Application startup complete")
@@ -219,6 +221,28 @@ async def handle_introspect() -> Dict[str, Any]:
     }
 
 
+async def handle_message_send(message: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    JSON-RPC method: message/send
+    
+    Handles incoming messages from Telex with the new format:
+    - parts[0]: Text part with system's interpretation/extracted parameters
+    - parts[1]: Data part with last 20 messages from conversation history
+    
+    Args:
+        message: Message object from Telex
+        
+    Returns:
+        A2A Task response
+    """
+    logger.info(f"RPC: message/send called")
+    
+    message_handler: MessageHandler = app.state.message_handler
+    result = await message_handler.handle_message_send(message)
+    
+    return result
+
+
 async def register_rpc_methods(handler: JSONRPCHandler):
     """
     Register all JSON-RPC methods
@@ -231,6 +255,7 @@ async def register_rpc_methods(handler: JSONRPCHandler):
     handler.register_method("list_analyses", handle_list_analyses)
     handler.register_method("get_analysis_details", handle_get_analysis_details)
     handler.register_method("introspect", handle_introspect)
+    handler.register_method("message/send", handle_message_send)  # Telex message handler
 
 
 # ============================================================================
