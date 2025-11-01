@@ -394,8 +394,8 @@ class MessageHandler:
             if "Bearer" in auth_schemes and token:
                 headers["Authorization"] = f"Bearer {token}"
             
-            # Telex webhook expects a message/send JSON-RPC request (not result)
-            # This sends the completed task back to Telex
+            # Telex webhook expects a message/send JSON-RPC request with full task
+            # Include artifacts in the response so Telex can display them
             rpc_request = {
                 "jsonrpc": "2.0",
                 "method": "message/send",
@@ -407,7 +407,9 @@ class MessageHandler:
                         "kind": "message",
                         "taskId": result_serialized["id"],
                         "timestamp": result_serialized["status"]["timestamp"]
-                    }
+                    },
+                    # Include the full task with artifacts
+                    "task": result_serialized
                 },
                 "id": message_id
             }
