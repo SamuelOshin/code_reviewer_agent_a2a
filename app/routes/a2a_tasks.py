@@ -48,9 +48,20 @@ async def handle_a2a_task(request: Request):
     try:
         body = await request.json()
         
+        # Log incoming request from Telex
+        import json
+        logger.info("=" * 80)
+        logger.info("INCOMING REQUEST TO /a2a/tasks FROM TELEX:")
+        logger.info("=" * 80)
+        logger.info(f"Headers: {dict(request.headers)}")
+        logger.info("-" * 80)
+        logger.info("Request Body:")
+        logger.info(json.dumps(body, indent=2))
+        logger.info("=" * 80)
+        
         # Check if it's a JSON-RPC request
         if body.get("jsonrpc") == "2.0" and body.get("method") == "message/send":
-            logger.info(f"Received JSON-RPC message/send request")
+            logger.info(f"✓ Detected JSON-RPC message/send request - forwarding to RPC handler")
             
             # Get handler from app state and forward to message/send handler
             if hasattr(request.app.state, "jsonrpc_handler"):
