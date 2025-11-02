@@ -556,9 +556,16 @@ class MessageHandler:
             # Log the webhook payload being sent
             import json
             logger.info("=" * 80)
-            logger.info("WEBHOOK PAYLOAD BEING SENT TO TELEX:")
+            logger.info("WEBHOOK PAYLOAD START - COPY EVERYTHING BETWEEN THE MARKERS")
             logger.info("=" * 80)
-            logger.info(json.dumps(webhook_payload, indent=2))
+            full_payload_str = json.dumps(webhook_payload, indent=2, ensure_ascii=False)
+            logger.info(f"Payload size: {len(full_payload_str)} characters")
+            logger.info("WEBHOOK_PAYLOAD_JSON_START")
+            # Log the complete JSON in one message for easy copying
+            logger.info(full_payload_str)
+            logger.info("WEBHOOK_PAYLOAD_JSON_END")
+            logger.info("=" * 80)
+            logger.info("WEBHOOK PAYLOAD END - Copy the JSON between START and END markers")
             logger.info("=" * 80)
             
             # Use longer timeout for Telex webhook (they can be slow)
