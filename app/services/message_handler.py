@@ -527,29 +527,25 @@ class MessageHandler:
             # Extract the response message from the task status
             response_message = result_lightweight.get("status", {}).get("message", {})
             
-            # Build JSON-RPC message/send request (as shown in Telex docs)
+            # Build the complete JSON-RPC 2.0 response with task result
+            # This matches the blocking mode response structure
             webhook_payload = {
                 "jsonrpc": "2.0",
                 "id": str(uuid.uuid4()),
-                "method": "message/send",
-                "params": {
-                    "message": {
-                        "kind": "message",
-                        "role": "agent",
-                        "parts": response_message.get("parts", []),
-                        "messageId": response_message.get("messageId"),
-                        "contextId": result_lightweight.get("contextId"),
-                        "taskId": result_lightweight.get("id")
-                    },
-                    "metadata": {
-                        "task": result_lightweight  # Include full task in metadata
-                    }
-                }
+                "result": result_lightweight  # Full task result, not just message
             }
             
-            logger.info(f"Pushing lightweight result to webhook: {webhook_url}")
-            logger.info(f"Artifact size reduced - including only critical/high severity issues")
-            logger.info(f"Sending JSON-RPC message/send request (per Telex webhook spec)")
+            logger.info(f"Pushing full task result to webhook: {webhook_url}")
+            logger.info(f"Task state: {result_lightweight.get('status', {}).get('state')}")
+            logger.info(f"Sending JSON-RPC 2.0 response with complete task result")
+            
+            # Log the webhook payload being sent
+            import json
+            logger.info("=" * 80)
+            logger.info("WEBHOOK PAYLOAD BEING SENT TO TELEX:")
+            logger.info("=" * 80)
+            logger.info(json.dumps(webhook_payload, indent=2)[:2000] + "...")
+            logger.info("=" * 80)
             
             # Use longer timeout for Telex webhook (they can be slow)
             # Connect: 10s, Read: 60s (Telex processing time)
