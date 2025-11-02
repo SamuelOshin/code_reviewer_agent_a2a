@@ -53,75 +53,54 @@ class SummaryFormatter:
     @classmethod
     def format_for_telex(cls, analysis: CodeAnalysisResult) -> str:
         """
-        Format analysis result as markdown for Telex A2A messages
+        Format analysis result as SHORT markdown for Telex A2A messages
+        MUST be concise - Telex has display limits!
         
         Args:
             analysis: Complete code analysis result
             
         Returns:
-            Formatted markdown string
+            Short formatted markdown string (<2000 chars)
         """
         sections = []
         
         # Header with PR info
-        sections.append(f"# 📋 Code Review Summary - PR #{analysis.pr_number}")
+        sections.append(f"# ✅ Code Review Complete - PR #{analysis.pr_number}")
+        sections.append("")
+        sections.append(f"**{analysis.pr_title}** by @{analysis.author}")
         sections.append("")
         
-        # Risk Level Banner
+        # Risk & Recommendation - THE MOST IMPORTANT PART
         risk_emoji = cls.RISK_EMOJI.get(analysis.risk_level, "❔")
-        sections.append(f"## {risk_emoji} Overall Risk Level: **{analysis.risk_level.value.upper()}**")
-        sections.append("")
-        
-        # Executive Summary
-        if analysis.executive_summary:
-            sections.append("## 📝 Executive Summary")
-            sections.append(analysis.executive_summary)
-            sections.append("")
-        
-        # Metrics Overview
-        sections.append("## 📊 Analysis Metrics")
-        sections.append(f"- **Files Changed**: {analysis.files_changed}")
-        sections.append(f"- **Lines Added**: +{analysis.lines_added}")
-        sections.append(f"- **Lines Deleted**: -{analysis.lines_deleted}")
-        total_issues = len(analysis.security_findings) + len(analysis.performance_findings) + len(analysis.best_practice_findings)
-        sections.append(f"- **Total Issues Found**: {total_issues}")
-        sections.append("")
-        
-        # Security Issues
-        if analysis.security_findings:
-            sections.append("## 🔒 Security Issues")
-            sections.append(cls._format_security_issues(analysis.security_findings))
-            sections.append("")
-        
-        # Performance Issues
-        if analysis.performance_findings:
-            sections.append("## ⚡ Performance Issues")
-            sections.append(cls._format_performance_issues(analysis.performance_findings))
-            sections.append("")
-        
-        # Best Practice Violations
-        if analysis.best_practice_findings:
-            sections.append("## 📐 Best Practice Issues")
-            sections.append(cls._format_best_practice_issues(analysis.best_practice_findings))
-            sections.append("")
-        
-        # Recommendations
-        if analysis.key_concerns:
-            sections.append("## 💡 Recommendations")
-            for rec in analysis.key_concerns[:5]:  # Top 5
-                sections.append(f"- {rec}")
-            sections.append("")
-        
-        # Approval Recommendation
         approval_emoji = cls.APPROVAL_EMOJI.get(analysis.approval_recommendation, "❔")
-        sections.append(f"## {approval_emoji} Recommendation: **{analysis.approval_recommendation.value.replace('_', ' ').upper()}**")
+        sections.append(f"## {risk_emoji} Risk: **{analysis.risk_level.value.upper()}** | {approval_emoji} {analysis.approval_recommendation.value.replace('_', ' ').title()}")
         sections.append("")
         
+        # Quick Stats
+        total_issues = len(analysis.security_findings) + len(analysis.performance_findings) + len(analysis.best_practice_findings)
+        sections.append(f"📊 **{analysis.files_changed} files** changed (+{analysis.lines_added}/-{analysis.lines_deleted}) • **{total_issues} issues** found")
+        sections.append("")
         
-        # Footer
-        sections.append("---")
-        sections.append(f"*Analysis completed at {analysis.analyzed_at.strftime('%Y-%m-%d %H:%M:%S UTC')}*")
-        sections.append(f"*Duration: {analysis.analysis_duration_seconds:.2f}s | LLM: {analysis.llm_provider}/{analysis.llm_model}*")
+        # Issue Breakdown (counts only)
+        if analysis.security_findings or analysis.performance_findings or analysis.best_practice_findings:
+            sections.append("### Issues Found:")
+            if analysis.security_findings:
+                sections.append(f"🔒 **{len(analysis.security_findings)} Security** issues")
+            if analysis.performance_findings:
+                sections.append(f"⚡ **{len(analysis.performance_findings)} Performance** issues")
+            if analysis.best_practice_findings:
+                sections.append(f"📐 **{len(analysis.best_practice_findings)} Best Practice** violations")
+            sections.append("")
+        
+        # Top 3 Concerns ONLY
+        if analysis.key_concerns:
+            sections.append("### 💡 Top Concerns:")
+            for i, concern in enumerate(analysis.key_concerns[:3], 1):
+                sections.append(f"{i}. {concern}")
+            sections.append("")
+        
+        # Footer - keep it minimal
+        sections.append(f"*Full details in artifacts • Analysis: {analysis.analysis_duration_seconds:.1f}s*")
         
         return "\n".join(sections)
     
