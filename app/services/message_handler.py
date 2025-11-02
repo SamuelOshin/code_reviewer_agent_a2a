@@ -89,9 +89,29 @@ class MessageHandler:
                 prompt="Please provide a GitHub Pull Request URL to analyze (e.g., https://github.com/owner/repo/pull/123)"
             )
         
-        # Check if Telex wants blocking or non-blocking mode
-        is_blocking = configuration.get("blocking", True) if configuration else True
+        # TEMPORARY: Force blocking mode to test artifact display in Telex
+        # Log what Telex actually sent
+        logger.info("=" * 80)
+        logger.info("CONFIGURATION FROM TELEX:")
+        if configuration:
+            logger.info(f"  blocking: {configuration.get('blocking')}")
+            logger.info(f"  has pushNotificationConfig: {bool(configuration.get('pushNotificationConfig'))}")
+            if configuration.get('pushNotificationConfig'):
+                logger.info(f"  webhook URL: {configuration.get('pushNotificationConfig', {}).get('url')}")
+        else:
+            logger.info("  No configuration provided by Telex")
+        logger.info("=" * 80)
+        
+        # FORCE BLOCKING MODE FOR TESTING - ignore what Telex sends
+        is_blocking = True  # FORCE BLOCKING MODE FOR TESTING
+        # is_blocking = configuration.get("blocking", True) if configuration else True
         push_config = configuration.get("pushNotificationConfig") if configuration else None
+        
+        logger.info("=" * 80)
+        logger.info("TESTING MODE: FORCING BLOCKING RESPONSE WITH ARTIFACTS")
+        logger.info("Telex will receive the complete analysis immediately (ignoring blocking:false)")
+        logger.info("This tests if Telex can display artifacts correctly")
+        logger.info("=" * 80)
         
         if not is_blocking and push_config:
             # Non-blocking mode - return accepted status and push result via webhook
@@ -99,7 +119,7 @@ class MessageHandler:
             return await self._analyze_and_push(pr_url, task_id, message_id, message, push_config)
         else:
             # Blocking mode - return complete analysis immediately
-            logger.info(f"Using BLOCKING mode - will return complete analysis immediately")
+            logger.info(f"Using BLOCKING mode - will return complete analysis immediately WITH ARTIFACTS")
             return await self._analyze_and_return(pr_url, task_id, message_id, message)
     
     async def _process_and_push_safe(
