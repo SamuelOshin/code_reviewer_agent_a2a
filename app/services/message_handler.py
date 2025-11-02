@@ -527,17 +527,31 @@ class MessageHandler:
             # Extract the response message from the task status
             response_message = result_lightweight.get("status", {}).get("message", {})
             
-            # Build the complete JSON-RPC 2.0 response with task result
-            # This matches the blocking mode response structure
+            # Build JSON-RPC message/send request (as shown in Telex webhook spec)
+            # Telex webhooks expect method="message/send" with params containing message
             webhook_payload = {
                 "jsonrpc": "2.0",
                 "id": str(uuid.uuid4()),
-                "result": result_lightweight  # Full task result, not just message
+                "method": "message/send",
+                "params": {
+                    "message": {
+                        "kind": "message",
+                        "role": "agent",
+                        "parts": response_message.get("parts", []),
+                        "messageId": response_message.get("messageId"),
+                        "taskId": result_lightweight.get("id")
+                    },
+                    "context": {
+                        "taskId": result_lightweight.get("id"),
+                        "contextId": result_lightweight.get("contextId")
+                    },
+                    "task": result_lightweight  # Include full task with artifacts
+                }
             }
             
             logger.info(f"Pushing full task result to webhook: {webhook_url}")
             logger.info(f"Task state: {result_lightweight.get('status', {}).get('state')}")
-            logger.info(f"Sending JSON-RPC 2.0 response with complete task result")
+            logger.info(f"Sending JSON-RPC message/send request with complete task result")
             
             # Log the webhook payload being sent
             import json
