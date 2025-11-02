@@ -182,7 +182,7 @@ class MessageHandler:
                     "taskId": task_id
                 },
                 "metadata": {
-                    "task": task_obj.dict()
+                    "task": task_obj.model_dump(mode="json", exclude_none=True)
                 }
             }
         }
@@ -222,7 +222,7 @@ class MessageHandler:
                 ],
                 kind="message",
                 taskId=task_id,
-                timestamp=datetime.now(timezone.utc)
+                timestamp=datetime.now(timezone.utc).isoformat()
             )
             
             # Create artifact with full analysis data
@@ -241,9 +241,9 @@ class MessageHandler:
                             "risk_level": analysis_result.risk_level.value,
                             "approval_recommendation": analysis_result.approval_recommendation.value,
                             "key_concerns": analysis_result.key_concerns,
-                            "security_findings": [f.dict() for f in analysis_result.security_findings],
-                            "performance_findings": [f.dict() for f in analysis_result.performance_findings],
-                            "best_practice_findings": [f.dict() for f in analysis_result.best_practice_findings],
+                            "security_findings": [f.model_dump(mode="json") for f in analysis_result.security_findings],
+                            "performance_findings": [f.model_dump(mode="json") for f in analysis_result.performance_findings],
+                            "best_practice_findings": [f.model_dump(mode="json") for f in analysis_result.best_practice_findings],
                             "files_changed": analysis_result.files_changed,
                             "lines_added": analysis_result.lines_added,
                             "lines_deleted": analysis_result.lines_deleted,
@@ -264,7 +264,7 @@ class MessageHandler:
                 contextId=message.get("contextId", str(uuid.uuid4())),
                 status=TaskStatus(
                     state="completed",
-                    timestamp=datetime.now(timezone.utc),
+                    timestamp=datetime.now(timezone.utc).isoformat(),
                     message=response_msg,
                     progress=1.0
                 ),
@@ -273,9 +273,15 @@ class MessageHandler:
                 kind="task"
             )
             
-            # Return the task as a dict (JSON-RPC handler will wrap it)
-            result = task.dict()
-            logger.info(f"Returning task result: {result.get('id')}, state: {result['status']['state']}")
+            # Serialize properly with Pydantic v2 (handles datetime -> ISO string)
+            # exclude_none=True removes null fields for cleaner JSON
+            result = task.model_dump(mode="json", exclude_none=True)
+            
+            # Double-check kind field is present
+            if "kind" not in result:
+                result["kind"] = "task"
+            
+            logger.info(f"Returning task result: {result.get('id')}, state: {result['status']['state']}, kind: {result.get('kind')}")
             return result
             
         except Exception as e:
@@ -293,7 +299,7 @@ class MessageHandler:
                 ],
                 kind="message",
                 taskId=task_id,
-                timestamp=datetime.now(timezone.utc)
+                timestamp=datetime.now(timezone.utc).isoformat()
             )
             
             task = A2ATask(
@@ -301,7 +307,7 @@ class MessageHandler:
                 contextId=message.get("contextId", str(uuid.uuid4())),
                 status=TaskStatus(
                     state="failed",
-                    timestamp=datetime.now(timezone.utc),
+                    timestamp=datetime.now(timezone.utc).isoformat(),
                     message=error_msg
                 ),
                 artifacts=[],
@@ -309,7 +315,7 @@ class MessageHandler:
                 kind="task"
             )
             
-            return task.dict()
+            return task.model_dump(mode="json", exclude_none=True)
     
     async def _process_and_push(
         self,
@@ -573,7 +579,7 @@ class MessageHandler:
             ],
             kind="message",
             taskId=task_id,
-            timestamp=datetime.now(timezone.utc)
+            timestamp=datetime.now(timezone.utc).isoformat()
         )
         
         task = A2ATask(
@@ -581,7 +587,7 @@ class MessageHandler:
             contextId=str(uuid.uuid4()),
             status=TaskStatus(
                 state="input-required",
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(timezone.utc).isoformat(),
                 message=response_msg
             ),
             artifacts=[],
@@ -589,4 +595,4 @@ class MessageHandler:
             kind="task"
         )
         
-        return task.dict()
+        return task.model_dump(mode="json", exclude_none=True)

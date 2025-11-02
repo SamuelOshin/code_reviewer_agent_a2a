@@ -202,6 +202,10 @@ class JSONRPCHandler:
         Returns:
             Response dictionary
         """
+        # Ensure result has 'kind' field if it's a task
+        if isinstance(result, dict) and "status" in result and "kind" not in result:
+            result["kind"] = "task"
+        
         response = JSONRPCResponse(
             id=request_id,
             result=result
