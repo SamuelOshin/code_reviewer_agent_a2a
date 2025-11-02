@@ -190,6 +190,103 @@ class MessageHandler:
         async with httpx.AsyncClient(timeout=30.0) as client:
             await client.post(webhook_url, json=webhook_payload, headers=headers)
     
+    def _format_analysis_as_text(self, analysis_result, pr_url: str) -> str:
+        """Format analysis result as readable text for artifact"""
+        lines = []
+        
+        # Header
+        lines.append(f"# Pull Request Analysis Report")
+        lines.append(f"")
+        lines.append(f"**PR #{analysis_result.pr_number}**: {analysis_result.pr_title}")
+        lines.append(f"**Author**: {analysis_result.author}")
+        lines.append(f"**Repository**: {analysis_result.repository}")
+        lines.append(f"**URL**: {pr_url}")
+        lines.append(f"")
+        
+        # Executive Summary
+        lines.append(f"## Executive Summary")
+        lines.append(f"")
+        lines.append(analysis_result.executive_summary)
+        lines.append(f"")
+        
+        # Risk Assessment
+        lines.append(f"## Risk Assessment")
+        lines.append(f"")
+        lines.append(f"**Risk Level**: {analysis_result.risk_level.value.upper()}")
+        lines.append(f"**Recommendation**: {analysis_result.approval_recommendation.value.upper()}")
+        lines.append(f"")
+        
+        # Key Concerns
+        if analysis_result.key_concerns:
+            lines.append(f"## Key Concerns")
+            lines.append(f"")
+            for concern in analysis_result.key_concerns:
+                lines.append(f"- {concern}")
+            lines.append(f"")
+        
+        # Statistics
+        lines.append(f"## Statistics")
+        lines.append(f"")
+        lines.append(f"- Files changed: {analysis_result.files_changed}")
+        lines.append(f"- Lines added: +{analysis_result.lines_added}")
+        lines.append(f"- Lines deleted: -{analysis_result.lines_deleted}")
+        lines.append(f"")
+        
+        # Security Findings
+        if analysis_result.security_findings:
+            lines.append(f"## 🔒 Security Findings ({len(analysis_result.security_findings)})")
+            lines.append(f"")
+            for i, finding in enumerate(analysis_result.security_findings, 1):
+                lines.append(f"### {i}. {finding.title}")
+                lines.append(f"**Severity**: {finding.severity.upper()}")
+                lines.append(f"**File**: `{finding.file}` (Line {finding.line_number})")
+                lines.append(f"")
+                lines.append(f"**Description**: {finding.description}")
+                lines.append(f"")
+                lines.append(f"**Recommendation**: {finding.recommendation}")
+                if finding.cwe_id:
+                    lines.append(f"**CWE ID**: {finding.cwe_id}")
+                lines.append(f"")
+        
+        # Performance Findings
+        if analysis_result.performance_findings:
+            lines.append(f"## ⚡ Performance Findings ({len(analysis_result.performance_findings)})")
+            lines.append(f"")
+            for i, finding in enumerate(analysis_result.performance_findings, 1):
+                lines.append(f"### {i}. {finding.title}")
+                lines.append(f"**Severity**: {finding.severity.upper()}")
+                lines.append(f"**File**: `{finding.file}`")
+                lines.append(f"")
+                lines.append(f"**Description**: {finding.description}")
+                lines.append(f"")
+                lines.append(f"**Impact**: {finding.impact}")
+                lines.append(f"")
+                lines.append(f"**Recommendation**: {finding.recommendation}")
+                lines.append(f"")
+        
+        # Best Practice Findings
+        if analysis_result.best_practice_findings:
+            lines.append(f"## 📚 Best Practice Findings ({len(analysis_result.best_practice_findings)})")
+            lines.append(f"")
+            for i, finding in enumerate(analysis_result.best_practice_findings, 1):
+                lines.append(f"### {i}. {finding.title}")
+                lines.append(f"**Category**: {finding.category}")
+                lines.append(f"**Severity**: {finding.severity.upper()}")
+                if finding.file:
+                    lines.append(f"**File**: `{finding.file}`")
+                lines.append(f"")
+                lines.append(f"**Description**: {finding.description}")
+                lines.append(f"")
+                lines.append(f"**Recommendation**: {finding.recommendation}")
+                lines.append(f"")
+        
+        # Footer
+        lines.append(f"---")
+        lines.append(f"*Analysis completed at {analysis_result.analyzed_at.strftime('%Y-%m-%d %H:%M:%S UTC')}*")
+        lines.append(f"*Powered by {analysis_result.llm_provider} ({analysis_result.llm_model})*")
+        
+        return "\n".join(lines)
+    
     async def _analyze_and_return(
         self,
         pr_url: str,
@@ -225,37 +322,19 @@ class MessageHandler:
                 timestamp=datetime.now(timezone.utc).isoformat()
             )
             
-            # Create artifact with full analysis data
+            # Create artifact with full analysis data as TEXT (not JSON)
+            # Format analysis as readable text
+            artifact_text = self._format_analysis_as_text(analysis_result, pr_url)
+            
             artifact = A2AArtifact(
                 artifactId=str(uuid.uuid4()),
                 name=f"PR #{analysis_result.pr_number} Analysis",
                 parts=[
                     ArtifactPart(
-                        kind="json",
-                        data={
-                            "pr_number": analysis_result.pr_number,
-                            "pr_title": analysis_result.pr_title,
-                            "author": analysis_result.author,
-                            "repository": analysis_result.repository,
-                            "executive_summary": analysis_result.executive_summary,
-                            "risk_level": analysis_result.risk_level.value,
-                            "approval_recommendation": analysis_result.approval_recommendation.value,
-                            "key_concerns": analysis_result.key_concerns,
-                            "security_findings": [f.model_dump(mode="json") for f in analysis_result.security_findings],
-                            "performance_findings": [f.model_dump(mode="json") for f in analysis_result.performance_findings],
-                            "best_practice_findings": [f.model_dump(mode="json") for f in analysis_result.best_practice_findings],
-                            "files_changed": analysis_result.files_changed,
-                            "lines_added": analysis_result.lines_added,
-                            "lines_deleted": analysis_result.lines_deleted,
-                        }
+                        kind="text",
+                        text=artifact_text
                     )
-                ],
-                metadata={
-                    "pr_url": pr_url,
-                    "analyzed_at": analysis_result.analyzed_at.isoformat(),
-                    "llm_provider": analysis_result.llm_provider,
-                    "llm_model": analysis_result.llm_model,
-                }
+                ]
             )
             
             # Create completed task
