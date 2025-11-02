@@ -216,15 +216,31 @@ class MessageHandler:
         auth_schemes = push_config.get("authentication", {}).get("schemes", [])
         if "Bearer" in auth_schemes and token:
             headers["Authorization"] = f"Bearer {token}"
+        elif "TelexApiKey" in auth_schemes and token:
+            headers["Authorization"] = f"Bearer {token}"
         
-        rpc_response = {
+        # Build JSON-RPC message/send request (per Telex webhook spec)
+        webhook_payload = {
             "jsonrpc": "2.0",
-            "id": message_id,
-            "result": task_obj.dict()
+            "id": str(uuid.uuid4()),
+            "method": "message/send",
+            "params": {
+                "message": {
+                    "kind": "message",
+                    "role": "agent",
+                    "parts": [{"kind": "text", "text": f"❌ Analysis failed: {error_message}"}],
+                    "messageId": error_msg.messageId,
+                    "contextId": task_obj.contextId,
+                    "taskId": task_id
+                },
+                "metadata": {
+                    "task": task_obj.dict()
+                }
+            }
         }
         
         async with httpx.AsyncClient(timeout=30.0) as client:
-            await client.post(webhook_url, json=rpc_response, headers=headers)
+            await client.post(webhook_url, json=webhook_payload, headers=headers)
     
     async def _analyze_and_return(
         self,
@@ -397,29 +413,39 @@ class MessageHandler:
             auth_schemes = push_config.get("authentication", {}).get("schemes", [])
             if "Bearer" in auth_schemes and token:
                 headers["Authorization"] = f"Bearer {token}"
+            elif "TelexApiKey" in auth_schemes and token:
+                headers["Authorization"] = f"Bearer {token}"
             
-            # Telex webhook expects a message/send JSON-RPC request with full task
+            # Telex webhook expects JSON-RPC 2.0 message/send request
+            # Per https://ping.staging.telex.im/docs/#/default/handleA2AWebhookRequest
             # Use lightweight version to avoid HTTP 413 (payload too large)
-            rpc_request = {
+            
+            # Extract the response message from the task status
+            response_message = result_lightweight.get("status", {}).get("message", {})
+            
+            # Build JSON-RPC message/send request (as shown in Telex docs)
+            webhook_payload = {
                 "jsonrpc": "2.0",
+                "id": str(uuid.uuid4()),
                 "method": "message/send",
                 "params": {
                     "message": {
-                        "messageId": result_lightweight["status"]["message"]["messageId"],
-                        "role": "agent",
-                        "parts": result_lightweight["status"]["message"]["parts"],
                         "kind": "message",
-                        "taskId": result_lightweight["id"],
-                        "timestamp": result_lightweight["status"]["timestamp"]
+                        "role": "agent",
+                        "parts": response_message.get("parts", []),
+                        "messageId": response_message.get("messageId"),
+                        "contextId": result_lightweight.get("contextId"),
+                        "taskId": result_lightweight.get("id")
                     },
-                    # Include lightweight task with summarized artifacts
-                    "task": result_lightweight
-                },
-                "id": message_id
+                    "metadata": {
+                        "task": result_lightweight  # Include full task in metadata
+                    }
+                }
             }
             
             logger.info(f"Pushing lightweight result to webhook: {webhook_url}")
             logger.info(f"Artifact size reduced - including only critical/high severity issues")
+            logger.info(f"Sending JSON-RPC message/send request (per Telex webhook spec)")
             
             # Use longer timeout for Telex webhook (they can be slow)
             # Connect: 10s, Read: 60s (Telex processing time)
@@ -429,7 +455,7 @@ class MessageHandler:
                 try:
                     response = await client.post(
                         webhook_url,
-                        json=rpc_request,
+                        json=webhook_payload,
                         headers=headers
                     )
                     response.raise_for_status()
