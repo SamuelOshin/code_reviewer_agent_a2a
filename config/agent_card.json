@@ -1,237 +1,93 @@
 {
-  "name": "Code Review Agent",
-  "version": "1.0.0",
+  "name": "PRRover Code Review Agent",
   "description": "AI-powered code review agent that analyzes GitHub Pull Requests for security vulnerabilities, performance issues, and best practices. Uses LLM analysis combined with rule-based checks to provide comprehensive code review summaries.",
-  "capabilities": [
+  "url": "https://code-reviewer-agent-a2a.onrender.com/a2a/tasks",
+  "version": "1.0.0",
+  "provider": {
+    "organization": "Bobbysam (SamuelOshin)",
+    "url": "https://github.com/SamuelOshin"
+  },
+  "documentationUrl": "https://github.com/SamuelOshin/code_reviewer_agent_a2a/blob/main/README.md",
+  "capabilities": {
+    "streaming": false,
+    "pushNotifications": true,
+    "stateTransitionHistory": true
+  },
+  "defaultInputModes": ["text/plain", "text/markdown"],
+  "defaultOutputModes": ["text/markdown", "application/json"],
+  "skills": [
     {
-      "name": "analyze_pr",
-      "description": "Analyze a GitHub Pull Request for security, performance, and best practice issues",
-      "parameters": {
-        "pr_url": {
-          "type": "string",
-          "format": "uri",
-          "description": "GitHub PR URL (e.g., https://github.com/owner/repo/pull/123)",
-          "required": true
+      "id": "analyze_github_pr",
+      "name": "Analyze GitHub Pull Request",
+      "description": "Analyzes a GitHub Pull Request for security vulnerabilities, performance issues, and best practice violations. Provides detailed findings with line numbers, severity ratings, and actionable recommendations.",
+      "inputModes": ["text/plain"],
+      "outputModes": ["text/markdown", "application/json"],
+      "examples": [
+        {
+          "input": {
+            "parts": [
+              {
+                "text": "analyze this PR: https://github.com/facebook/react/pull/31628",
+                "contentType": "text/plain"
+              }
+            ]
+          },
+          "output": {
+            "parts": [
+              {
+                "text": "# ✅ Code Review Complete - PR #31628\n\n**Risk: LOW** | ✅ Approve\n\nAnalyzed 5 files with detailed security, performance, and best practice findings.",
+                "contentType": "text/markdown"
+              }
+            ]
+          }
         },
-        "send_to_telex": {
-          "type": "boolean",
-          "description": "Whether to send results to Telex",
-          "default": true
-        },
-        "focus_areas": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "enum": ["security", "performance", "best_practices"]
+        {
+          "input": {
+            "parts": [
+              {
+                "text": "Review PR https://github.com/owner/repo/pull/123 for security issues only",
+                "contentType": "text/plain"
+              }
+            ]
           },
-          "description": "Specific areas to focus analysis on",
-          "default": ["security", "performance", "best_practices"]
-        }
-      },
-      "returns": {
-        "type": "object",
-        "properties": {
-          "analysis_id": {
-            "type": "string",
-            "description": "Unique analysis identifier"
-          },
-          "pr_number": {
-            "type": "integer"
-          },
-          "pr_url": {
-            "type": "string"
-          },
-          "executive_summary": {
-            "type": "string",
-            "description": "AI-generated executive summary"
-          },
-          "risk_level": {
-            "type": "string",
-            "enum": ["CRITICAL", "HIGH", "MEDIUM", "LOW", "MINIMAL"]
-          },
-          "approval_recommendation": {
-            "type": "string",
-            "enum": ["APPROVE", "APPROVE_WITH_SUGGESTIONS", "REQUEST_CHANGES", "REJECT"]
-          },
-          "security_issues_count": {
-            "type": "integer"
-          },
-          "performance_issues_count": {
-            "type": "integer"
-          },
-          "best_practice_issues_count": {
-            "type": "integer"
-          },
-          "metrics": {
-            "type": "object"
-          },
-          "recommendations": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
+          "output": {
+            "parts": [
+              {
+                "text": "# 🔒 Security Review - PR #123\n\nFound 3 security issues requiring attention.",
+                "contentType": "text/markdown"
+              }
+            ]
           }
         }
-      }
+      ]
     },
     {
-      "name": "get_analysis_status",
-      "description": "Get the status of a running or completed analysis",
-      "parameters": {
-        "analysis_id": {
-          "type": "string",
-          "description": "Analysis ID to check",
-          "required": true
+      "id": "greeting_and_intro",
+      "name": "Introduction",
+      "description": "Introduces the agent's capabilities and asks for a PR to review.",
+      "inputModes": ["text/plain"],
+      "outputModes": ["text/plain"],
+      "examples": [
+        {
+          "input": {
+            "parts": [
+              {
+                "text": "hi",
+                "contentType": "text/plain"
+              }
+            ]
+          },
+          "output": {
+            "parts": [
+              {
+                "text": "Hey! I'm PRRover, your friendly AI code reviewer. Share a GitHub PR link with me and I'll analyze it for security issues, performance problems, and best practices. Which PR would you like me to review?",
+                "contentType": "text/plain"
+              }
+            ]
+          }
         }
-      }
-    },
-    {
-      "name": "list_analyses",
-      "description": "List recent code analyses",
-      "parameters": {
-        "limit": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 100,
-          "default": 10
-        },
-        "offset": {
-          "type": "integer",
-          "minimum": 0,
-          "default": 0
-        },
-        "status_filter": {
-          "type": "string",
-          "enum": ["pending", "running", "completed", "failed"]
-        }
-      }
-    },
-    {
-      "name": "get_analysis_details",
-      "description": "Get detailed analysis results including all issues found",
-      "parameters": {
-        "analysis_id": {
-          "type": "string",
-          "description": "Analysis ID",
-          "required": true
-        }
-      }
-    },
-    {
-      "name": "introspect",
-      "description": "Get information about available capabilities and methods"
+      ]
     }
   ],
-  "endpoints": {
-    "rpc": "/rpc",
-    "a2a_tasks": "/a2a/tasks",
-    "a2a_webhooks": "/a2a/webhooks/{hook_id}",
-    "webhooks": "/webhooks/github",
-    "health": "/health",
-    "agent_card": "/.well-known/agent.json"
-  },
-  "protocol": {
-    "type": "jsonrpc",
-    "version": "2.0",
-    "a2a_support": true,
-    "webhook_support": true
-  },
-  "authentication": {
-    "webhook_signature": {
-      "type": "hmac-sha256",
-      "header": "X-Hub-Signature-256",
-      "description": "GitHub webhook signature verification"
-    }
-  },
-  "features": {
-    "security_analysis": {
-      "enabled": true,
-      "patterns": 10,
-      "includes": [
-        "SQL Injection (CWE-89)",
-        "Hardcoded Secrets (CWE-798)",
-        "Unsafe Deserialization (CWE-502)",
-        "Command Injection (CWE-78)",
-        "XSS Vulnerabilities (CWE-79)",
-        "Path Traversal (CWE-22)",
-        "Weak Cryptography (CWE-327)",
-        "Insecure Random (CWE-330)",
-        "Missing Authentication (CWE-306)",
-        "Debug Mode in Production (CWE-489)"
-      ]
-    },
-    "performance_analysis": {
-      "enabled": true,
-      "patterns": 10,
-      "includes": [
-        "N+1 Query Detection",
-        "Nested Loop Optimization",
-        "Blocking I/O Detection",
-        "String Concatenation Efficiency",
-        "Database Index Recommendations",
-        "Large Dataset Loading",
-        "Async/Await Patterns",
-        "List Operation Optimization",
-        "Global State Access"
-      ]
-    },
-    "best_practices": {
-      "enabled": true,
-      "powered_by": "LLM",
-      "areas": [
-        "Code Style",
-        "Documentation",
-        "Error Handling",
-        "Testing",
-        "Architecture",
-        "Maintainability"
-      ]
-    },
-    "llm_providers": {
-      "default": "google",
-      "supported": ["google", "openai", "anthropic"],
-      "models": {
-        "google": ["gemini-1.5-flash", "gemini-1.5-pro"],
-        "openai": ["gpt-4", "gpt-4-turbo"],
-        "anthropic": ["claude-3-opus", "claude-3-sonnet", "claude-3-haiku"]
-      }
-    }
-  },
-  "integrations": {
-    "github": {
-      "type": "mcp",
-      "description": "Uses Model Context Protocol for GitHub API access",
-      "capabilities": [
-        "Fetch PR metadata",
-        "Get PR diffs",
-        "List changed files",
-        "Retrieve file contents"
-      ]
-    },
-    "telex": {
-      "type": "a2a",
-      "description": "Sends analysis results via A2A protocol",
-      "artifact_format": "markdown"
-    }
-  },
-  "metadata": {
-    "author": "Bobbysam(SamuelOshin)",
-    "repository": "https://github.com/SamuelOshin/code_reviewer_agent_a2a",
-    "license": "MIT",
-    "tags": [
-      "code-review",
-      "security",
-      "performance",
-      "ai-agent",
-      "a2a-protocol",
-      "github",
-      "llm"
-    ],
-    "created_at": "2025-10-30T00:00:00Z",
-    "updated_at": "2025-10-30T00:00:00Z"
-  },
-  "contact": {
-    "support_url": "https://github.com/SamuelOshin/code_reviewer_agent_a2a/issues",
-    "documentation_url": "https://github.com/SamuelOshin/code_reviewer_agent_a2a/blob/main/README.md"
-  }
+  "supportsAuthenticatedExtendedCard": false
 }
