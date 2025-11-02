@@ -643,61 +643,9 @@ class MessageHandler:
             "history": full_result["history"],
         }
         
-        # Create a summary artifact with just counts and critical issues
+        # For text artifacts, just include them as-is (they're already optimized)
         if full_result.get("artifacts"):
-            artifact_data = full_result["artifacts"][0]["parts"][0]["data"]
-            
-            # Filter to only high/critical severity issues
-            security_critical = [
-                f for f in artifact_data.get("security_findings", [])
-                if f.get("severity") in ["high", "critical"]
-            ][:10]  # Max 10
-            
-            performance_critical = [
-                f for f in artifact_data.get("performance_findings", [])
-                if f.get("severity") in ["high", "critical"] and f.get("impact") == "HIGH"
-            ][:10]  # Max 10
-            
-            best_practice_critical = [
-                f for f in artifact_data.get("best_practice_findings", [])
-                if f.get("severity") in ["high", "medium"]
-            ][:10]  # Max 10
-            
-            lightweight_artifact = {
-                "artifactId": full_result["artifacts"][0]["artifactId"],
-                "name": full_result["artifacts"][0]["name"],
-                "parts": [{
-                    "kind": "json",
-                    "data": {
-                        "pr_number": artifact_data.get("pr_number"),
-                        "pr_title": artifact_data.get("pr_title"),
-                        "author": artifact_data.get("author"),
-                        "repository": artifact_data.get("repository"),
-                        "executive_summary": artifact_data.get("executive_summary"),
-                        "risk_level": artifact_data.get("risk_level"),
-                        "approval_recommendation": artifact_data.get("approval_recommendation"),
-                        "key_concerns": artifact_data.get("key_concerns", []),
-                        # Summary counts
-                        "stats": {
-                            "security_total": len(artifact_data.get("security_findings", [])),
-                            "performance_total": len(artifact_data.get("performance_findings", [])),
-                            "best_practice_total": len(artifact_data.get("best_practice_findings", [])),
-                            "files_changed": artifact_data.get("files_changed"),
-                            "lines_added": artifact_data.get("lines_added"),
-                            "lines_deleted": artifact_data.get("lines_deleted"),
-                        },
-                        # Only critical/high severity issues (max 10 each)
-                        "security_findings": security_critical,
-                        "performance_findings": performance_critical,
-                        "best_practice_findings": best_practice_critical,
-                    }
-                }],
-                "metadata": full_result["artifacts"][0].get("metadata", {})
-            }
-            
-            lightweight["artifacts"] = [lightweight_artifact]
-        else:
-            lightweight["artifacts"] = []
+            lightweight["artifacts"] = full_result["artifacts"]
         
         return lightweight
     
