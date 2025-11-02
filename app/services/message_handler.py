@@ -281,7 +281,14 @@ class MessageHandler:
             if "kind" not in result:
                 result["kind"] = "task"
             
+            # Log the complete response for debugging
+            import json
             logger.info(f"Returning task result: {result.get('id')}, state: {result['status']['state']}, kind: {result.get('kind')}")
+            logger.info("=" * 80)
+            logger.info("FULL RESPONSE BODY:")
+            logger.info(json.dumps(result, indent=2))
+            logger.info("=" * 80)
+            
             return result
             
         except Exception as e:
