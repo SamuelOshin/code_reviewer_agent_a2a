@@ -89,62 +89,10 @@ class MessageHandler:
                 prompt="Please provide a GitHub Pull Request URL to analyze (e.g., https://github.com/owner/repo/pull/123)"
             )
         
-        # Check if blocking or non-blocking
-        is_blocking = configuration.get("blocking", True) if configuration else True
-        push_config = configuration.get("pushNotificationConfig") if configuration else None
-        
-        if not is_blocking and push_config:
-            # Non-blocking mode - return quick acknowledgment and process in background
-            logger.info(f"Non-blocking mode detected, will push results to webhook")
-            
-            # Start background task with error handling
-            import asyncio
-            task = asyncio.create_task(
-                self._process_and_push_safe(pr_url, task_id, message_id, message, push_config)
-            )
-            # Add done callback to log any exceptions
-            task.add_done_callback(self._log_task_exception)
-            
-            # Return immediate acknowledgment
-            ack_msg = A2AMessage(
-                messageId=str(uuid.uuid4()),
-                role="agent",
-                parts=[
-                    MessagePart(
-                        kind="text",
-                        text=f"🔍 Analyzing PR... I'll send you the results shortly!"
-                    )
-                ],
-                kind="message",
-                taskId=task_id,
-                timestamp=datetime.now(timezone.utc)
-            )
-            
-            task = A2ATask(
-                id=task_id,
-                contextId=message.get("contextId", str(uuid.uuid4())),
-                status=TaskStatus(
-                    state="in_progress",
-                    timestamp=datetime.now(timezone.utc),
-                    message=ack_msg,
-                    progress=0.1
-                ),
-                artifacts=[],
-                history=[ack_msg],
-                kind="task"
-            )
-            
-            return task.dict()
-        
-        # Blocking mode - analyze and return result immediately
+        # ALWAYS USE BLOCKING MODE - return complete analysis immediately
+        # This is more reliable than webhooks and Telex displays it properly
+        logger.info(f"Using blocking mode - will return complete analysis immediately")
         return await self._analyze_and_return(pr_url, task_id, message_id, message)
-    
-    def _log_task_exception(self, task):
-        """Log any exceptions from background tasks"""
-        try:
-            task.result()
-        except Exception as e:
-            logger.error(f"Background task failed: {e}", exc_info=True)
     
     async def _process_and_push_safe(
         self,
