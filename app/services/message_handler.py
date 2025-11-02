@@ -89,10 +89,18 @@ class MessageHandler:
                 prompt="Please provide a GitHub Pull Request URL to analyze (e.g., https://github.com/owner/repo/pull/123)"
             )
         
-        # ALWAYS USE BLOCKING MODE - return complete analysis immediately
-        # This is more reliable than webhooks and Telex displays it properly
-        logger.info(f"Using blocking mode - will return complete analysis immediately")
-        return await self._analyze_and_return(pr_url, task_id, message_id, message)
+        # Check if Telex wants blocking or non-blocking mode
+        is_blocking = configuration.get("blocking", True) if configuration else True
+        push_config = configuration.get("pushNotificationConfig") if configuration else None
+        
+        if not is_blocking and push_config:
+            # Non-blocking mode - return accepted status and push result via webhook
+            logger.info(f"Using NON-BLOCKING mode - will push result to webhook: {push_config.get('url')}")
+            return await self._analyze_and_push(pr_url, task_id, message_id, message, push_config)
+        else:
+            # Blocking mode - return complete analysis immediately
+            logger.info(f"Using BLOCKING mode - will return complete analysis immediately")
+            return await self._analyze_and_return(pr_url, task_id, message_id, message)
     
     async def _process_and_push_safe(
         self,
@@ -189,6 +197,62 @@ class MessageHandler:
         
         async with httpx.AsyncClient(timeout=30.0) as client:
             await client.post(webhook_url, json=webhook_payload, headers=headers)
+    
+    async def _analyze_and_push(
+        self,
+        pr_url: str,
+        task_id: str,
+        message_id: str,
+        message: Dict[str, Any],
+        push_config: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Return 'accepted' status immediately and analyze in background,
+        pushing result to webhook when complete (non-blocking mode)
+        """
+        import asyncio
+        
+        # Start background task to analyze and push
+        asyncio.create_task(
+            self._process_and_push_safe(pr_url, task_id, message_id, message, push_config)
+        )
+        
+        # Return "accepted" status immediately
+        accepting_msg = A2AMessage(
+            messageId=str(uuid.uuid4()),
+            role="agent",
+            parts=[
+                MessagePart(
+                    kind="text",
+                    text="🔄 PR analysis started! I'll send you the results shortly via notification."
+                )
+            ],
+            kind="message",
+            taskId=task_id,
+            timestamp=datetime.now(timezone.utc).isoformat()
+        )
+        
+        task = A2ATask(
+            id=task_id,
+            contextId=message.get("contextId", str(uuid.uuid4())),
+            status=TaskStatus(
+                state="accepted",
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                message=accepting_msg,
+                progress=0.1
+            ),
+            artifacts=[],
+            history=[accepting_msg],
+            kind="task"
+        )
+        
+        # Serialize and return
+        result = task.model_dump(mode="json", exclude_none=True)
+        if "kind" not in result:
+            result["kind"] = "task"
+        
+        logger.info(f"Returned 'accepted' status for task {task_id}, analysis running in background")
+        return result
     
     def _format_analysis_as_text(self, analysis_result, pr_url: str) -> str:
         """Format analysis result as readable text for artifact"""
