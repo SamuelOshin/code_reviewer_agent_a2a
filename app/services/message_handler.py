@@ -558,7 +558,7 @@ class MessageHandler:
             logger.info("=" * 80)
             logger.info("WEBHOOK PAYLOAD BEING SENT TO TELEX:")
             logger.info("=" * 80)
-            logger.info(json.dumps(webhook_payload, indent=2)[:2000] + "...")
+            logger.info(json.dumps(webhook_payload, indent=2))
             logger.info("=" * 80)
             
             # Use longer timeout for Telex webhook (they can be slow)
