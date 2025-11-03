@@ -113,20 +113,69 @@ class MessageHandler:
         logger.info("This tests if Telex can display artifacts correctly")
         logger.info("=" * 80)
         
-        # TESTING: Return mock completed response immediately (no real analysis)
+        # TESTING WEBHOOK MODE: Return accepted, then push completed via webhook
+        if not is_blocking and push_config:
+            logger.info("=" * 80)
+            logger.info("MOCK WEBHOOK MODE: Testing webhook push flow")
+            logger.info("Step 1: Return 'accepted' immediately")
+            logger.info("Step 2: Wait 5 seconds (simulating analysis)")
+            logger.info("Step 3: Push 'completed' to webhook")
+            logger.info("=" * 80)
+            
+            # Start background task to push mock result after delay
+            import asyncio
+            asyncio.create_task(
+                self._mock_webhook_push(task_id, message, push_config)
+            )
+            
+            # Return "accepted" status immediately
+            accepting_msg = A2AMessage(
+                messageId=str(uuid.uuid4()),
+                role="agent",
+                parts=[
+                    MessagePart(
+                        kind="text",
+                        text="🔄 **MOCK WEBHOOK TEST** - Analysis started! I'll send results via webhook in 5 seconds..."
+                    )
+                ],
+                kind="message",
+                taskId=task_id,
+                timestamp=datetime.now(timezone.utc).isoformat()
+            )
+            
+            task = A2ATask(
+                id=task_id,
+                contextId=message.get("contextId", str(uuid.uuid4())),
+                status=TaskStatus(
+                    state="accepted",
+                    timestamp=datetime.now(timezone.utc).isoformat(),
+                    message=accepting_msg,
+                    progress=0.1
+                ),
+                artifacts=[],
+                history=[accepting_msg],
+                kind="task"
+            )
+            
+            result = task.model_dump(mode="json", exclude_none=True)
+            if "kind" not in result:
+                result["kind"] = "task"
+            
+            logger.info("Returned 'accepted' - webhook push will happen in 5 seconds")
+            return result
+        
+        # FALLBACK: If no push config, return mock completed immediately
         logger.info("=" * 80)
-        logger.info("MOCK MODE: Returning fake 'completed' response instantly (no real analysis)")
-        logger.info("Testing if Telex displays completed responses or if it's a timeout issue")
+        logger.info("MOCK MODE: No webhook config - returning completed immediately")
         logger.info("=" * 80)
         
-        # Create minimal mock response
         response_msg = A2AMessage(
             messageId=str(uuid.uuid4()),
             role="agent",
             parts=[
                 MessagePart(
                     kind="text",
-                    text="✅ **MOCK RESPONSE** - This is a test to see if Telex displays completed responses!\n\nPR Analysis would go here. This response was returned instantly."
+                    text="✅ **MOCK RESPONSE** - This is a test!\n\nPR Analysis would go here."
                 )
             ],
             kind="message",
@@ -134,14 +183,13 @@ class MessageHandler:
             timestamp=datetime.now(timezone.utc).isoformat()
         )
         
-        # Create tiny artifact
         artifact = A2AArtifact(
             artifactId=str(uuid.uuid4()),
             name="Mock Analysis",
             parts=[
                 ArtifactPart(
                     kind="text",
-                    text="# Mock Artifact\n\nThis is a test artifact.\n\n- Item 1\n- Item 2\n- Item 3"
+                    text="# Mock Artifact\n\n- Item 1\n- Item 2\n- Item 3"
                 )
             ]
         )
@@ -164,12 +212,131 @@ class MessageHandler:
         if "kind" not in result:
             result["kind"] = "task"
         
-        logger.info("=" * 80)
-        logger.info("MOCK RESPONSE - COMPLETED STATE WITH TINY ARTIFACT")
-        logger.info(f"Response size: ~{len(str(result))} bytes")
-        logger.info("=" * 80)
-        
         return result
+    
+    async def _mock_webhook_push(
+        self,
+        task_id: str,
+        message: Dict[str, Any],
+        push_config: Dict[str, Any]
+    ):
+        """Mock webhook push - simulates analysis delay then pushes result"""
+        try:
+            import asyncio
+            import httpx
+            
+            logger.info("=" * 80)
+            logger.info("MOCK WEBHOOK PUSH: Starting background task")
+            logger.info("Waiting 5 seconds to simulate analysis...")
+            logger.info("=" * 80)
+            
+            # Wait 5 seconds to simulate analysis
+            await asyncio.sleep(5)
+            
+            logger.info("Mock analysis complete! Building webhook payload...")
+            
+            # Create mock completed response
+            response_msg = A2AMessage(
+                messageId=str(uuid.uuid4()),
+                role="agent",
+                parts=[
+                    MessagePart(
+                        kind="text",
+                        text="✅ **WEBHOOK PUSH TEST SUCCESSFUL!**\n\nThis message was pushed via webhook after 5 seconds.\n\nIf you see this, webhook push is working!"
+                    )
+                ],
+                kind="message",
+                taskId=task_id,
+                timestamp=datetime.now(timezone.utc).isoformat()
+            )
+            
+            artifact = A2AArtifact(
+                artifactId=str(uuid.uuid4()),
+                name="Webhook Test Analysis",
+                parts=[
+                    ArtifactPart(
+                        kind="text",
+                        text="# Webhook Push Test\n\n## Success! ✅\n\nThis artifact was delivered via webhook.\n\n### Test Items:\n- Webhook URL was called\n- Bearer token was used\n- Complete task was sent\n- Artifacts included\n\nIf you're reading this, the webhook integration works!"
+                    )
+                ]
+            )
+            
+            task = A2ATask(
+                id=task_id,
+                contextId=message.get("contextId", str(uuid.uuid4())),
+                status=TaskStatus(
+                    state="completed",
+                    timestamp=datetime.now(timezone.utc).isoformat(),
+                    message=response_msg,
+                    progress=1.0
+                ),
+                artifacts=[artifact],
+                history=[response_msg],
+                kind="task"
+            )
+            
+            result_lightweight = task.model_dump(mode="json", exclude_none=True)
+            if "kind" not in result_lightweight:
+                result_lightweight["kind"] = "task"
+            
+            # Build webhook payload (JSON-RPC message/send format)
+            webhook_payload = {
+                "jsonrpc": "2.0",
+                "id": str(uuid.uuid4()),
+                "method": "message/send",
+                "params": {
+                    "message": {
+                        "kind": "message",
+                        "role": "agent",
+                        "parts": response_msg.parts[0].model_dump(mode="json", exclude_none=True) if response_msg.parts else [],
+                        "messageId": response_msg.messageId,
+                        "taskId": task_id
+                    },
+                    "context": {
+                        "taskId": task_id,
+                        "contextId": result_lightweight.get("contextId")
+                    },
+                    "task": result_lightweight
+                }
+            }
+            
+            # Get webhook details
+            webhook_url = push_config.get("url")
+            token = push_config.get("token")
+            
+            logger.info("=" * 80)
+            logger.info("WEBHOOK PAYLOAD READY")
+            logger.info(f"URL: {webhook_url}")
+            logger.info(f"Payload size: ~{len(str(webhook_payload))} bytes")
+            logger.info("=" * 80)
+            
+            # Prepare headers
+            headers = {"Content-Type": "application/json"}
+            auth_schemes = push_config.get("authentication", {}).get("schemes", [])
+            if "Bearer" in auth_schemes and token:
+                headers["Authorization"] = f"Bearer {token}"
+            
+            # Push to webhook
+            timeout = httpx.Timeout(10.0, read=60.0)
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                logger.info("Pushing to Telex webhook...")
+                response = await client.post(
+                    webhook_url,
+                    json=webhook_payload,
+                    headers=headers
+                )
+                response.raise_for_status()
+                logger.info("=" * 80)
+                logger.info(f"✅ WEBHOOK PUSH SUCCESSFUL! Status: {response.status_code}")
+                logger.info(f"Response: {response.text[:200]}")
+                logger.info("=" * 80)
+                
+        except Exception as e:
+            logger.error("=" * 80)
+            logger.error(f"❌ WEBHOOK PUSH FAILED: {e}")
+            logger.error(f"Error type: {type(e).__name__}")
+            logger.error("=" * 80)
+            logger.error(f"Full error:", exc_info=True)
     
     async def _process_and_push_safe(
         self,
