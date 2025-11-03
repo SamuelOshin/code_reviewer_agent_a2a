@@ -9,6 +9,7 @@ parameters and conversation history from the parts array.
 import logging
 import uuid
 import re
+import json
 import httpx
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
@@ -294,7 +295,12 @@ class MessageHandler:
                     "message": {
                         "kind": "message",
                         "role": "agent",
-                        "parts": response_msg.parts[0].model_dump(mode="json", exclude_none=True) if response_msg.parts else [],
+                        "parts": [
+                            {
+                                "kind": "text",
+                                "text": "✅ **WEBHOOK PUSH TEST SUCCESSFUL!**\n\nThis message was pushed via webhook after 5 seconds.\n\nIf you see this, webhook push is working!"
+                            }
+                        ],
                         "messageId": response_msg.messageId,
                         "taskId": task_id
                     },
@@ -314,6 +320,8 @@ class MessageHandler:
             logger.info("WEBHOOK PAYLOAD READY")
             logger.info(f"URL: {webhook_url}")
             logger.info(f"Payload size: ~{len(str(webhook_payload))} bytes")
+            logger.info("PAYLOAD PREVIEW:")
+            logger.info(json.dumps(webhook_payload, indent=2)[:1000] + "..." if len(json.dumps(webhook_payload)) > 1000 else json.dumps(webhook_payload, indent=2))
             logger.info("=" * 80)
             
             # Prepare headers
