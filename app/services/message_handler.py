@@ -286,30 +286,12 @@ class MessageHandler:
             if "kind" not in result_lightweight:
                 result_lightweight["kind"] = "task"
             
-            # Build webhook payload (JSON-RPC message/send format)
+            # Build webhook payload (JSON-RPC RESPONSE format - not a request!)
+            # Telex expects a response with "result", not "method" + "params"
             webhook_payload = {
                 "jsonrpc": "2.0",
-                "id": str(uuid.uuid4()),  # New RPC ID for webhook call
-                "method": "message/send",
-                "params": {
-                    "message": {
-                        "kind": "message",
-                        "role": "agent",
-                        "parts": [
-                            {
-                                "kind": "text",
-                                "text": "✅ **WEBHOOK PUSH TEST SUCCESSFUL!**\n\nThis message was pushed via webhook after 5 seconds.\n\nIf you see this, webhook push is working!"
-                            }
-                        ],
-                        "messageId": response_msg.messageId,
-                        "taskId": task_id
-                    },
-                    "context": {
-                        "taskId": task_id,
-                        "contextId": context_id
-                    },
-                    "task": result_lightweight
-                }
+                "id": str(uuid.uuid4()),  # RPC ID for this response
+                "result": result_lightweight  # The completed task goes directly in "result"
             }
             
             # Get webhook details
