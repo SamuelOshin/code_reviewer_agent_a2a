@@ -113,23 +113,32 @@ class MessageHandler:
         logger.info("Non-blocking mode: Return 'accepted' → analyze → push via webhook")
         logger.info("=" * 80)
         
-        # WEBHOOK MODE: Return accepted, then push completed via webhook
+        # WEBHOOK MODE: Return accepted, then analyze and push via webhook
         if not is_blocking and push_config:
             logger.info("=" * 80)
-            logger.info("✅ NON-BLOCKING MODE ACTIVATED")
+            logger.info("✅ NON-BLOCKING MODE ACTIVATED - REAL ANALYSIS")
             logger.info("Step 1: Return 'accepted' immediately")
-            logger.info("Step 2: Wait 5 seconds (simulating analysis)")
+            logger.info("Step 2: Analyze PR in background (30-40s)")
             logger.info("Step 3: Push 'completed' to webhook")
+            logger.info(f"PR URL: {pr_url}")
             logger.info("=" * 80)
             
-            # Create task ID upfront
-            task_id = str(uuid.uuid4())
+            # Create task ID upfront (reuse the one from earlier)
             context_id = message.get("contextId", str(uuid.uuid4()))
             
-            # Start background task to push result after delay
+            # Start background task to analyze and push result
             import asyncio
+            
+            message_id = message.get("messageId", str(uuid.uuid4()))
+            
             asyncio.create_task(
-                self._mock_webhook_push(task_id, context_id, message, push_config)
+                self._process_and_push_safe(
+                    pr_url=pr_url,
+                    task_id=task_id,
+                    message_id=message_id,
+                    message=message,
+                    push_config=push_config
+                )
             )
             
             # Return "accepted" status immediately
@@ -139,7 +148,7 @@ class MessageHandler:
                 parts=[
                     MessagePart(
                         kind="text",
-                        text="🔄 Analysis started! I'll send you the complete review shortly..."
+                        text=f"🔄 Analyzing PR now! I'll send you the complete security and performance review shortly...\n\n📎 {pr_url}"
                     )
                 ],
                 kind="message",
@@ -165,7 +174,7 @@ class MessageHandler:
             if "kind" not in result:
                 result["kind"] = "task"
             
-            logger.info("✅ Returned 'accepted' - webhook push will happen in 5 seconds")
+            logger.info("✅ Returned 'accepted' - real analysis will happen in background")
             return result
         
         # FALLBACK: Blocking mode - return completed immediately
@@ -920,34 +929,17 @@ Key Concerns:
             # Per https://ping.staging.telex.im/docs/#/default/handleA2AWebhookRequest
             # Use lightweight version to avoid HTTP 413 (payload too large)
             
-            # Extract the response message from the task status
-            response_message = result_lightweight.get("status", {}).get("message", {})
-            
-            # Build JSON-RPC message/send request (as shown in Telex webhook spec)
-            # Telex webhooks expect method="message/send" with params containing message
+            # Build JSON-RPC RESPONSE (not request!) for webhook
+            # Telex now expects "result" with the task, not "method" + "params"
             webhook_payload = {
                 "jsonrpc": "2.0",
                 "id": str(uuid.uuid4()),
-                "method": "message/send",
-                "params": {
-                    "message": {
-                        "kind": "message",
-                        "role": "agent",
-                        "parts": response_message.get("parts", []),
-                        "messageId": response_message.get("messageId"),
-                        "taskId": result_lightweight.get("id")
-                    },
-                    "context": {
-                        "taskId": result_lightweight.get("id"),
-                        "contextId": result_lightweight.get("contextId")
-                    },
-                    "task": result_lightweight  # Include full task with artifacts
-                }
+                "result": result_lightweight  # The completed task goes directly in "result"
             }
             
             logger.info(f"Pushing full task result to webhook: {webhook_url}")
             logger.info(f"Task state: {result_lightweight.get('status', {}).get('state')}")
-            logger.info(f"Sending JSON-RPC message/send request with complete task result")
+            logger.info(f"Sending JSON-RPC RESPONSE with complete task result")
             
             # Log the webhook payload being sent
             import json
