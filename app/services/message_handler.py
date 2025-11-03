@@ -103,14 +103,74 @@ class MessageHandler:
             logger.info("  No configuration provided by Telex")
         logger.info("=" * 80)
         
-        # FORCE BLOCKING MODE - TESTING CHARACTER LIMIT WITH REAL ANALYSIS DATA
-        is_blocking = True  # FORCE blocking mode
+        # USE TELEX'S BLOCKING SETTING - Webhooks are now fixed!
+        is_blocking = configuration.get("blocking", True) if configuration else True
         push_config = configuration.get("pushNotificationConfig") if configuration else None
         
         logger.info("=" * 80)
-        logger.info("🧪 TESTING MODE: BLOCKING WITH REAL ANALYSIS DATA")
-        logger.info("Testing if Telex has character limits by sending full analysis immediately")
-        logger.info("Webhooks disabled until Telex fixes their webhook bug")
+        logger.info("🎉 WEBHOOK MODE ENABLED - Telex fixed the webhook bug!")
+        logger.info(f"Telex sent: blocking={is_blocking}, has_webhook={push_config is not None}")
+        logger.info("Non-blocking mode: Return 'accepted' → analyze → push via webhook")
+        logger.info("=" * 80)
+        
+        # WEBHOOK MODE: Return accepted, then push completed via webhook
+        if not is_blocking and push_config:
+            logger.info("=" * 80)
+            logger.info("✅ NON-BLOCKING MODE ACTIVATED")
+            logger.info("Step 1: Return 'accepted' immediately")
+            logger.info("Step 2: Wait 5 seconds (simulating analysis)")
+            logger.info("Step 3: Push 'completed' to webhook")
+            logger.info("=" * 80)
+            
+            # Create task ID upfront
+            task_id = str(uuid.uuid4())
+            context_id = message.get("contextId", str(uuid.uuid4()))
+            
+            # Start background task to push result after delay
+            import asyncio
+            asyncio.create_task(
+                self._mock_webhook_push(task_id, context_id, message, push_config)
+            )
+            
+            # Return "accepted" status immediately
+            accepting_msg = A2AMessage(
+                messageId=str(uuid.uuid4()),
+                role="agent",
+                parts=[
+                    MessagePart(
+                        kind="text",
+                        text="🔄 Analysis started! I'll send you the complete review shortly..."
+                    )
+                ],
+                kind="message",
+                taskId=task_id,
+                timestamp=datetime.now(timezone.utc).isoformat()
+            )
+            
+            task = A2ATask(
+                id=task_id,
+                contextId=context_id,
+                status=TaskStatus(
+                    state="accepted",
+                    timestamp=datetime.now(timezone.utc).isoformat(),
+                    message=accepting_msg,
+                    progress=0.1
+                ),
+                artifacts=[],
+                history=[accepting_msg],
+                kind="task"
+            )
+            
+            result = task.model_dump(mode="json", exclude_none=True)
+            if "kind" not in result:
+                result["kind"] = "task"
+            
+            logger.info("✅ Returned 'accepted' - webhook push will happen in 5 seconds")
+            return result
+        
+        # FALLBACK: Blocking mode - return completed immediately
+        logger.info("=" * 80)
+        logger.info("BLOCKING MODE: Returning completed response immediately")
         logger.info("=" * 80)
         
         # Return mock completed response with REAL ANALYSIS DATA
