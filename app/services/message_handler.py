@@ -113,14 +113,63 @@ class MessageHandler:
         logger.info("This tests if Telex can display artifacts correctly")
         logger.info("=" * 80)
         
-        if not is_blocking and push_config:
-            # Non-blocking mode - return accepted status and push result via webhook
-            logger.info(f"Using NON-BLOCKING mode - will push result to webhook: {push_config.get('url')}")
-            return await self._analyze_and_push(pr_url, task_id, message_id, message, push_config)
-        else:
-            # Blocking mode - return complete analysis immediately
-            logger.info(f"Using BLOCKING mode - will return complete analysis immediately WITH ARTIFACTS")
-            return await self._analyze_and_return(pr_url, task_id, message_id, message)
+        # TESTING: Return mock completed response immediately (no real analysis)
+        logger.info("=" * 80)
+        logger.info("MOCK MODE: Returning fake 'completed' response instantly (no real analysis)")
+        logger.info("Testing if Telex displays completed responses or if it's a timeout issue")
+        logger.info("=" * 80)
+        
+        # Create minimal mock response
+        response_msg = A2AMessage(
+            messageId=str(uuid.uuid4()),
+            role="agent",
+            parts=[
+                MessagePart(
+                    kind="text",
+                    text="✅ **MOCK RESPONSE** - This is a test to see if Telex displays completed responses!\n\nPR Analysis would go here. This response was returned instantly."
+                )
+            ],
+            kind="message",
+            taskId=task_id,
+            timestamp=datetime.now(timezone.utc).isoformat()
+        )
+        
+        # Create tiny artifact
+        artifact = A2AArtifact(
+            artifactId=str(uuid.uuid4()),
+            name="Mock Analysis",
+            parts=[
+                ArtifactPart(
+                    kind="text",
+                    text="# Mock Artifact\n\nThis is a test artifact.\n\n- Item 1\n- Item 2\n- Item 3"
+                )
+            ]
+        )
+        
+        task = A2ATask(
+            id=task_id,
+            contextId=message.get("contextId", str(uuid.uuid4())),
+            status=TaskStatus(
+                state="completed",
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                message=response_msg,
+                progress=1.0
+            ),
+            artifacts=[artifact],
+            history=[response_msg],
+            kind="task"
+        )
+        
+        result = task.model_dump(mode="json", exclude_none=True)
+        if "kind" not in result:
+            result["kind"] = "task"
+        
+        logger.info("=" * 80)
+        logger.info("MOCK RESPONSE - COMPLETED STATE WITH TINY ARTIFACT")
+        logger.info(f"Response size: ~{len(str(result))} bytes")
+        logger.info("=" * 80)
+        
+        return result
     
     async def _process_and_push_safe(
         self,
