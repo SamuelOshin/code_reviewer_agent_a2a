@@ -349,14 +349,14 @@ Recommendation: Request changes. While there are no critical security or perform
             
             logger.info("Mock analysis complete! Building webhook payload...")
             
-            # Create mock completed response
+            # Create completed response with REAL ANALYSIS DATA
             response_msg = A2AMessage(
                 messageId=str(uuid.uuid4()),
                 role="agent",
                 parts=[
                     MessagePart(
                         kind="text",
-                        text="✅ **WEBHOOK PUSH TEST SUCCESSFUL!**\n\nThis message was pushed via webhook after 5 seconds.\n\nIf you see this, webhook push is working!"
+                        text="# ✅ Code Review Complete - PR #11\n\n**Feature/atomic property image upload** by @SamuelOshin\n\n## 🟢 Risk: **LOW** | ✅ Approve\n\n📊 **16 files** changed (+194/-59) • **20 issues** found\n\n### Issues Found:\n🔒 **6 Security** issues\n⚡ **7 Performance** issues\n📐 **7 Best Practice** violations\n\n### 💡 Top Concerns:\n1. 📐 BEST PRACTICES: Focus on code organization (3 issue(s))\n\n*Full details in artifacts • Analysis: 39.1s*"
                     )
                 ],
                 kind="message",
@@ -366,11 +366,68 @@ Recommendation: Request changes. While there are no critical security or perform
             
             artifact = A2AArtifact(
                 artifactId=str(uuid.uuid4()),
-                name="Webhook Test Analysis",
+                name="PR #11 Analysis",
                 parts=[
                     ArtifactPart(
                         kind="text",
-                        text="# Webhook Push Test\n\n## Success! ✅\n\nThis artifact was delivered via webhook.\n\n### Test Items:\n- Webhook URL was called\n- Bearer token was used\n- Complete task was sent\n- Artifacts included\n\nIf you're reading this, the webhook integration works!"
+                        text="""# Pull Request Analysis Report
+
+**PR #11**: Feature/atomic property image upload
+**Author**: SamuelOshin
+**Repository**: SamuelOshin/XlideLand-RealEstate
+**URL**: https://github.com/SamuelOshin/XlideLand-RealEstate/pull/11
+
+## Executive Summary
+
+This pull request implements atomic image uploads for property listings, enhancing the user experience by allowing images to be uploaded in a more efficient and reliable manner. The code demonstrates a good understanding of the core functionality, but the review revealed several areas for improvement, primarily related to best practices and performance optimizations.
+
+Key Concerns:
+1.  **Image Resizing:** The current implementation lacks image resizing functionality.
+2.  **Database Queries:** Several database queries could be optimized.
+3.  **Error Handling:** Could be improved for better debugging.
+4.  **File Naming:** Review naming convention to ensure uniqueness.
+
+## Risk Assessment
+
+**Risk Level**: LOW
+**Recommendation**: APPROVE
+
+## Statistics
+
+- Files changed: 16
+- Lines added: +194
+- Lines deleted: -59
+
+## 🔒 Security Findings (6)
+
+### 1. Missing Input Validation in Contact Model
+**Severity**: LOW
+**File**: `backend/contacts/models.py`
+
+**Recommendation**: Add validators and max_length to fields.
+
+### 2-6. Potential XSS vulnerabilities in frontend pages
+
+## ⚡ Performance Findings (7)
+
+### 1. Missing index on contact_date field
+**Severity**: MEDIUM
+
+**Recommendation**: Add database index.
+
+### 2-7. Additional performance concerns
+
+## 📚 Best Practice Findings (7)
+
+### 1. Missing Docstrings and Comments
+**Category**: documentation
+**Severity**: HIGH
+
+### 2-7. Additional best practice violations
+
+---
+*Analysis completed at 2025-11-02 22:43:07 UTC*
+*Powered by google (gemini-2.0-flash-lite)*"""
                     )
                 ]
             )
