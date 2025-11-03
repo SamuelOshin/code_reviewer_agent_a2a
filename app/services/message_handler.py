@@ -102,30 +102,33 @@ class MessageHandler:
             logger.info("  No configuration provided by Telex")
         logger.info("=" * 80)
         
-        # FORCE BLOCKING MODE FOR TESTING - ignore what Telex sends
-        is_blocking = True  # FORCE BLOCKING MODE FOR TESTING
-        # is_blocking = configuration.get("blocking", True) if configuration else True
+        # USE TELEX'S BLOCKING SETTING (for webhook push test)
+        is_blocking = configuration.get("blocking", True) if configuration else True
         push_config = configuration.get("pushNotificationConfig") if configuration else None
         
         logger.info("=" * 80)
-        logger.info("TESTING MODE: FORCING BLOCKING RESPONSE WITH ARTIFACTS")
-        logger.info("Telex will receive the complete analysis immediately (ignoring blocking:false)")
-        logger.info("This tests if Telex can display artifacts correctly")
+        logger.info("🧪 MOCK WEBHOOK PUSH TEST MODE")
+        logger.info(f"Telex sent: blocking={is_blocking}, has_webhook={push_config is not None}")
+        logger.info("Will return 'accepted' then push 'completed' via webhook after 5s")
         logger.info("=" * 80)
         
         # TESTING WEBHOOK MODE: Return accepted, then push completed via webhook
         if not is_blocking and push_config:
             logger.info("=" * 80)
-            logger.info("MOCK WEBHOOK MODE: Testing webhook push flow")
+            logger.info("✅ WEBHOOK MODE ACTIVATED")
             logger.info("Step 1: Return 'accepted' immediately")
             logger.info("Step 2: Wait 5 seconds (simulating analysis)")
             logger.info("Step 3: Push 'completed' to webhook")
             logger.info("=" * 80)
             
+            # Create task ID upfront
+            task_id = str(uuid.uuid4())
+            context_id = message.get("contextId", str(uuid.uuid4()))
+            
             # Start background task to push mock result after delay
             import asyncio
             asyncio.create_task(
-                self._mock_webhook_push(task_id, message, push_config)
+                self._mock_webhook_push(task_id, context_id, message, push_config)
             )
             
             # Return "accepted" status immediately
@@ -217,6 +220,7 @@ class MessageHandler:
     async def _mock_webhook_push(
         self,
         task_id: str,
+        context_id: str,
         message: Dict[str, Any],
         push_config: Dict[str, Any]
     ):
@@ -226,7 +230,9 @@ class MessageHandler:
             import httpx
             
             logger.info("=" * 80)
-            logger.info("MOCK WEBHOOK PUSH: Starting background task")
+            logger.info("🚀 MOCK WEBHOOK PUSH: Background task started")
+            logger.info(f"Task ID: {task_id}")
+            logger.info(f"Context ID: {context_id}")
             logger.info("Waiting 5 seconds to simulate analysis...")
             logger.info("=" * 80)
             
@@ -263,7 +269,7 @@ class MessageHandler:
             
             task = A2ATask(
                 id=task_id,
-                contextId=message.get("contextId", str(uuid.uuid4())),
+                contextId=context_id,
                 status=TaskStatus(
                     state="completed",
                     timestamp=datetime.now(timezone.utc).isoformat(),
@@ -282,7 +288,7 @@ class MessageHandler:
             # Build webhook payload (JSON-RPC message/send format)
             webhook_payload = {
                 "jsonrpc": "2.0",
-                "id": str(uuid.uuid4()),
+                "id": str(uuid.uuid4()),  # New RPC ID for webhook call
                 "method": "message/send",
                 "params": {
                     "message": {
@@ -294,7 +300,7 @@ class MessageHandler:
                     },
                     "context": {
                         "taskId": task_id,
-                        "contextId": result_lightweight.get("contextId")
+                        "contextId": context_id
                     },
                     "task": result_lightweight
                 }
