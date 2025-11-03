@@ -103,75 +103,19 @@ class MessageHandler:
             logger.info("  No configuration provided by Telex")
         logger.info("=" * 80)
         
-        # USE TELEX'S BLOCKING SETTING (for webhook push test)
-        is_blocking = configuration.get("blocking", True) if configuration else True
+        # FORCE BLOCKING MODE - TESTING CHARACTER LIMIT WITH REAL ANALYSIS DATA
+        is_blocking = True  # FORCE blocking mode
         push_config = configuration.get("pushNotificationConfig") if configuration else None
         
         logger.info("=" * 80)
-        logger.info("🧪 MOCK WEBHOOK PUSH TEST MODE")
-        logger.info(f"Telex sent: blocking={is_blocking}, has_webhook={push_config is not None}")
-        logger.info("Will return 'accepted' then push 'completed' via webhook after 5s")
+        logger.info("🧪 TESTING MODE: BLOCKING WITH REAL ANALYSIS DATA")
+        logger.info("Testing if Telex has character limits by sending full analysis immediately")
+        logger.info("Webhooks disabled until Telex fixes their webhook bug")
         logger.info("=" * 80)
         
-        # TESTING WEBHOOK MODE: Return accepted, then push completed via webhook
-        if not is_blocking and push_config:
-            logger.info("=" * 80)
-            logger.info("✅ WEBHOOK MODE ACTIVATED")
-            logger.info("Step 1: Return 'accepted' immediately")
-            logger.info("Step 2: Wait 5 seconds (simulating analysis)")
-            logger.info("Step 3: Push 'completed' to webhook")
-            logger.info("=" * 80)
-            
-            # Create task ID upfront
-            task_id = str(uuid.uuid4())
-            context_id = message.get("contextId", str(uuid.uuid4()))
-            
-            # Start background task to push mock result after delay
-            import asyncio
-            asyncio.create_task(
-                self._mock_webhook_push(task_id, context_id, message, push_config)
-            )
-            
-            # Return "accepted" status immediately
-            accepting_msg = A2AMessage(
-                messageId=str(uuid.uuid4()),
-                role="agent",
-                parts=[
-                    MessagePart(
-                        kind="text",
-                        text="🔄 **MOCK WEBHOOK TEST** - Analysis started! I'll send results via webhook in 5 seconds..."
-                    )
-                ],
-                kind="message",
-                taskId=task_id,
-                timestamp=datetime.now(timezone.utc).isoformat()
-            )
-            
-            task = A2ATask(
-                id=task_id,
-                contextId=message.get("contextId", str(uuid.uuid4())),
-                status=TaskStatus(
-                    state="accepted",
-                    timestamp=datetime.now(timezone.utc).isoformat(),
-                    message=accepting_msg,
-                    progress=0.1
-                ),
-                artifacts=[],
-                history=[accepting_msg],
-                kind="task"
-            )
-            
-            result = task.model_dump(mode="json", exclude_none=True)
-            if "kind" not in result:
-                result["kind"] = "task"
-            
-            logger.info("Returned 'accepted' - webhook push will happen in 5 seconds")
-            return result
-        
-        # FALLBACK: If no push config, return mock completed immediately
-        logger.info("=" * 80)
-        logger.info("MOCK MODE: No webhook config - returning completed immediately")
-        logger.info("=" * 80)
+        # Return mock completed response with REAL ANALYSIS DATA
+        task_id = str(uuid.uuid4())
+        context_id = message.get("contextId", str(uuid.uuid4()))
         
         response_msg = A2AMessage(
             messageId=str(uuid.uuid4()),
@@ -179,7 +123,7 @@ class MessageHandler:
             parts=[
                 MessagePart(
                     kind="text",
-                    text="✅ **MOCK RESPONSE** - This is a test!\n\nPR Analysis would go here."
+                    text="# ✅ Code Review Complete - PR #11\n\n**Feature/atomic property image upload** by @SamuelOshin\n\n## 🟢 Risk: **LOW** | ✅ Approve\n\n📊 **16 files** changed (+194/-59) • **20 issues** found\n\n### Issues Found:\n🔒 **6 Security** issues\n⚡ **7 Performance** issues\n📐 **7 Best Practice** violations\n\n### 💡 Top Concerns:\n1. 📐 BEST PRACTICES: Focus on code organization (3 issue(s))\n\n*Full details in artifacts • Analysis: 39.1s*"
                 )
             ],
             kind="message",
@@ -189,18 +133,121 @@ class MessageHandler:
         
         artifact = A2AArtifact(
             artifactId=str(uuid.uuid4()),
-            name="Mock Analysis",
+            name="PR #11 Analysis",
             parts=[
                 ArtifactPart(
                     kind="text",
-                    text="# Mock Artifact\n\n- Item 1\n- Item 2\n- Item 3"
+                    text="""# Pull Request Analysis Report
+
+**PR #11**: Feature/atomic property image upload
+**Author**: SamuelOshin
+**Repository**: SamuelOshin/XlideLand-RealEstate
+**URL**: https://github.com/SamuelOshin/XlideLand-RealEstate/pull/11
+
+## Executive Summary
+
+This pull request implements atomic image uploads for property listings, enhancing the user experience by allowing images to be uploaded in a more efficient and reliable manner. The code demonstrates a good understanding of the core functionality, but the review revealed several areas for improvement, primarily related to best practices and performance optimizations.
+
+The overall risk level is medium. While no critical security or high-impact performance issues were identified, the number of best practice violations and performance concerns warrants attention before merging. Addressing these issues will improve the maintainability and scalability of the new feature.
+
+Key Concerns:
+1.  **Image Resizing:** The current implementation lacks image resizing functionality, which could lead to performance issues and increased storage costs as larger images are uploaded. Consider implementing image resizing using a library like Pillow to optimize image sizes.
+2.  **Database Queries:** Several database queries within the image upload process could be optimized to improve performance. Review the query patterns and consider batching operations or using more efficient query methods.
+3.  **Error Handling:** While basic error handling is present, it could be improved to provide more informative error messages to the user and better logging for debugging purposes.
+4.  **File Naming:** The current file naming convention for uploaded images should be reviewed to ensure uniqueness and prevent potential conflicts. Consider using a UUID or a similar approach.
+
+Positive Aspects:
+1.  The code is generally well-structured and follows a clear logical flow.
+2.  The atomic upload approach is a good design choice for this feature, improving reliability.
+
+Recommendation: Request changes. While there are no critical security or performance issues, the identified concerns regarding image resizing, database queries, error handling, and file naming must be addressed to ensure the long-term maintainability and performance of the feature.
+
+## Risk Assessment
+
+**Risk Level**: LOW
+**Recommendation**: APPROVE
+
+## Key Concerns
+
+- 📐 BEST PRACTICES: Focus on code organization (3 issue(s))
+
+## Statistics
+
+- Files changed: 16
+- Lines added: +194
+- Lines deleted: -59
+
+## 🔒 Security Findings (6)
+
+### 1. Missing Input Validation in Contact Model
+**Severity**: LOW
+**File**: `backend/contacts/models.py` (Line 62)
+
+**Description**: The `Contact` model in `backend/contacts/models.py` lacks input validation for fields like `name`, `email`, `subject`, and `message`. This can lead to data integrity issues and potential vulnerabilities if the application doesn't properly handle invalid data.
+
+**Recommendation**: Add `validators` and `max_length` to the fields in the `Contact` model.
+
+**CWE ID**: CWE-20
+
+### 2. Potential XSS vulnerability in frontend/src/app/properties/[id]/page_clean.tsx
+**Severity**: LOW
+**File**: `frontend/src/app/properties/[id]/page_clean.tsx`
+
+**Description**: The code likely displays data fetched from a backend, and if this data is not properly escaped, it could be vulnerable to Cross-Site Scripting (XSS) attacks.
+
+**Recommendation**: Ensure that any data fetched from the backend and displayed in the HTML is properly escaped using a library like `DOMPurify` or using the built-in escaping mechanisms of the frontend framework.
+
+**CWE ID**: CWE-79
+
+### 3-6. Similar XSS vulnerabilities in other frontend pages
+**Files**: page_new.tsx, about/page.tsx, contact/page.tsx, dashboard/inquiries/page.tsx
+
+## ⚡ Performance Findings (7)
+
+### 1. Missing index on contact_date field
+**Severity**: MEDIUM
+**File**: `backend/contacts/models.py`
+
+**Description**: The `contact_date` field is likely used for filtering and sorting. Without an index, database queries will be slower, especially as the table grows.
+
+**Recommendation**: Add an index to the `contact_date` field.
+
+### 2. Potential for N+1 query in contact retrieval
+**Severity**: LOW
+**File**: `backend/contacts/models.py`
+
+**Description**: If related models are accessed within a loop when retrieving contacts, it could lead to N+1 query problem.
+
+**Recommendation**: Use `select_related` or `prefetch_related` to optimize related object retrieval.
+
+### 3-7. Additional performance concerns in frontend pages
+
+## 📚 Best Practice Findings (7)
+
+### 1. Missing Docstrings and Comments
+**Category**: documentation
+**Severity**: HIGH
+
+**Recommendation**: Add docstrings to all classes and methods.
+
+### 2. Inconsistent Naming Convention
+**Category**: naming
+**Severity**: MEDIUM
+
+**Recommendation**: Ensure consistent use of naming conventions (snake_case, PascalCase).
+
+### 3-7. Additional best practice violations including missing unit tests and potential code duplication
+
+---
+*Analysis completed at 2025-11-02 22:43:07 UTC*
+*Powered by google (gemini-2.0-flash-lite)*"""
                 )
             ]
         )
         
         task = A2ATask(
             id=task_id,
-            contextId=message.get("contextId", str(uuid.uuid4())),
+            contextId=context_id,
             status=TaskStatus(
                 state="completed",
                 timestamp=datetime.now(timezone.utc).isoformat(),
