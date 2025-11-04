@@ -1,18 +1,21 @@
 # Code Review Agent 🤖
 
-AI-powered code review agent for GitHub Pull Requests using Agent-to-Agent (A2A) protocol and Google Gemini AI.
+AI-powered code review agent for GitHub Pull Requests using Agent-to-Agent (A2A) protocol and Google Gemini AI. Features comprehensive security analysis, performance optimization detection, and best practice recommendations with webhook-based delivery for seamless integration.
 
 ## 🌟 Features
 
 - **🔒 Security Analysis**: Detects 10+ vulnerability types (SQL injection, XSS, hardcoded secrets, etc.) with CWE references
 - **⚡ Performance Analysis**: Identifies performance bottlenecks (N+1 queries, nested loops, blocking I/O, etc.)
 - **✨ Best Practices**: LLM-powered code quality recommendations
-- **🤝 A2A Protocol**: Full Agent-to-Agent protocol compliance for integration with Telex
+- **🤝 A2A Protocol**: Full Agent-to-Agent protocol compliance with proper Message/Task handling
 - **🔗 GitHub Integration**: Uses GitHub MCP (Model Context Protocol) for seamless PR access
 - **🧠 Multi-LLM Support**: Google Gemini (default), OpenAI GPT-4, Anthropic Claude
 - **📊 Risk Assessment**: Automated risk level calculation and approval recommendations
 - **🚀 JSON-RPC 2.0**: Standard RPC interface for programmatic access
-- **🎯 GitHub Webhooks**: Automatic analysis on PR events
+- **🎯 GitHub Webhooks**: Automatic analysis on PR events with webhook push notifications
+- **🔄 Non-blocking Mode**: Immediate response with background processing and webhook delivery
+- **📏 Payload Optimization**: Automatic artifact truncation to prevent HTTP 413 errors
+- **🛡️ Error Handling**: Comprehensive error handling with proper webhook error reporting
 
 ## 📋 Table of Contents
 
@@ -25,7 +28,9 @@ AI-powered code review agent for GitHub Pull Requests using Agent-to-Agent (A2A)
 - [Docker Deployment](#docker-deployment)
 - [Testing](#testing)
 - [Troubleshooting](#troubleshooting)
+- [Project Structure](#project-structure)
 - [Contributing](#contributing)
+- [Recent Updates](#recent-updates)
 
 ## 🏗️ Architecture
 
@@ -41,7 +46,7 @@ AI-powered code review agent for GitHub Pull Requests using Agent-to-Agent (A2A)
 │         │                                         │         │
 │         v                                         v         │
 │  ┌──────────────────────────────────────────────────────┐  │
-│  │           CodeAnalyzerService                        │  │
+│  │           MessageHandlerService                      │  │
 │  │  ┌────────────┐ ┌────────────┐ ┌────────────┐      │  │
 │  │  │  GitHub    │ │    LLM     │ │   Telex    │      │  │
 │  │  │    MCP     │ │  Service   │ │   Client   │      │  │
@@ -52,6 +57,14 @@ AI-powered code review agent for GitHub Pull Requests using Agent-to-Agent (A2A)
 │  │  └────────────┘ └────────────┘ └────────────┘      │  │
 │  └──────────────────────────────────────────────────────┘  │
 │                                                              │
+│  ┌──────────────────────────────────────────────────────┐  │
+│  │              A2A Protocol Compliance                  │  │
+│  │  ┌────────────┐ ┌────────────┐ ┌────────────┐      │  │
+│  │  │  Immediate │ │ Background │ │   Webhook  │      │  │
+│  │  │  Response  │ │ Processing │ │   Push     │      │  │
+│  │  │  (Message) │ │   (Task)   │ │  (Result)  │      │  │
+│  │  └────────────┘ └────────────┘ └────────────┘      │  │
+│  └──────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────┘
          │                  │                   │
          v                  v                   v
@@ -130,23 +143,23 @@ LOG_LEVEL=INFO
 GITHUB_TOKEN=ghp_your_github_token_here
 GITHUB_WEBHOOK_SECRET=your_webhook_secret
 
-# LLM Configuration (Google Gemini - Default)
+# LLM Configuration (Google Gemini - Primary & Recommended)
 LLM_PROVIDER=google
-LLM_MODEL=gemini-1.5-flash
+LLM_MODEL=gemini-2.0-flash-lite
 GOOGLE_API_KEY=your_gemini_api_key
 
-# Alternative: OpenAI
+# Alternative: OpenAI (Compatible)
 # LLM_PROVIDER=openai
 # LLM_MODEL=gpt-4
 # OPENAI_API_KEY=sk-your-openai-key
 
-# Alternative: Anthropic
+# Alternative: Anthropic (Compatible)
 # LLM_PROVIDER=anthropic
 # LLM_MODEL=claude-3-sonnet-20240229
 # ANTHROPIC_API_KEY=sk-ant-your-anthropic-key
 
 # Telex Configuration (Optional)
-TELEX_URL=https://telex.example.com
+TELEX_WEBHOOK_URL=https://telex.example.com
 TELEX_API_KEY=your_telex_api_key
 ```
 
@@ -156,13 +169,14 @@ TELEX_API_KEY=your_telex_api_key
    - Select scopes: `repo`, `read:org`
 
 2. **Google AI Studio**: https://makersuite.google.com/app/apikey
-   - Free tier available
+   - Recommended model: `gemini-2.0-flash-lite` (fast, cost-effective)
+   - Free tier available with generous limits
 
 3. **OpenAI**: https://platform.openai.com/api-keys
-   - Paid service
+   - Paid service, good for GPT-4 access
 
 4. **Anthropic**: https://console.anthropic.com/
-   - Paid service
+   - Paid service, excellent for Claude models
 
 ## 🎯 Usage
 
@@ -226,69 +240,122 @@ ngrok http 8000
 | `/live` | GET | Liveness probe (K8s) |
 | `/docs` | GET | Interactive API docs (dev only) |
 
-### JSON-RPC Methods
+### A2A Protocol Implementation
 
-#### `analyze_pr`
+The agent implements the Agent-to-Agent (A2A) protocol with proper handling of:
 
-Analyzes a GitHub Pull Request.
-
-**Request:**
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "analyze_pr",
-  "params": {
-    "pr_url": "https://github.com/user/repo/pull/123",
-    "send_to_telex": true,
-    "focus_areas": ["security", "performance"]
-  },
-  "id": 1
-}
-```
-
-**Response:**
+#### Immediate Response (Message Object)
+When a request is received, the agent immediately returns a `Message` object:
 ```json
 {
   "jsonrpc": "2.0",
   "result": {
-    "analysis_id": "analysis-123-1698765432",
-    "pr_number": 123,
-    "pr_url": "https://github.com/user/repo/pull/123",
-    "pr_title": "Add authentication",
-    "pr_author": "testuser",
-    "executive_summary": "This PR introduces authentication...",
-    "risk_level": "HIGH",
-    "approval_recommendation": "REQUEST_CHANGES",
-    "security_issues_count": 3,
-    "performance_issues_count": 1,
-    "best_practice_issues_count": 2,
-    "metrics": {
-      "total_files": 5,
-      "lines_added": 200,
-      "lines_deleted": 50
-    },
-    "recommendations": [
-      "🔒 Fix SQL injection vulnerability",
-      "⚡ Optimize database queries"
-    ],
-    "analyzed_at": "2024-10-30T12:00:00Z",
-    "analysis_duration_seconds": 15.3,
-    "telex_sent": true
+    "messageId": "uuid",
+    "role": "agent",
+    "parts": [{"kind": "text", "text": "🔄 PR analysis started!"}],
+    "kind": "message",
+    "taskId": "task-uuid",
+    "timestamp": "2025-11-04T..."
   },
-  "id": 1
+  "id": "request-id"
 }
 ```
 
-#### `introspect`
+#### Background Processing & Webhook Push (Task Object)
+Analysis runs asynchronously and results are pushed via webhook as a `Task` object:
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "id": "task-uuid",
+    "contextId": "context-uuid",
+    "status": {
+      "state": "completed",
+      "timestamp": "2025-11-04T...",
+      "message": {...},
+      "progress": 1.0
+    },
+    "artifacts": [
+      {
+        "artifactId": "artifact-uuid",
+        "name": "PR Analysis",
+        "parts": [{"kind": "text", "text": "# Analysis Report..."}]
+      }
+    ],
+    "history": [...],
+    "kind": "task"
+  },
+  "id": "webhook-id"
+}
+```
 
-Lists available methods.
+### JSON-RPC Methods
+
+#### `message/send`
+
+Handles incoming messages from Telex via A2A protocol.
 
 **Request:**
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "introspect",
-  "id": 2
+  "method": "message/send",
+  "params": {
+    "message": {
+      "messageId": "uuid",
+      "role": "user",
+      "parts": [{"kind": "text", "text": "Analyze PR: https://github.com/user/repo/pull/123"}],
+      "contextId": "context-uuid",
+      "timestamp": "2025-11-04T..."
+    },
+    "configuration": {
+      "pushNotificationConfig": {
+        "url": "https://telex.example.com/webhook",
+        "token": "bearer-token",
+        "authentication": {
+          "schemes": ["Bearer"]
+        }
+      }
+    }
+  },
+  "id": 1
+}
+```
+
+**Immediate Response (Message):**
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "messageId": "response-uuid",
+    "role": "agent",
+    "parts": [{"kind": "text", "text": "🔄 PR analysis started!"}],
+    "kind": "message",
+    "taskId": "task-uuid",
+    "timestamp": "2025-11-04T..."
+  },
+  "id": 1
+}
+```
+
+**Webhook Push (Task - sent asynchronously):**
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "id": "task-uuid",
+    "contextId": "context-uuid",
+    "status": {
+      "state": "completed",
+      "timestamp": "2025-11-04T...",
+      "message": {...},
+      "progress": 1.0
+    },
+    "artifacts": [...],
+    "history": [...],
+    "kind": "task"
+  },
+  "id": "webhook-uuid"
 }
 ```
 
@@ -413,12 +480,53 @@ node --version
 pip install -r requirements.txt
 ```
 
+#### 5. A2A Protocol Validation Errors
+
+**Error**: `state: 'accepted' invalid` or `wrong object type`
+
+**Solution**: This was a protocol compliance issue. The agent now:
+- Returns `Message` object immediately (not `Task`)
+- Uses valid task states: `submitted`, `working`, `completed`, `failed`, etc.
+- Sends `Task` objects via webhook push (not in immediate response)
+
+#### 6. HTTP 413 Payload Too Large
+
+**Error**: `413 Payload Too Large` on webhook push
+
+**Solution**: The agent now automatically truncates artifacts to 50KB max to prevent webhook payload size issues.
+
+#### 7. Webhook Format Errors
+
+**Error**: Telex rejects webhook payload format
+
+**Solution**: Webhook pushes now use correct JSON-RPC response format:
+```json
+{
+  "jsonrpc": "2.0",
+  "result": { /* Task object */ },
+  "id": "webhook-id"
+}
+```
+Instead of the incorrect request format with `method` and `params`.
+
 ### Debug Mode
 
 Enable debug logging:
 
 ```env
 LOG_LEVEL=DEBUG
+```
+
+### Testing Webhook Integration
+
+Use the provided test scripts:
+
+```powershell
+# Test A2A endpoint
+python scripts/test_a2a_endpoint.py
+
+# Test webhook push
+python scripts/test_webhook_push.py
 ```
 
 ## 📖 Project Structure
@@ -436,6 +544,7 @@ code_reviewer_agent_a2a/
 │   │   ├── github.py      # GitHub models
 │   │   └── analysis.py    # Analysis models
 │   ├── services/          # Business logic
+│   │   ├── message_handler.py  # A2A message handling
 │   │   ├── github_mcp.py  # GitHub MCP client
 │   │   ├── llm_service.py # LLM integration
 │   │   ├── code_analyzer.py # Main orchestrator
@@ -444,9 +553,12 @@ code_reviewer_agent_a2a/
 │   ├── routes/            # API routes
 │   │   ├── webhooks.py    # GitHub webhooks
 │   │   ├── jsonrpc.py     # RPC endpoint
+│   │   ├── a2a.py         # A2A protocol routes
 │   │   └── health.py      # Health checks
 │   ├── schemas/           # Request/Response schemas
-│   │   └── rpc.py         # RPC schemas
+│   │   ├── agent.py       # Agent schemas
+│   │   ├── rpc.py         # RPC schemas
+│   │   └── webhook.py     # Webhook schemas
 │   ├── utils/             # Utilities
 │   │   ├── diff_parser.py # Diff parsing
 │   │   ├── security_rules.py # Security patterns
@@ -455,18 +567,32 @@ code_reviewer_agent_a2a/
 │   └── main.py            # FastAPI app
 ├── config/
 │   ├── agent_card.json    # A2A agent card
+│   ├── agent_card_telex.json # Telex-specific agent card
 │   └── prompts/           # LLM prompts
 │       ├── security_analysis.txt
 │       ├── performance_analysis.txt
-│       └── summary_generation.txt
+│       ├── summary_generation.txt
+│       └── telex_chat_system.txt
 ├── tests/                 # Test suite
-│   ├── test_diff_parser.py
-│   ├── test_security_rules.py
-│   └── test_code_analyzer.py
-├── Dockerfile
-├── docker-compose.yml
-├── requirements.txt
-├── .env.example
+│   ├── conftest.py        # Test configuration
+│   ├── test_a2a_protocol.py # A2A protocol tests
+│   ├── test_code_analyzer.py # Analyzer tests
+│   ├── test_diff_parser.py # Diff parser tests
+│   ├── test_github_mcp.py  # GitHub MCP tests
+│   ├── test_jsonrpc.py     # JSON-RPC tests
+│   ├── test_security_rules.py # Security tests
+│   └── test_webhooks.py    # Webhook tests
+├── scripts/               # Utility scripts
+│   ├── setup_github_webhook.py # Webhook setup
+│   ├── test_a2a_endpoint.py    # A2A testing
+│   └── deploy.sh              # Deployment script
+├── docker-compose.yml     # Docker composition
+├── Dockerfile            # Container definition
+├── requirements.txt      # Python dependencies
+├── pyproject.toml        # Project metadata
+├── .env.example          # Environment template
+├── QUICK_START.md        # Quick start guide
+├── QUICK_START_TELEX.md  # Telex integration guide
 └── README.md
 ```
 
@@ -496,6 +622,32 @@ MIT License - see LICENSE file for details
 - **Issues**: https://github.com/yourusername/code_reviewer_agent_a2a/issues
 - **Discussions**: https://github.com/yourusername/code_reviewer_agent_a2a/discussions
 - **Documentation**: See `code_reviewer_implementation.md` and `get_started_plan.md`
+
+## 🆕 Recent Updates
+
+### v1.1.0 - A2A Protocol Compliance & Webhook Fixes
+
+**Key Improvements:**
+- ✅ **A2A Protocol Compliance**: Fixed immediate response to return `Message` objects instead of `Task` objects
+- ✅ **Webhook Format**: Corrected webhook push to use JSON-RPC response format (`result`) instead of request format (`method`/`params`)
+- ✅ **Payload Optimization**: Added automatic artifact truncation (50KB max) to prevent HTTP 413 errors
+- ✅ **Code Cleanup**: Removed duplicate functions, mock code, and invalid task states
+- ✅ **Error Handling**: Improved webhook error reporting with proper `Task` objects for failed states
+
+**Breaking Changes:**
+- Webhook payload format changed from request-style to response-style JSON-RPC
+- Immediate responses now return `Message` objects (not `Task`)
+- Invalid task state `"accepted"` removed (now uses valid A2A states)
+
+**Migration Guide:**
+If you have existing webhook integrations, update your webhook handlers to expect:
+```json
+{
+  "jsonrpc": "2.0",
+  "result": { /* Task object */ },
+  "id": "..."
+}
+```
 
 ---
 

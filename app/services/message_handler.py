@@ -109,10 +109,12 @@ class MessageHandler:
         
         logger.info("=" * 80)
         logger.info(f"Request mode: blocking={is_blocking}, has_webhook={push_config is not None}")
+        logger.info(f"Will create background task: {not is_blocking and push_config is not None}")
         logger.info("=" * 80)
         
         # WEBHOOK MODE: Non-blocking mode with real PR analysis
         if not is_blocking and push_config:
+            print("🔥 ENTERING WEBHOOK MODE - CREATING BACKGROUND TASK")
             logger.info("=" * 80)
             logger.info("✅ NON-BLOCKING MODE - REAL PR ANALYSIS")
             logger.info("Step 1: Return message immediately")
@@ -187,6 +189,8 @@ class MessageHandler:
         push_config: Dict[str, Any]
     ):
         """Wrapper for _process_and_push with comprehensive error handling"""
+        print(f"🔥🔥 _process_and_push_safe CALLED for PR: {pr_url}")
+        logger.info(f"🚀 _process_and_push_safe STARTED for PR: {pr_url}")
         try:
             logger.info(f"Background task started for PR: {pr_url}")
             logger.info(f"Task details - ID: {task_id}, Message: {message_id}")
@@ -195,14 +199,16 @@ class MessageHandler:
             await self._process_and_push(pr_url, task_id, message_id, message, push_config)
             logger.info(f"Background task completed successfully for PR: {pr_url}")
         except Exception as e:
-            logger.error(f"Fatal error in background task: {e}", exc_info=True)
+            logger.error(f"💥 Fatal error in background task: {e}", exc_info=True)
             logger.error(f"Error type: {type(e).__name__}")
             logger.error(f"Error occurred at PR: {pr_url}")
             # Try to send error to Telex webhook
+            logger.info("🔄 Attempting to push error from _process_and_push_safe...")
             try:
                 await self._push_error_to_telex(task_id, message_id, message, push_config, str(e))
+                logger.info("✅ Error pushed from _process_and_push_safe")
             except Exception as push_error:
-                logger.error(f"Failed to push error to Telex: {push_error}", exc_info=True)
+                logger.error(f"❌ Failed to push error to Telex: {push_error}", exc_info=True)
     
     async def _push_error_to_telex(
         self,
@@ -213,18 +219,70 @@ class MessageHandler:
         error_message: str
     ):
         """Push error result to Telex webhook"""
+        logger.info(f"🔧 _push_error_to_telex called with task_id: {task_id}")
+        logger.info(f"   Error message: {error_message[:100]}...")
+        
+        # Determine error type and create user-friendly message
+        if "429" in error_message or "Resource exhausted" in error_message:
+            user_message = (
+                "⚠️ **Analysis Temporarily Unavailable**\n\n"
+                "I've hit my API rate limit while analyzing this PR. This is a temporary issue.\n\n"
+                "**What happened:**\n"
+                "- The AI service (Gemini) has throttled requests due to high usage\n"
+                "- This typically resets within a few minutes\n\n"
+                "**What you can do:**\n"
+                "1. ⏰ Wait 5-10 minutes and try again\n"
+                "2. 🔄 Ask me to analyze the PR again later\n\n"
+                f"_Technical details: {error_message}_"
+            )
+        elif "GitHub" in error_message or "404" in error_message:
+            user_message = (
+                "❌ **Unable to Access Pull Request**\n\n"
+                "I couldn't fetch the PR data from GitHub.\n\n"
+                "**Possible reasons:**\n"
+                "- The PR URL might be incorrect\n"
+                "- The repository might be private (I need access)\n"
+                "- GitHub API might be temporarily unavailable\n\n"
+                "**What you can do:**\n"
+                "1. ✅ Verify the PR URL is correct\n"
+                "2. 🔑 Ensure I have access to private repositories (if applicable)\n"
+                "3. 🔄 Try again in a few moments\n\n"
+                f"_Technical details: {error_message}_"
+            )
+        else:
+            user_message = (
+                "❌ **Analysis Failed**\n\n"
+                "I encountered an unexpected error while analyzing this PR.\n\n"
+                "**What you can do:**\n"
+                "1. 🔄 Try again - it might be a temporary issue\n"
+                "2. 📝 If the problem persists, please report this error\n\n"
+                f"**Error details:**\n```\n{error_message[:500]}\n```"
+            )
+        
         error_msg = A2AMessage(
             messageId=str(uuid.uuid4()),
             role="agent",
             parts=[
                 MessagePart(
                     kind="text",
-                    text=f"❌ Analysis failed: {error_message}"
+                    text=user_message
                 )
             ],
             kind="message",
             taskId=task_id,
             timestamp=datetime.now(timezone.utc)
+        )
+        
+        # Create error artifact (Telex won't display message if artifacts=[])
+        error_artifact = A2AArtifact(
+            artifactId=str(uuid.uuid4()),
+            name="Error Report",
+            parts=[
+                ArtifactPart(
+                    kind="text",
+                    text=f"# ❌ PR Analysis Error\n\n{user_message}\n\n---\n\n## Technical Details\n\n```\n{error_message}\n```\n\n---\n*Error occurred at {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}*"
+                )
+            ]
         )
         
         task_obj = A2ATask(
@@ -235,7 +293,7 @@ class MessageHandler:
                 timestamp=datetime.now(timezone.utc),
                 message=error_msg
             ),
-            artifacts=[],
+            artifacts=[error_artifact],  
             history=[error_msg],
             kind="task"
         )
@@ -373,7 +431,7 @@ class MessageHandler:
         message_id: str,
         message: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Analyze PR and return result (blocking mode)"""
+        """Analyze PR and return result dict"""
         try:
             logger.info(f"Analyzing PR: {pr_url}")
             logger.info("About to call analyzer.analyze_pr...")
@@ -595,6 +653,14 @@ class MessageHandler:
                 
         except Exception as e:
             logger.error(f"Error processing and pushing result: {e}", exc_info=True)
+            logger.info("🔄 Attempting to push error to Telex webhook...")
+            # Try to send error to Telex webhook
+            try:
+                logger.info("📞 Calling _push_error_to_telex...")
+                await self._push_error_to_telex(task_id, message_id, message, push_config, str(e))
+                logger.info("✅ Error result pushed to Telex webhook successfully")
+            except Exception as push_error:
+                logger.error(f"❌ Failed to push error to Telex: {push_error}", exc_info=True)
     
     def _extract_pr_url(self, interpreted_text: Optional[str], conversation_history: List[Dict[str, Any]]) -> Optional[str]:
         """
