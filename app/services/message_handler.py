@@ -103,34 +103,30 @@ class MessageHandler:
             logger.info("  No configuration provided by Telex")
         logger.info("=" * 80)
         
-        # USE TELEX'S BLOCKING SETTING - Webhooks are now fixed!
+        # USE TELEX'S BLOCKING SETTING (for webhook push test)
         is_blocking = configuration.get("blocking", True) if configuration else True
         push_config = configuration.get("pushNotificationConfig") if configuration else None
         
         logger.info("=" * 80)
-        logger.info("🎉 WEBHOOK MODE ENABLED - Telex fixed the webhook bug!")
-        logger.info(f"Telex sent: blocking={is_blocking}, has_webhook={push_config is not None}")
-        logger.info("Non-blocking mode: Return 'accepted' → analyze → push via webhook")
+        logger.info(f"Request mode: blocking={is_blocking}, has_webhook={push_config is not None}")
         logger.info("=" * 80)
         
-        # WEBHOOK MODE: Return accepted, then analyze and push via webhook
+        # WEBHOOK MODE: Non-blocking mode with real PR analysis
         if not is_blocking and push_config:
             logger.info("=" * 80)
-            logger.info("✅ NON-BLOCKING MODE ACTIVATED - REAL ANALYSIS")
-            logger.info("Step 1: Return 'accepted' immediately")
+            logger.info("✅ NON-BLOCKING MODE - REAL PR ANALYSIS")
+            logger.info("Step 1: Return message immediately")
             logger.info("Step 2: Analyze PR in background (30-40s)")
-            logger.info("Step 3: Push 'completed' to webhook")
+            logger.info("Step 3: Push complete task to webhook")
             logger.info(f"PR URL: {pr_url}")
             logger.info("=" * 80)
             
-            # Create task ID upfront (reuse the one from earlier)
+            # Create task ID upfront
             context_id = message.get("contextId", str(uuid.uuid4()))
-            
-            # Start background task to analyze and push result
-            import asyncio
-            
             message_id = message.get("messageId", str(uuid.uuid4()))
             
+            # Start background task for real analysis
+            import asyncio
             asyncio.create_task(
                 self._process_and_push_safe(
                     pr_url=pr_url,
@@ -141,7 +137,7 @@ class MessageHandler:
                 )
             )
             
-            # Return "accepted" status immediately
+            # Return MESSAGE (not Task) for immediate response
             accepting_msg = A2AMessage(
                 messageId=str(uuid.uuid4()),
                 role="agent",
@@ -156,43 +152,22 @@ class MessageHandler:
                 timestamp=datetime.now(timezone.utc).isoformat()
             )
             
-            task = A2ATask(
-                id=task_id,
-                contextId=context_id,
-                status=TaskStatus(
-                    state="accepted",
-                    timestamp=datetime.now(timezone.utc).isoformat(),
-                    message=accepting_msg,
-                    progress=0.1
-                ),
-                artifacts=[],
-                history=[accepting_msg],
-                kind="task"
-            )
-            
-            result = task.model_dump(mode="json", exclude_none=True)
+            # Return message as result (NOT Task object)
+            result = accepting_msg.model_dump(mode="json", exclude_none=True)
             if "kind" not in result:
-                result["kind"] = "task"
+                result["kind"] = "message"
             
-            logger.info("✅ Returned 'accepted' - real analysis will happen in background")
+            logger.info("✅ Returned 'working' message - real analysis will happen in background")
             return result
         
-        # FALLBACK: Blocking mode - return completed immediately
-        logger.info("=" * 80)
-        logger.info("BLOCKING MODE: Returning completed response immediately")
-        logger.info("=" * 80)
-        
-        # Return mock completed response with REAL ANALYSIS DATA
-        task_id = str(uuid.uuid4())
-        context_id = message.get("contextId", str(uuid.uuid4()))
-        
-        response_msg = A2AMessage(
+        # No webhook config - return error
+        error_msg = A2AMessage(
             messageId=str(uuid.uuid4()),
             role="agent",
             parts=[
                 MessagePart(
                     kind="text",
-                    text="# ✅ Code Review Complete - PR #11\n\n**Feature/atomic property image upload** by @SamuelOshin\n\n## 🟢 Risk: **LOW** | ✅ Approve\n\n📊 **16 files** changed (+194/-59) • **20 issues** found\n\n### Issues Found:\n🔒 **6 Security** issues\n⚡ **7 Performance** issues\n📐 **7 Best Practice** violations\n\n### 💡 Top Concerns:\n1. 📐 BEST PRACTICES: Focus on code organization (3 issue(s))\n\n*Full details in artifacts • Analysis: 39.1s*"
+                    text="❌ Unable to process PR review. Please ensure the agent is properly configured with webhook support."
                 )
             ],
             kind="message",
@@ -200,312 +175,8 @@ class MessageHandler:
             timestamp=datetime.now(timezone.utc).isoformat()
         )
         
-        artifact = A2AArtifact(
-            artifactId=str(uuid.uuid4()),
-            name="PR #11 Analysis",
-            parts=[
-                ArtifactPart(
-                    kind="text",
-                    text="""# Pull Request Analysis Report
-
-**PR #11**: Feature/atomic property image upload
-**Author**: SamuelOshin
-**Repository**: SamuelOshin/XlideLand-RealEstate
-**URL**: https://github.com/SamuelOshin/XlideLand-RealEstate/pull/11
-
-## Executive Summary
-
-This pull request implements atomic image uploads for property listings, enhancing the user experience by allowing images to be uploaded in a more efficient and reliable manner. The code demonstrates a good understanding of the core functionality, but the review revealed several areas for improvement, primarily related to best practices and performance optimizations.
-
-The overall risk level is medium. While no critical security or high-impact performance issues were identified, the number of best practice violations and performance concerns warrants attention before merging. Addressing these issues will improve the maintainability and scalability of the new feature.
-
-Key Concerns:
-1.  **Image Resizing:** The current implementation lacks image resizing functionality, which could lead to performance issues and increased storage costs as larger images are uploaded. Consider implementing image resizing using a library like Pillow to optimize image sizes.
-2.  **Database Queries:** Several database queries within the image upload process could be optimized to improve performance. Review the query patterns and consider batching operations or using more efficient query methods.
-3.  **Error Handling:** While basic error handling is present, it could be improved to provide more informative error messages to the user and better logging for debugging purposes.
-4.  **File Naming:** The current file naming convention for uploaded images should be reviewed to ensure uniqueness and prevent potential conflicts. Consider using a UUID or a similar approach.
-
-Positive Aspects:
-1.  The code is generally well-structured and follows a clear logical flow.
-2.  The atomic upload approach is a good design choice for this feature, improving reliability.
-
-Recommendation: Request changes. While there are no critical security or performance issues, the identified concerns regarding image resizing, database queries, error handling, and file naming must be addressed to ensure the long-term maintainability and performance of the feature.
-
-## Risk Assessment
-
-**Risk Level**: LOW
-**Recommendation**: APPROVE
-
-## Key Concerns
-
-- 📐 BEST PRACTICES: Focus on code organization (3 issue(s))
-
-## Statistics
-
-- Files changed: 16
-- Lines added: +194
-- Lines deleted: -59
-
-## 🔒 Security Findings (6)
-
-### 1. Missing Input Validation in Contact Model
-**Severity**: LOW
-**File**: `backend/contacts/models.py` (Line 62)
-
-**Description**: The `Contact` model in `backend/contacts/models.py` lacks input validation for fields like `name`, `email`, `subject`, and `message`. This can lead to data integrity issues and potential vulnerabilities if the application doesn't properly handle invalid data.
-
-**Recommendation**: Add `validators` and `max_length` to the fields in the `Contact` model.
-
-**CWE ID**: CWE-20
-
-### 2. Potential XSS vulnerability in frontend/src/app/properties/[id]/page_clean.tsx
-**Severity**: LOW
-**File**: `frontend/src/app/properties/[id]/page_clean.tsx`
-
-**Description**: The code likely displays data fetched from a backend, and if this data is not properly escaped, it could be vulnerable to Cross-Site Scripting (XSS) attacks.
-
-**Recommendation**: Ensure that any data fetched from the backend and displayed in the HTML is properly escaped using a library like `DOMPurify` or using the built-in escaping mechanisms of the frontend framework.
-
-**CWE ID**: CWE-79
-
-### 3-6. Similar XSS vulnerabilities in other frontend pages
-**Files**: page_new.tsx, about/page.tsx, contact/page.tsx, dashboard/inquiries/page.tsx
-
-## ⚡ Performance Findings (7)
-
-### 1. Missing index on contact_date field
-**Severity**: MEDIUM
-**File**: `backend/contacts/models.py`
-
-**Description**: The `contact_date` field is likely used for filtering and sorting. Without an index, database queries will be slower, especially as the table grows.
-
-**Recommendation**: Add an index to the `contact_date` field.
-
-### 2. Potential for N+1 query in contact retrieval
-**Severity**: LOW
-**File**: `backend/contacts/models.py`
-
-**Description**: If related models are accessed within a loop when retrieving contacts, it could lead to N+1 query problem.
-
-**Recommendation**: Use `select_related` or `prefetch_related` to optimize related object retrieval.
-
-### 3-7. Additional performance concerns in frontend pages
-
-## 📚 Best Practice Findings (7)
-
-### 1. Missing Docstrings and Comments
-**Category**: documentation
-**Severity**: HIGH
-
-**Recommendation**: Add docstrings to all classes and methods.
-
-### 2. Inconsistent Naming Convention
-**Category**: naming
-**Severity**: MEDIUM
-
-**Recommendation**: Ensure consistent use of naming conventions (snake_case, PascalCase).
-
-### 3-7. Additional best practice violations including missing unit tests and potential code duplication
-
----
-*Analysis completed at 2025-11-02 22:43:07 UTC*
-*Powered by google (gemini-2.0-flash-lite)*"""
-                )
-            ]
-        )
-        
-        task = A2ATask(
-            id=task_id,
-            contextId=context_id,
-            status=TaskStatus(
-                state="completed",
-                timestamp=datetime.now(timezone.utc).isoformat(),
-                message=response_msg,
-                progress=1.0
-            ),
-            artifacts=[artifact],
-            history=[response_msg],
-            kind="task"
-        )
-        
-        result = task.model_dump(mode="json", exclude_none=True)
-        if "kind" not in result:
-            result["kind"] = "task"
-        
-        return result
-    
-    async def _mock_webhook_push(
-        self,
-        task_id: str,
-        context_id: str,
-        message: Dict[str, Any],
-        push_config: Dict[str, Any]
-    ):
-        """Mock webhook push - simulates analysis delay then pushes result"""
-        try:
-            import asyncio
-            import httpx
-            
-            logger.info("=" * 80)
-            logger.info("🚀 MOCK WEBHOOK PUSH: Background task started")
-            logger.info(f"Task ID: {task_id}")
-            logger.info(f"Context ID: {context_id}")
-            logger.info("Waiting 5 seconds to simulate analysis...")
-            logger.info("=" * 80)
-            
-            # Wait 5 seconds to simulate analysis
-            await asyncio.sleep(5)
-            
-            logger.info("Mock analysis complete! Building webhook payload...")
-            
-            # Create completed response with REAL ANALYSIS DATA
-            response_msg = A2AMessage(
-                messageId=str(uuid.uuid4()),
-                role="agent",
-                parts=[
-                    MessagePart(
-                        kind="text",
-                        text="# ✅ Code Review Complete - PR #11\n\n**Feature/atomic property image upload** by @SamuelOshin\n\n## 🟢 Risk: **LOW** | ✅ Approve\n\n📊 **16 files** changed (+194/-59) • **20 issues** found\n\n### Issues Found:\n🔒 **6 Security** issues\n⚡ **7 Performance** issues\n📐 **7 Best Practice** violations\n\n### 💡 Top Concerns:\n1. 📐 BEST PRACTICES: Focus on code organization (3 issue(s))\n\n*Full details in artifacts • Analysis: 39.1s*"
-                    )
-                ],
-                kind="message",
-                taskId=task_id,
-                timestamp=datetime.now(timezone.utc).isoformat()
-            )
-            
-            artifact = A2AArtifact(
-                artifactId=str(uuid.uuid4()),
-                name="PR #11 Analysis",
-                parts=[
-                    ArtifactPart(
-                        kind="text",
-                        text="""# Pull Request Analysis Report
-
-**PR #11**: Feature/atomic property image upload
-**Author**: SamuelOshin
-**Repository**: SamuelOshin/XlideLand-RealEstate
-**URL**: https://github.com/SamuelOshin/XlideLand-RealEstate/pull/11
-
-## Executive Summary
-
-This pull request implements atomic image uploads for property listings, enhancing the user experience by allowing images to be uploaded in a more efficient and reliable manner. The code demonstrates a good understanding of the core functionality, but the review revealed several areas for improvement, primarily related to best practices and performance optimizations.
-
-Key Concerns:
-1.  **Image Resizing:** The current implementation lacks image resizing functionality.
-2.  **Database Queries:** Several database queries could be optimized.
-3.  **Error Handling:** Could be improved for better debugging.
-4.  **File Naming:** Review naming convention to ensure uniqueness.
-
-## Risk Assessment
-
-**Risk Level**: LOW
-**Recommendation**: APPROVE
-
-## Statistics
-
-- Files changed: 16
-- Lines added: +194
-- Lines deleted: -59
-
-## 🔒 Security Findings (6)
-
-### 1. Missing Input Validation in Contact Model
-**Severity**: LOW
-**File**: `backend/contacts/models.py`
-
-**Recommendation**: Add validators and max_length to fields.
-
-### 2-6. Potential XSS vulnerabilities in frontend pages
-
-## ⚡ Performance Findings (7)
-
-### 1. Missing index on contact_date field
-**Severity**: MEDIUM
-
-**Recommendation**: Add database index.
-
-### 2-7. Additional performance concerns
-
-## 📚 Best Practice Findings (7)
-
-### 1. Missing Docstrings and Comments
-**Category**: documentation
-**Severity**: HIGH
-
-### 2-7. Additional best practice violations
-
----
-*Analysis completed at 2025-11-02 22:43:07 UTC*
-*Powered by google (gemini-2.0-flash-lite)*"""
-                    )
-                ]
-            )
-            
-            task = A2ATask(
-                id=task_id,
-                contextId=context_id,
-                status=TaskStatus(
-                    state="completed",
-                    timestamp=datetime.now(timezone.utc).isoformat(),
-                    message=response_msg,
-                    progress=1.0
-                ),
-                artifacts=[artifact],
-                history=[response_msg],
-                kind="task"
-            )
-            
-            result_lightweight = task.model_dump(mode="json", exclude_none=True)
-            if "kind" not in result_lightweight:
-                result_lightweight["kind"] = "task"
-            
-            # Build webhook payload (JSON-RPC RESPONSE format - not a request!)
-            # Telex expects a response with "result", not "method" + "params"
-            webhook_payload = {
-                "jsonrpc": "2.0",
-                "id": str(uuid.uuid4()),  # RPC ID for this response
-                "result": result_lightweight  # The completed task goes directly in "result"
-            }
-            
-            # Get webhook details
-            webhook_url = push_config.get("url")
-            token = push_config.get("token")
-            
-            logger.info("=" * 80)
-            logger.info("WEBHOOK PAYLOAD READY")
-            logger.info(f"URL: {webhook_url}")
-            logger.info(f"Payload size: ~{len(str(webhook_payload))} bytes")
-            logger.info("PAYLOAD PREVIEW:")
-            logger.info(json.dumps(webhook_payload, indent=2)[:1000] + "..." if len(json.dumps(webhook_payload)) > 1000 else json.dumps(webhook_payload, indent=2))
-            logger.info("=" * 80)
-            
-            # Prepare headers
-            headers = {"Content-Type": "application/json"}
-            auth_schemes = push_config.get("authentication", {}).get("schemes", [])
-            if "Bearer" in auth_schemes and token:
-                headers["Authorization"] = f"Bearer {token}"
-            
-            # Push to webhook
-            timeout = httpx.Timeout(10.0, read=60.0)
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                logger.info("Pushing to Telex webhook...")
-                response = await client.post(
-                    webhook_url,
-                    json=webhook_payload,
-                    headers=headers
-                )
-                response.raise_for_status()
-                logger.info("=" * 80)
-                logger.info(f"✅ WEBHOOK PUSH SUCCESSFUL! Status: {response.status_code}")
-                logger.info(f"Response: {response.text[:200]}")
-                logger.info("=" * 80)
-                
-        except Exception as e:
-            logger.error("=" * 80)
-            logger.error(f"❌ WEBHOOK PUSH FAILED: {e}")
-            logger.error(f"Error type: {type(e).__name__}")
-            logger.error("=" * 80)
-            logger.error(f"Full error:", exc_info=True)
+        logger.error("No webhook configuration found - cannot process request")
+        return error_msg.model_dump(mode="json", exclude_none=True)
     
     async def _process_and_push_safe(
         self,
@@ -580,84 +251,23 @@ Key Concerns:
         elif "TelexApiKey" in auth_schemes and token:
             headers["Authorization"] = f"Bearer {token}"
         
-        # Build JSON-RPC message/send request (per Telex webhook spec)
+        # Build JSON-RPC RESPONSE (not request!) for Telex webhook
+        # Telex expects: {"jsonrpc": "2.0", "result": {...task...}, "id": "..."}
+        task_result = task_obj.model_dump(mode="json", exclude_none=True)
+        
         webhook_payload = {
             "jsonrpc": "2.0",
-            "id": str(uuid.uuid4()),
-            "method": "message/send",
-            "params": {
-                "message": {
-                    "kind": "message",
-                    "role": "agent",
-                    "parts": [{"kind": "text", "text": f"❌ Analysis failed: {error_message}"}],
-                    "messageId": error_msg.messageId,
-                    "contextId": task_obj.contextId,
-                    "taskId": task_id
-                },
-                "metadata": {
-                    "task": task_obj.model_dump(mode="json", exclude_none=True)
-                }
-            }
+            "result": task_result,
+            "id": str(uuid.uuid4())
         }
         
+        logger.info(f"Pushing error result to webhook: {webhook_url}")
+        logger.info(f"Error task state: {task_result.get('status', {}).get('state')}")
+        
         async with httpx.AsyncClient(timeout=30.0) as client:
-            await client.post(webhook_url, json=webhook_payload, headers=headers)
-    
-    async def _analyze_and_push(
-        self,
-        pr_url: str,
-        task_id: str,
-        message_id: str,
-        message: Dict[str, Any],
-        push_config: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """
-        Return 'accepted' status immediately and analyze in background,
-        pushing result to webhook when complete (non-blocking mode)
-        """
-        import asyncio
-        
-        # Start background task to analyze and push
-        asyncio.create_task(
-            self._process_and_push_safe(pr_url, task_id, message_id, message, push_config)
-        )
-        
-        # Return "accepted" status immediately
-        accepting_msg = A2AMessage(
-            messageId=str(uuid.uuid4()),
-            role="agent",
-            parts=[
-                MessagePart(
-                    kind="text",
-                    text="🔄 PR analysis started! I'll send you the results shortly via notification."
-                )
-            ],
-            kind="message",
-            taskId=task_id,
-            timestamp=datetime.now(timezone.utc).isoformat()
-        )
-        
-        task = A2ATask(
-            id=task_id,
-            contextId=message.get("contextId", str(uuid.uuid4())),
-            status=TaskStatus(
-                state="accepted",
-                timestamp=datetime.now(timezone.utc).isoformat(),
-                message=accepting_msg,
-                progress=0.1
-            ),
-            artifacts=[],
-            history=[accepting_msg],
-            kind="task"
-        )
-        
-        # Serialize and return
-        result = task.model_dump(mode="json", exclude_none=True)
-        if "kind" not in result:
-            result["kind"] = "task"
-        
-        logger.info(f"Returned 'accepted' status for task {task_id}, analysis running in background")
-        return result
+            response = await client.post(webhook_url, json=webhook_payload, headers=headers)
+            response.raise_for_status()
+            logger.info(f"Error pushed successfully (status: {response.status_code})")
     
     def _format_analysis_as_text(self, analysis_result, pr_url: str) -> str:
         """Format analysis result as readable text for artifact"""
@@ -795,6 +405,12 @@ Key Concerns:
             # Format analysis as readable text
             artifact_text = self._format_analysis_as_text(analysis_result, pr_url)
             
+            # Truncate artifact text to avoid HTTP 413 (Payload Too Large)
+            MAX_ARTIFACT_LENGTH = 50000  # ~50KB for artifact text
+            if len(artifact_text) > MAX_ARTIFACT_LENGTH:
+                logger.warning(f"Artifact text too long ({len(artifact_text)} chars), truncating to {MAX_ARTIFACT_LENGTH}")
+                artifact_text = artifact_text[:MAX_ARTIFACT_LENGTH] + "\n\n...[Analysis truncated due to size limits]"
+            
             artifact = A2AArtifact(
                 artifactId=str(uuid.uuid4()),
                 name=f"PR #{analysis_result.pr_number} Analysis",
@@ -925,21 +541,20 @@ Key Concerns:
             elif "TelexApiKey" in auth_schemes and token:
                 headers["Authorization"] = f"Bearer {token}"
             
-            # Telex webhook expects JSON-RPC 2.0 message/send request
-            # Per https://ping.staging.telex.im/docs/#/default/handleA2AWebhookRequest
+            # Telex webhook expects JSON-RPC 2.0 RESPONSE (not request!)
+            # Format: {"jsonrpc": "2.0", "result": {...task...}, "id": "..."}
             # Use lightweight version to avoid HTTP 413 (payload too large)
             
-            # Build JSON-RPC RESPONSE (not request!) for webhook
-            # Telex now expects "result" with the task, not "method" + "params"
+            # Build JSON-RPC response with task as result
             webhook_payload = {
                 "jsonrpc": "2.0",
-                "id": str(uuid.uuid4()),
-                "result": result_lightweight  # The completed task goes directly in "result"
+                "result": result_lightweight,
+                "id": str(uuid.uuid4())
             }
             
             logger.info(f"Pushing full task result to webhook: {webhook_url}")
             logger.info(f"Task state: {result_lightweight.get('status', {}).get('state')}")
-            logger.info(f"Sending JSON-RPC RESPONSE with complete task result")
+            logger.info(f"Sending JSON-RPC response with complete task result")
             
             # Log the webhook payload being sent
             import json
