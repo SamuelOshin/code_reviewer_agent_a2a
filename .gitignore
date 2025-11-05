@@ -36,7 +36,6 @@ ENV/
 *.pem
 
 # IDE
-.vscode/
 .idea/
 *.swp
 *.swo
@@ -72,3 +71,7 @@ htmlcov/
 
 # Docker
 docker-compose
+temp_auto_push.bat
+temp_interactive_push.bat
+.gitignore
+branch_structure.json
