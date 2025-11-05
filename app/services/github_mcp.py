@@ -10,6 +10,7 @@ from typing import Optional, List, Dict, Any
 import re
 import base64
 import asyncio
+import os
 from functools import partial
 from github import Github, GithubException
 from app.core.config import settings
@@ -36,16 +37,40 @@ class GitHubMCPService:
             self._client = Github(self.token)
             logger.info("GitHub client object created, testing connection...")
             
-            # Test the connection - run blocking call in thread pool
+            # Test the connection - run blocking call in thread pool WITH TIMEOUT
             loop = asyncio.get_event_loop()
-            user = await loop.run_in_executor(None, self._client.get_user)
-            login = await loop.run_in_executor(None, lambda: user.login)
             
-            logger.info(f"GitHub API client initialized successfully (user: {login})")
+            # Add timeout to prevent hanging on slow networks (e.g., Leapcell)
+            # Skip connection test if SKIP_GITHUB_CONNECTION_TEST env var is set
+            skip_test = os.getenv("SKIP_GITHUB_CONNECTION_TEST", "false").lower() == "true"
+            
+            if skip_test:
+                logger.info("⚡ Skipping GitHub connection test (SKIP_GITHUB_CONNECTION_TEST=true)")
+                logger.info("✅ GitHub API client initialized (connection not tested)")
+                return self
+            
+            try:
+                user = await asyncio.wait_for(
+                    loop.run_in_executor(None, self._client.get_user),
+                    timeout=10.0  # 10 second timeout for connection test
+                )
+                login = await asyncio.wait_for(
+                    loop.run_in_executor(None, lambda: user.login),
+                    timeout=5.0  # 5 second timeout for getting login
+                )
+                
+                logger.info(f"✅ GitHub API client initialized successfully (user: {login})")
+            except asyncio.TimeoutError:
+                logger.error("⏱️ GitHub connection test timed out after 15s")
+                logger.warning("💡 Tip: Set SKIP_GITHUB_CONNECTION_TEST=true to skip this check on slow networks")
+                raise GitHubMCPError("GitHub API connection timed out - network may be slow or blocked")
+            
             return self
         except GithubException as e:
             logger.error(f"GitHub API error: {e.status}, {e.data}")
             raise GitHubMCPError(f"GitHub API initialization failed: {str(e)}")
+        except GitHubMCPError:
+            raise  # Re-raise our custom errors
         except Exception as e:
             logger.error(f"Failed to initialize GitHub client: {type(e).__name__}: {e}", exc_info=True)
             raise GitHubMCPError(f"GitHub API initialization failed: {str(e)}")
