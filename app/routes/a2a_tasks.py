@@ -49,18 +49,7 @@ async def handle_a2a_task(request: Request):
     try:
         body = await request.json()
         
-        # Log incoming request from Telex
-        import json
-        logger.info("=" * 80)
-        logger.info("INCOMING REQUEST TO /a2a/tasks FROM TELEX:")
-        logger.info("=" * 80)
-        logger.info(f"Headers: {dict(request.headers)}")
-        logger.info("-" * 80)
-        logger.info("Request Body:")
-        logger.info(json.dumps(body, indent=2))
-        logger.info("=" * 80)
-        
-        # Check if it's a JSON-RPC request
+        # Check if it's a JSON-RPC request (primary format)
         if body.get("jsonrpc") == "2.0" and body.get("method") == "message/send":
             logger.info(f"✓ Detected JSON-RPC message/send request - forwarding to RPC handler")
             
@@ -72,46 +61,44 @@ async def handle_a2a_task(request: Request):
             else:
                 raise HTTPException(status_code=500, detail="RPC handler not configured")
         
-        # Check if it's a simple test request (from grading bots)
+        # Check if it's a simple message request (convert to JSON-RPC format)
         if "message" in body and isinstance(body.get("message"), str):
-            logger.info(f"✓ Detected simple test request - returning test response")
+            logger.info(f"✓ Detected simple message request - converting to JSON-RPC format")
             
-            # Return a simple A2A-compliant response
-            task_id = str(uuid.uuid4())
-            test_response = {
+            # Convert simple message to proper JSON-RPC message/send format
+            jsonrpc_request = {
                 "jsonrpc": "2.0",
                 "id": body.get("id", str(uuid.uuid4())),
-                "result": {
-                    "id": task_id,
-                    "contextId": str(uuid.uuid4()),
-                    "status": {
-                        "state": "completed",
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
-                        "message": {
-                            "messageId": str(uuid.uuid4()),
-                            "role": "agent",
-                            "parts": [
-                                {
-                                    "kind": "text",
-                                    "text": f"✅ PRRover A2A Agent is online!\n\nReceived test message: {body.get('message')}\n\nI'm ready to review GitHub Pull Requests. Send me a PR URL in JSON-RPC format to get started!"
-                                }
-                            ],
-                            "kind": "message",
-                            "taskId": task_id,
-                            "timestamp": datetime.now(timezone.utc).isoformat()
-                        },
-                        "progress": 1.0
+                "method": "message/send",
+                "params": {
+                    "message": {
+                        "messageId": str(uuid.uuid4()),
+                        "role": "user",
+                        "parts": [
+                            {
+                                "kind": "text",
+                                "text": body.get("message")
+                            }
+                        ],
+                        "kind": "message",
+                        "timestamp": datetime.now(timezone.utc).isoformat()
                     },
-                    "artifacts": [],
-                    "history": [],
-                    "kind": "task"
+                    "configuration": {
+                        "blocking": False,
+                        "pushNotificationConfig": None  # No webhook for simple requests
+                    }
                 }
             }
             
-            logger.info(f"Returning test response for task {task_id}")
-            return JSONResponse(content=test_response)
+            # Forward to RPC handler
+            if hasattr(request.app.state, "jsonrpc_handler"):
+                rpc_handler = request.app.state.jsonrpc_handler
+                result = await rpc_handler.handle_request(jsonrpc_request)
+                return JSONResponse(content=result)
+            else:
+                raise HTTPException(status_code=500, detail="RPC handler not configured")
         
-        # Otherwise treat as direct A2ATaskRequest
+        # Otherwise treat as direct A2ATaskRequest (legacy format)
         task_request = A2ATaskRequest.model_validate(body)
         logger.info(f"Received A2A task: {task_request.task_id} for skill: {task_request.skill}")
         

@@ -36,7 +36,6 @@ ENV/
 *.pem
 
 # IDE
-.vscode/
 .idea/
 *.swp
 *.swo
@@ -72,3 +71,4 @@ htmlcov/
 
 # Docker
 docker-compose
+.gitignore
