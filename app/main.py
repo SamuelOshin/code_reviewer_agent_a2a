@@ -22,6 +22,7 @@ from fastapi.responses import JSONResponse
 
 from app.core.config import settings
 from app.core.logging import setup_logging
+from app.routes import a2a_tasks, health, jsonrpc, webhooks
 from app.services.code_analyzer import CodeAnalyzerService
 from app.services.jsonrpc_handler import JSONRPCHandler
 from app.services.message_handler import MessageHandler
@@ -191,7 +192,7 @@ async def register_rpc_methods(handler: JSONRPCHandler):
 # ============================================================================
 
 @app.get("/.well-known/agent.json")
-async def get_agent_card():
+def get_agent_card():
     """
     Serve the A2A agent card
     
@@ -247,7 +248,6 @@ async def root():
 # Include Routers
 # ============================================================================
 
-from app.routes import a2a_tasks, health, jsonrpc, webhooks
 
 app.include_router(health.router)
 app.include_router(webhooks.router)

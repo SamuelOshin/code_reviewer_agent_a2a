@@ -107,7 +107,6 @@ class MessageHandler:
             logger.info(f"Non-blocking mode: analyzing {pr_url} in background, result will be pushed to webhook")
             
             # Create task ID upfront
-            context_id = message.get("contextId", str(uuid.uuid4()))
             message_id = message.get("messageId", str(uuid.uuid4()))
             
             # Start background task for real analysis

@@ -336,9 +336,9 @@ class DiffParser:
             
             # Check if we've read enough lines based on hunk size
             # Count additions/context for new side, deletions/context for old side
-            additions_count = len([l for l in hunk_lines if l.startswith('+')])
-            deletions_count = len([l for l in hunk_lines if l.startswith('-')])
-            context_count = len([l for l in hunk_lines if l.startswith(' ') or (not l.strip() and l)])
+            additions_count = len([hl for hl in hunk_lines if hl.startswith('+')])
+            deletions_count = len([hl for hl in hunk_lines if hl.startswith('-')])
+            context_count = len([hl for hl in hunk_lines if hl.startswith(' ') or (not hl.strip() and hl)])
             
             # Break if we've processed expected lines
             if (additions_count + context_count >= new_lines and 

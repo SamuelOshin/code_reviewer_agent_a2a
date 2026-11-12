@@ -7,12 +7,12 @@ and best practice findings.
 """
 
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class Severity(str, Enum):
+class Severity(StrEnum):
     """Issue severity levels"""
     CRITICAL = "critical"
     HIGH = "high"
@@ -21,7 +21,7 @@ class Severity(str, Enum):
     INFO = "info"
 
 
-class RiskLevel(str, Enum):
+class RiskLevel(StrEnum):
     """Overall risk assessment"""
     CRITICAL = "critical"
     HIGH = "high"
@@ -30,7 +30,7 @@ class RiskLevel(str, Enum):
     MINIMAL = "minimal"
 
 
-class ApprovalRecommendation(str, Enum):
+class ApprovalRecommendation(StrEnum):
     """PR approval recommendations"""
     APPROVE = "approve"
     APPROVE_WITH_SUGGESTIONS = "approve_with_suggestions"

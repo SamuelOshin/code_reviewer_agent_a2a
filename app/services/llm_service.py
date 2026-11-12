@@ -38,7 +38,7 @@ class GoogleLLM(BaseLLM):
             self.model = genai.GenerativeModel(settings.LLM_MODEL)
             logger.info(f"Initialized Google Gemini: {settings.LLM_MODEL}")
         except Exception as e:
-            raise LLMError(f"Failed to initialize Google Gemini: {str(e)}")
+            raise LLMError(f"Failed to initialize Google Gemini: {str(e)}") from e
     
     async def generate(self, prompt: str, system_prompt: str | None = None) -> str:
         """Generate response from Gemini"""
@@ -58,7 +58,7 @@ class GoogleLLM(BaseLLM):
             return response.text
         except Exception as e:
             logger.error(f"Gemini generation error: {e}")
-            raise LLMError(f"Gemini generation failed: {str(e)}")
+            raise LLMError(f"Gemini generation failed: {str(e)}") from e
 
 
 class OpenAILLM(BaseLLM):
@@ -71,7 +71,7 @@ class OpenAILLM(BaseLLM):
             self.model = settings.LLM_MODEL
             logger.info(f"Initialized OpenAI: {settings.LLM_MODEL}")
         except Exception as e:
-            raise LLMError(f"Failed to initialize OpenAI: {str(e)}")
+            raise LLMError(f"Failed to initialize OpenAI: {str(e)}") from e
     
     async def generate(self, prompt: str, system_prompt: str | None = None) -> str:
         """Generate response from OpenAI"""
@@ -90,7 +90,7 @@ class OpenAILLM(BaseLLM):
             return response.choices[0].message.content
         except Exception as e:
             logger.error(f"OpenAI generation error: {e}")
-            raise LLMError(f"OpenAI generation failed: {str(e)}")
+            raise LLMError(f"OpenAI generation failed: {str(e)}") from e
 
 
 class AnthropicLLM(BaseLLM):
@@ -103,7 +103,7 @@ class AnthropicLLM(BaseLLM):
             self.model = settings.LLM_MODEL
             logger.info(f"Initialized Anthropic: {settings.LLM_MODEL}")
         except Exception as e:
-            raise LLMError(f"Failed to initialize Anthropic: {str(e)}")
+            raise LLMError(f"Failed to initialize Anthropic: {str(e)}") from e
     
     async def generate(self, prompt: str, system_prompt: str | None = None) -> str:
         """Generate response from Claude"""
@@ -118,7 +118,7 @@ class AnthropicLLM(BaseLLM):
             return response.content[0].text
         except Exception as e:
             logger.error(f"Anthropic generation error: {e}")
-            raise LLMError(f"Anthropic generation failed: {str(e)}")
+            raise LLMError(f"Anthropic generation failed: {str(e)}") from e
 
 class LLMService:
     """LLM Service Wrapper with Multi-Provider Support"""
@@ -232,7 +232,7 @@ Return your findings as a JSON array following the specified format."""
             
         except Exception as e:
             logger.error(f"Security analysis error: {e}")
-            raise LLMError(f"Security analysis failed: {str(e)}")
+            raise LLMError(f"Security analysis failed: {str(e)}") from e
     
     async def analyze_performance(
         self, 
@@ -291,7 +291,7 @@ Return your findings as a JSON array following the specified format."""
             
         except Exception as e:
             logger.error(f"Performance analysis error: {e}")
-            raise LLMError(f"Performance analysis failed: {str(e)}")
+            raise LLMError(f"Performance analysis failed: {str(e)}") from e
     
     async def analyze_best_practices(
         self, 
@@ -347,7 +347,7 @@ Return your findings as a JSON array with:
             
         except Exception as e:
             logger.error(f"Best practices analysis error: {e}")
-            raise LLMError(f"Best practices analysis failed: {str(e)}")
+            raise LLMError(f"Best practices analysis failed: {str(e)}") from e
     
     async def generate_summary(
         self,
@@ -403,6 +403,6 @@ Generate the executive summary following the specified format."""
             
         except Exception as e:
             logger.error(f"Summary generation error: {e}")
-            raise LLMError(f"Summary generation failed: {str(e)}")
+            raise LLMError(f"Summary generation failed: {str(e)}") from e
 
 

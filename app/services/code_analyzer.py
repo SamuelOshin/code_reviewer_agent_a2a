@@ -128,16 +128,6 @@ class CodeAnalyzerService:
                 all_performance_issues
             )
             
-            # Step 11: Build metrics
-            metrics = {
-                'files_changed': pr_data.changed_files,
-                'lines_added': pr_data.additions,
-                'lines_deleted': pr_data.deletions,
-                'total_issues': len(all_security_issues) + len(all_performance_issues) + len(all_best_practice_issues),
-                'critical_security_issues': len([s for s in all_security_issues if s.severity == Severity.CRITICAL]),
-                'high_security_issues': len([s for s in all_security_issues if s.severity == Severity.HIGH]),
-                'high_performance_issues': len([p for p in all_performance_issues if p.severity in (Severity.CRITICAL, Severity.HIGH)]),
-            }
             
             # Step 12: Build final result
             analysis_duration = time.time() - start_time
@@ -178,7 +168,7 @@ class CodeAnalyzerService:
             raise
         except Exception as e:
             logger.error(f"Unexpected error during analysis: {e}")
-            raise AnalysisError(f"Analysis failed: {str(e)}")
+            raise AnalysisError(f"Analysis failed: {str(e)}") from e
     
     async def _fetch_pr_data(self, pr_url: str) -> tuple[PullRequest, str, list[PullRequestFile]]:
         """

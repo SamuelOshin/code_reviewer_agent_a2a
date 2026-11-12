@@ -94,7 +94,7 @@ async def handle_github_webhook(
             payload = await request.json()
         except Exception as e:
             logger.error(f"Failed to parse webhook payload: {e}")
-            raise HTTPException(status_code=400, detail="Invalid JSON payload")
+            raise HTTPException(status_code=400, detail="Invalid JSON payload") from e
         
         # Handle different event types
         if x_github_event == "pull_request":
@@ -118,7 +118,7 @@ async def handle_github_webhook(
         raise
     except Exception as e:
         logger.error(f"Unexpected error in webhook handler: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
 async def handle_pull_request_event(

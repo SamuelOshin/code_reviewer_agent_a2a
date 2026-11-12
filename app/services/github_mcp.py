@@ -65,17 +65,17 @@ class GitHubMCPService:
             except TimeoutError:
                 logger.error("⏱️ GitHub connection test timed out after 15s")
                 logger.warning("💡 Tip: Set SKIP_GITHUB_CONNECTION_TEST=true to skip this check on slow networks")
-                raise GitHubMCPError("GitHub API connection timed out - network may be slow or blocked")
+                raise GitHubMCPError("GitHub API connection timed out - network may be slow or blocked") from None
             
             return self
         except GithubException as e:
             logger.error(f"GitHub API error: status={e.status}")
-            raise GitHubMCPError(f"GitHub API initialization failed: {str(e)}")
+            raise GitHubMCPError(f"GitHub API initialization failed: {str(e)}") from e
         except GitHubMCPError:
             raise  # Re-raise our custom errors
         except Exception as e:
             logger.error(f"Failed to initialize GitHub client: {type(e).__name__}: {e}", exc_info=True)
-            raise GitHubMCPError(f"GitHub API initialization failed: {str(e)}")
+            raise GitHubMCPError(f"GitHub API initialization failed: {str(e)}") from e
     
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit - cleanup"""
@@ -206,10 +206,10 @@ class GitHubMCPService:
             return PullRequest(**pr_data)
         except GithubException as e:
             logger.error(f"Failed to fetch PR {owner}/{repo}#{pr_number}: {e}")
-            raise GitHubMCPError(f"Failed to fetch PR: {str(e)}")
+            raise GitHubMCPError(f"Failed to fetch PR: {str(e)}") from e
         except Exception as e:
             logger.error(f"Failed to fetch PR {owner}/{repo}#{pr_number}: {e}")
-            raise GitHubMCPError(f"Failed to fetch PR: {str(e)}")
+            raise GitHubMCPError(f"Failed to fetch PR: {str(e)}") from e
     
     async def get_pr_diff(
         self, 
@@ -255,10 +255,10 @@ class GitHubMCPService:
             return diff
         except GithubException as e:
             logger.error(f"Failed to fetch PR diff: {e}")
-            raise GitHubMCPError(f"Failed to fetch PR diff: {str(e)}")
+            raise GitHubMCPError(f"Failed to fetch PR diff: {str(e)}") from e
         except Exception as e:
             logger.error(f"Failed to fetch PR diff: {e}")
-            raise GitHubMCPError(f"Failed to fetch PR diff: {str(e)}")
+            raise GitHubMCPError(f"Failed to fetch PR diff: {str(e)}") from e
     
     async def list_pr_files(
         self, 
@@ -304,10 +304,10 @@ class GitHubMCPService:
             return pr_files
         except GithubException as e:
             logger.error(f"Failed to fetch PR files: {e}")
-            raise GitHubMCPError(f"Failed to fetch PR files: {str(e)}")
+            raise GitHubMCPError(f"Failed to fetch PR files: {str(e)}") from e
         except Exception as e:
             logger.error(f"Failed to fetch PR files: {e}")
-            raise GitHubMCPError(f"Failed to fetch PR files: {str(e)}")
+            raise GitHubMCPError(f"Failed to fetch PR files: {str(e)}") from e
     
     async def get_pr_reviews(
         self, 
@@ -389,10 +389,10 @@ class GitHubMCPService:
                 return ""
         except GithubException as e:
             logger.error(f"Failed to fetch file content: {e}")
-            raise GitHubMCPError(f"Failed to fetch file content: {str(e)}")
+            raise GitHubMCPError(f"Failed to fetch file content: {str(e)}") from e
         except Exception as e:
             logger.error(f"Failed to fetch file content: {e}")
-            raise GitHubMCPError(f"Failed to fetch file content: {str(e)}")
+            raise GitHubMCPError(f"Failed to fetch file content: {str(e)}") from e
     
     async def get_pr_with_diff(
         self,
