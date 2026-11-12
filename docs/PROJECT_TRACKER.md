@@ -13,9 +13,9 @@ read this file alone and continue the work.
 | | |
 |---|---|
 | **Current phase** | Phase 1: make it honest and working (planning complete) |
-| **Active task** | `P1-02` + `P1-03`, `P1-09` and `P1-10` running in parallel, each in its own worktree branched from `chore/p1-01-pyproject` |
-| **Next action** | Verify each parallel branch, merge into `chore/p1-01-pyproject`, and record results here |
-| **Working branch** | `docs/project-tracker` (pushed to `origin`, not merged) |
+| **Active task** | None. `P1-01`, `P1-02`, `P1-03`, `P1-09` and `P1-10` are done |
+| **Next action** | Next parallel batch, with no shared files: `P1-08` (logging), `P1-11` (Docker), `P1-12` (CI and tests), `P1-14` (repo hygiene). `P1-04` and `P1-07` both touch `message_handler.py` and routes, so run them one after the other. `P1-05` starts with the Pydantic AI check under `D-12` |
+| **Working branch** | `chore/p1-01-pyproject` holds all Phase 1 work so far, not pushed. `docs/project-tracker` is pushed |
 | **Blockers** | None. Owner approved running repo code on 2026-11-12. Use `uv` for everything (`uv sync`, `uv run`). If an install fails on a Windows cache file lock, retry or set a different `UV_CACHE_DIR` |
 | **Working rule** | Parallel agents don't edit this file. The coordinating session records their results |
 
@@ -245,18 +245,19 @@ in CI, and the README is accurate.
 | ID | Status | Task | Depends on | Acceptance checks |
 |---|---|---|---|---|
 | P1-01 | done | Move to `pyproject.toml` with `uv` and a lockfile, keeping only dependencies the code imports. Record a test baseline first | Owner OK to run tests | Baseline recorded in section 9. `uv sync` works. Full `pip-audit` output reviewed, with nothing high or critical left unexplained |
-| P1-02 | todo | Delete `test_webhook_only.py` and other Telex fixtures | D-10 | No `eyJ`-style token in tracked files |
-| P1-03 | todo | Remove Telex and dead code: `telex_client.py`, `telex_service.py`, `a2a_service.py`, `routes/a2a.py`, `config/agent_card_telex.json`, `telex_workflow.json`, `/a2a/webhooks/{hook_id}`, legacy task format, placeholder RPC handlers, unused `public/fonts`, empty `scripts/*`, unreachable code in `performance_rules.py`, debug prints | P1-01 | `grep -ri telex app config` returns nothing. App starts. Tests no worse than baseline |
+| P1-02 | done | Delete `test_webhook_only.py` and other Telex fixtures | D-10 | No `eyJ`-style token in tracked files |
+| P1-03 | done | Remove Telex and dead code: `telex_client.py`, `telex_service.py`, `a2a_service.py`, `routes/a2a.py`, `config/agent_card_telex.json`, `telex_workflow.json`, `/a2a/webhooks/{hook_id}`, legacy task format, placeholder RPC handlers, unused `public/fonts`, empty `scripts/*`, unreachable code in `performance_rules.py`, debug prints | P1-01 | `grep -ri telex app config` returns nothing. App starts. Tests no worse than baseline |
 | P1-04 | todo | Add a working result path: `message/send` returns a completed task without push config, and GitHub webhook runs have an output | P1-03 | A test proves a request with no push config returns a completed task |
 | P1-05 | todo | Build the provider-agnostic model layer from section 4, replacing the `llm_service.py` provider classes and deprecated `google-generativeai`. Check vendor docs for current model IDs | P1-01, D-12 | Provider SDKs imported only in the model layer. Contract tests pass for every adapter. One real review succeeds on at least two providers using configuration changes only. No model ID in application code |
-| P1-06 | todo | Fail closed: a parse failure or partial analysis gives a `failed` or `incomplete` result and never `approve`. Report any truncated diff | P1-05 | Tests: malformed, truncated and nested-array LLM output never yields approve |
+| P1-06 | todo | Fail closed: a parse failure or partial analysis gives a `failed` or `incomplete` result and never `approve`. Report any truncated diff. Keep rule findings when an LLM call fails | P1-05 | Tests: malformed, truncated and nested-array LLM output never yields approve. The strict xfail `test_llm_error_falls_back_to_rule_results` (F-03) passes and its marker is removed |
 | P1-07 | todo | Add auth to `/rpc` and `/a2a/*`, make the webhook secret mandatory, block caller-supplied URLs unless allowlisted, restrict CORS, and limit batch size | P1-03 | Tests: unauthenticated call is rejected, disallowed URL is rejected, missing secret stops startup |
-| P1-08 | todo | Stop logging tokens and payloads, and return safe error messages | P1-03 | No token or payload in logs, proven by a test using a sentinel value |
-| P1-09 | todo | Use the `Severity` enum throughout and add a structured impact level | P1-03 | Test: critical findings are counted correctly in the summary |
-| P1-10 | todo | Tune rules: fix `eval`, `exec`, `open` and concatenation patterns, and report each performance match once on its real line | P1-03 | Regression tests cover the `F-08` examples |
+| P1-08 | todo | Stop logging tokens and payloads, and return safe error messages. Banner and full-payload logging went in `P1-03`, but `message_handler.py:62` still logs the whole `configuration`, including the push token | P1-03 | No token or payload in logs, proven by a test using a sentinel value |
+| P1-09 | done | Use the `Severity` enum throughout and add a structured impact level | P1-03 | Test: critical findings are counted correctly in the summary |
+| P1-10 | done | Tune rules: fix `eval`, `exec`, `open` and concatenation patterns, and report each performance match once on its real line | P1-03 | Regression tests cover the `F-08` examples |
 | P1-11 | todo | Fix Docker: remove unused `SECRET_KEY` and Node.js, correct env vars, make the healthcheck fail on bad status | P1-03 | `docker compose up` reaches healthy from a clean clone |
-| P1-12 | todo | Repair `test_code_analyzer.py`, fill or delete empty test files, and add CI for lint, types, tests and `pip-audit` | P1-03 | CI green on a PR. Coverage figure recorded |
-| P1-13 | todo | Rewrite the README so every claim is true | All above | Every feature listed maps to code or a test |
+| P1-12 | todo | `test_code_analyzer.py` was repaired in `P1-09`. Still to do: fill or delete the empty test files, set `asyncio_default_fixture_loop_scope`, run ruff and fix findings, and add CI for lint, types, tests and `pip-audit` | P1-03 | CI green on a PR. Coverage figure recorded |
+| P1-13 | todo | Rewrite the README so every claim is true. It still describes Telex, MCP and `python-a2a`, and documents removed RPC methods | All above | Every feature listed maps to code or a test |
+| P1-14 | todo | Repo hygiene: add `.gitattributes` to normalise line endings, ignore `.claude/worktrees/`, and replace deprecated `datetime.utcnow` in `app/core/logging.py` and `app/models/a2a.py` | P1-03 | `git add --renormalize .` leaves a clean diff. No `utcnow` in `app/` |
 
 ### Phase 2: modernize the core
 
@@ -266,9 +267,10 @@ in CI, and the README is accurate.
 | P2-02 | todo | Migrate to the official `a2a-sdk` and A2A v1.0, with a correct agent card and auth scheme | Phase 1 | An independent A2A client can discover the agent and complete a review |
 | P2-03 | todo | Post inline PR review comments through a GitHub Action or App | D-07 | A real PR shows inline comments on the right lines |
 | P2-04 | todo | Fetch PR data once, run LLM calls concurrently, keep references to background tasks | Phase 1 | One fetch per review. Timing before and after recorded |
-| P2-05 | todo | Remove remaining duplication, narrow exception handling, implement or remove `focus_areas` | P2-02 | No repeated task-building blocks. Broad catches only at boundaries |
+| P2-05 | todo | Remove remaining duplication, narrow exception handling, implement or remove `focus_areas`. Also remove the unused `metrics` dict in `analyze_pr`, the dead `AgentCard` and `AgentSkill` models, and stop deriving severity from `impact` text in `PerformanceChecker.check_file_content` | P2-02 | No repeated task-building blocks. Broad catches only at boundaries |
 | P2-06 | todo | Defend against prompt injection: isolate untrusted content, keep the model's tools read-only, and make verdicts depend on validated findings | P2-01 | Eval cases with injected instructions cannot change the verdict |
 | P2-07 | todo | Review whole PRs by chunking large diffs per file, and state any coverage limit in the result | P2-01 | Test: a bug past the old 8,000-character limit is reviewed |
+| P2-08 | todo | Tune the remaining noisy performance rules (`inefficient_list_operations`, `synchronous_in_async`, `loading_all_records`) | P3-01 | Eval shows fewer false positives without lower recall |
 
 ### Phase 3: the portfolio piece
 
@@ -292,8 +294,8 @@ Keep this honest. It records what has actually been proven.
 
 | Check | State | Notes |
 |---|---|---|
-| Test suite | Baseline recorded 2026-11-12 | Pinned `requirements.txt`, Python 3.11, dummy settings: **63 passed, 1 collection error** (`test_code_analyzer.py`, missing `Impact`). Coverage **21%**. `main.py`, all routes, `message_handler.py`, `formatters.py` and `telex_*` are at 0% |
-| App startup | Starts in-process | `/`, `/health` (reports `degraded`), `/ready` and the agent card all return 200. Config import fails if `SECRET_KEY` is unset. Real LLM and GitHub calls not tested |
+| Test suite | Passing 2026-11-12 | On `chore/p1-01-pyproject`: **109 passed, 1 strict xfail** (F-03), no collection errors. Coverage **37%** (baseline was 63 passed, 1 collection error, 21%). New tests were run against the old code and fail there, so they catch the bugs they target |
+| App startup | Starts in-process | `/`, `/health` (now `healthy`), `/ready` and the agent card return 200. RPC exposes `analyze_pr`, `introspect` and `message/send`. Config import fails if `SECRET_KEY` is unset. Real LLM and GitHub calls not tested |
 | Radon, vulture | Done | Highest complexity: `DiffParser._parse_file_diff` at 30 and `_parse_hunk` at 22 |
 | Ruff, bandit | **Failed** | Could not install because of a Windows file lock on the uv cache |
 | `pip-audit` | Done 2026-11-12 | Full audit of every locked package, dev included: no known vulnerabilities. `F-15` is resolved by the dependency refresh |
@@ -306,6 +308,28 @@ Keep this honest. It records what has actually been proven.
 ## 9. Session log
 
 Newest first. Keep entries short.
+
+### 2026-11-12: first parallel batch merged
+
+- **Done:** three Bobby Build agents (Sonnet), each in its own worktree from
+  `660b989`, finished `P1-02` + `P1-03`, `P1-09` and `P1-10`. The coordinating
+  session checked each branch (author, no AI attribution, files in scope), reran
+  the tests, confirmed the new tests fail on the old code, then merged all three
+  into `chore/p1-01-pyproject`. Combined result: 109 passed, 1 strict xfail,
+  coverage 37%, no Telex references in `app/`, `config/` or `tests/`, and no
+  committed token. About 11,000 lines of dead code removed.
+- **Behaviour changes:** `analyze_pr` no longer accepts `send_to_telex`. The RPC
+  methods `get_analysis_status`, `list_analyses` and `get_analysis_details` are
+  gone. `POST /a2a/tasks` returns 422 for the old `task_id`/`skill` format, and
+  `/a2a/webhooks/{hook_id}` returns 404. `format_for_telex` is now `format_short`.
+- **Rule trade-off:** the command-injection `open(variable)` rule was removed.
+  Path traversal still flags `open(filename)`, `open(file_path)` and `open(path)`,
+  but other variable names passed to `open()` are no longer flagged.
+- **Known gaps:** commits `deae76c` and `5cbf909` are not bootable on their own,
+  only the branch tip is. The README still mentions Telex. The background push path
+  and the GitHub webhook analysis were not run end to end.
+- **New follow-ups:** `P1-14`, `P2-08`, and extra scope on `P1-06`, `P1-08`,
+  `P1-12`, `P1-13` and `P2-05`.
 
 ### 2026-11-12: `P1-01` done
 

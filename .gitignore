@@ -72,3 +72,6 @@ htmlcov/
 # Docker
 docker-compose
 .gitignore
+
+# Agent worktrees
+.claude/worktrees/
