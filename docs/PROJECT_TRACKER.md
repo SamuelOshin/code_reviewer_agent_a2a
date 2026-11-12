@@ -13,10 +13,10 @@ read this file alone and continue the work.
 | | |
 |---|---|
 | **Current phase** | Phase 1: make it honest and working (planning complete) |
-| **Active task** | None |
-| **Next action** | Start `P1-01` on a new branch from `docs/project-tracker` or `main`: record a test baseline, then move to `pyproject.toml` with `uv` |
+| **Active task** | `P1-01`: test baseline done, dependency move not started |
+| **Next action** | On a new branch, replace `requirements.txt` with `pyproject.toml` and a `uv` lockfile, then rerun tests and a full `pip-audit` |
 | **Working branch** | `docs/project-tracker` (pushed to `origin`, not merged) |
-| **Blockers** | `P1-01` needs the owner's explicit OK to run repo code (see section 8). Only `D-08` is open, and it doesn't block Phase 1 |
+| **Blockers** | None. Owner approved running repo code on 2026-11-12. On this Windows machine, `uv` installs can fail on a cache file lock; a local `.venv` with `pip` works |
 
 ---
 
@@ -219,11 +219,11 @@ standalone script that did not import repo code. **Audit** = reported by a tool.
 | F-04 | 36 | Unauthenticated endpoints post results to caller-supplied URLs, so private PRs readable by `GITHUB_TOKEN` can be exfiltrated | `app/routes/a2a_tasks.py`, `app/services/message_handler.py:584` | Read | P1-07 |
 | F-05 | 35 | Push token and full payloads are logged. An expired JWT and a real webhook ID are committed | `app/services/message_handler.py:62`, `test_webhook_only.py` | Read | P1-02, P1-08 |
 | F-06 | 30 | `"CRITICAL"` is compared with the value `"critical"`, and `impact == "HIGH"` misses free-text LLM impact | `app/services/llm_service.py:368-370`, `app/services/code_analyzer.py` | Read + Probe | P1-09 |
-| F-07 | 30 | `docker compose up` should crash: required `SECRET_KEY` is not passed. Compose also sets the wrong `TELEX_URL` name | `docker-compose.yml` | Read | P1-11 |
+| F-07 | 30 | `docker compose up` should crash: required `SECRET_KEY` is not passed. Compose also sets the wrong `TELEX_URL` name | `docker-compose.yml` | Read + Run (config import fails without `SECRET_KEY`; compose itself not run) | P1-11 |
 | F-08 | 28 | Rule false positives: `model.eval()`, `regex.exec(x)` and `open(config_path)` are CRITICAL, which forces REJECT. Performance findings repeat on every added line | `app/utils/security_rules.py`, `app/utils/performance_rules.py:161` | Read + Probe | P1-10 |
-| F-09 | 27 | `TelexClient` uses fields that don't exist, so it always fails. `message/send` without Telex push config returns an error | `app/services/telex_client.py:128,144`, `app/services/message_handler.py:165-181` | Read | P1-03, P1-04 |
-| F-10 | 25 | Dead modules, unused dependencies, empty files, unreachable code | Across the repo | Read + vulture | P1-02, P1-03 |
-| F-11 | 24 | Four empty test files and an empty `conftest.py`. `test_code_analyzer.py` imports a missing `Impact` | `tests/` | Read | P1-12 |
+| F-09 | 27 | `TelexClient` uses fields that don't exist, so it always fails. `message/send` without Telex push config returns an error | `app/services/telex_client.py:128,144`, `app/services/message_handler.py:165-181` | Read + Run (blocking `message/send` returns "Unable to process PR review") | P1-03, P1-04 |
+| F-10 | 25 | Dead modules, unused dependencies, empty files, unreachable code. Empty files include `app/middleware/auth.py`, `error_handler.py`, `request_logger.py` and `app/schemas/telex.py` | Across the repo | Read + vulture + coverage | P1-02, P1-03 |
+| F-11 | 24 | Four empty test files and an empty `conftest.py`. `test_code_analyzer.py` imports a missing `Impact`. Coverage is 21% | `tests/` | Run | P1-12 |
 | F-12 | 21 | A2A is hand-rolled to Telex's format. Agent card says `analyze_github_pr`, code routes `analyze_pr` | `app/models/a2a.py`, `config/agent_card.json` | Read | P2-02 |
 | F-13 | 20 | Error-task block repeated nine times, 48 `except Exception` blocks, `focus_areas` ignored | `app/routes/a2a_tasks.py` | Read | P2-05 |
 | F-14 | 20 | Three LLM calls run in sequence, and the PR is refetched three times | `app/services/code_analyzer.py:90`, `app/services/github_mcp.py` | Read | P2-04 |
@@ -243,7 +243,7 @@ in CI, and the README is accurate.
 
 | ID | Status | Task | Depends on | Acceptance checks |
 |---|---|---|---|---|
-| P1-01 | todo | Move to `pyproject.toml` with `uv` and a lockfile, keeping only dependencies the code imports. Record a test baseline first | Owner OK to run tests | Baseline recorded in section 9. `uv sync` works. Full `pip-audit` output reviewed, with nothing high or critical left unexplained |
+| P1-01 | doing | Move to `pyproject.toml` with `uv` and a lockfile, keeping only dependencies the code imports. Record a test baseline first | Owner OK to run tests | Baseline recorded in section 9. `uv sync` works. Full `pip-audit` output reviewed, with nothing high or critical left unexplained |
 | P1-02 | todo | Delete `test_webhook_only.py` and other Telex fixtures | D-10 | No `eyJ`-style token in tracked files |
 | P1-03 | todo | Remove Telex and dead code: `telex_client.py`, `telex_service.py`, `a2a_service.py`, `routes/a2a.py`, `config/agent_card_telex.json`, `telex_workflow.json`, `/a2a/webhooks/{hook_id}`, legacy task format, placeholder RPC handlers, unused `public/fonts`, empty `scripts/*`, unreachable code in `performance_rules.py`, debug prints | P1-01 | `grep -ri telex app config` returns nothing. App starts. Tests no worse than baseline |
 | P1-04 | todo | Add a working result path: `message/send` returns a completed task without push config, and GitHub webhook runs have an output | P1-03 | A test proves a request with no push config returns a completed task |
@@ -291,8 +291,8 @@ Keep this honest. It records what has actually been proven.
 
 | Check | State | Notes |
 |---|---|---|
-| Test suite | **Not run** | Auto mode blocked running repo code on 2026-11-04. 60 tests are defined, and 14 of them should fail at import |
-| App startup | **Not run** | Same reason |
+| Test suite | Baseline recorded 2026-11-12 | Pinned `requirements.txt`, Python 3.11, dummy settings: **63 passed, 1 collection error** (`test_code_analyzer.py`, missing `Impact`). Coverage **21%**. `main.py`, all routes, `message_handler.py`, `formatters.py` and `telex_*` are at 0% |
+| App startup | Starts in-process | `/`, `/health` (reports `degraded`), `/ready` and the agent card all return 200. Config import fails if `SECRET_KEY` is unset. Real LLM and GitHub calls not tested |
 | Radon, vulture | Done | Highest complexity: `DiffParser._parse_file_diff` at 30 and `_parse_hunk` at 22 |
 | Ruff, bandit | **Failed** | Could not install because of a Windows file lock on the uv cache |
 | `pip-audit` | **Partial** | Only the last 25 lines were kept. Rerun in `P1-01` |
@@ -305,6 +305,18 @@ Keep this honest. It records what has actually been proven.
 ## 9. Session log
 
 Newest first. Keep entries short.
+
+### 2026-11-12: test baseline (`P1-01`)
+
+- **Done:** with the owner's OK, installed pinned `requirements.txt` into a local
+  `.venv` (Python 3.11) and ran the suite: 63 passed, 1 collection error, 21%
+  coverage. Started the app in-process and confirmed `F-07`, `F-09` and `F-11` by
+  running code. Found four more empty files under `F-10`.
+- **How to reproduce:** set dummy `GITHUB_TOKEN`, `GITHUB_WEBHOOK_SECRET`,
+  `SECRET_KEY` and `GOOGLE_API_KEY`, then run
+  `.venv/Scripts/python -m pytest tests --continue-on-collection-errors --cov=app`.
+- **Not done:** dependency move, full `pip-audit`, ruff and bandit. Docker Compose
+  and real LLM or GitHub calls were not run.
 
 ### 2026-11-12: decisions settled
 
