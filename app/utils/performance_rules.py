@@ -6,10 +6,10 @@ Pattern-based performance analysis for common issues
 including N+1 queries, inefficient loops, blocking I/O, etc.
 """
 
-from typing import List, Dict, Any
 import bisect
-import re
 import logging
+import re
+from typing import Any
 
 from app.models.analysis import PerformanceIssue
 
@@ -130,7 +130,7 @@ class PerformanceChecker:
     }
     
     @classmethod
-    def check(cls, file_changes: List[Dict[str, Any]]) -> List[PerformanceIssue]:
+    def check(cls, file_changes: list[dict[str, Any]]) -> list[PerformanceIssue]:
         """
         Run performance checks on code changes
         
@@ -182,7 +182,7 @@ class PerformanceChecker:
         return findings
     
     @classmethod
-    def check_file_content(cls, filename: str, content: str) -> List[PerformanceIssue]:
+    def check_file_content(cls, filename: str, content: str) -> list[PerformanceIssue]:
         """
         Check entire file content for performance issues
         

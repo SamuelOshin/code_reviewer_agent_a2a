@@ -6,18 +6,16 @@ Format code analysis results for different outputs including
 A2A messages, GitHub comments, and terminal display.
 """
 
-from typing import List, Dict, Any
-from datetime import datetime
 import logging
 
 from app.models.analysis import (
-    CodeAnalysisResult,
-    SecurityIssue,
-    PerformanceIssue,
+    ApprovalRecommendation,
     BestPracticeIssue,
-    Severity,
+    CodeAnalysisResult,
+    PerformanceIssue,
     RiskLevel,
-    ApprovalRecommendation
+    SecurityIssue,
+    Severity,
 )
 
 logger = logging.getLogger(__name__)
@@ -105,7 +103,7 @@ class SummaryFormatter:
         return "\n".join(sections)
     
     @classmethod
-    def _format_security_issues(cls, issues: List[SecurityIssue]) -> str:
+    def _format_security_issues(cls, issues: list[SecurityIssue]) -> str:
         """Format security issues as markdown list"""
         lines = []
         
@@ -139,7 +137,7 @@ class SummaryFormatter:
         return "\n".join(lines)
     
     @classmethod
-    def _format_performance_issues(cls, issues: List[PerformanceIssue]) -> str:
+    def _format_performance_issues(cls, issues: list[PerformanceIssue]) -> str:
         """Format performance issues as markdown list"""
         lines = []
         
@@ -172,7 +170,7 @@ class SummaryFormatter:
         return "\n".join(lines)
     
     @classmethod
-    def _format_best_practice_issues(cls, issues: List[BestPracticeIssue]) -> str:
+    def _format_best_practice_issues(cls, issues: list[BestPracticeIssue]) -> str:
         """Format best practice issues as markdown list"""
         lines = []
         

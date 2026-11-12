@@ -6,11 +6,12 @@ Handles incoming GitHub webhook events, specifically pull_request events.
 Includes HMAC signature verification for security.
 """
 
-from typing import Dict, Any
 import hashlib
 import hmac
 import logging
-from fastapi import APIRouter, Request, HTTPException, BackgroundTasks, Header
+from typing import Any
+
+from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from app.core.config import settings
@@ -121,7 +122,7 @@ async def handle_github_webhook(
 
 
 async def handle_pull_request_event(
-    payload: Dict[str, Any],
+    payload: dict[str, Any],
     background_tasks: BackgroundTasks
 ) -> JSONResponse:
     """

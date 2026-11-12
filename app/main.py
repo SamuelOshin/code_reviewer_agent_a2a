@@ -12,9 +12,9 @@ Main FastAPI application with:
 
 import json
 import logging
-from pathlib import Path
 from contextlib import asynccontextmanager
-from typing import Dict, Any, Optional
+from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,8 +22,8 @@ from fastapi.responses import JSONResponse
 
 from app.core.config import settings
 from app.core.logging import setup_logging
-from app.services.jsonrpc_handler import JSONRPCHandler
 from app.services.code_analyzer import CodeAnalyzerService
+from app.services.jsonrpc_handler import JSONRPCHandler
 from app.services.message_handler import MessageHandler
 
 # Setup logging
@@ -95,7 +95,7 @@ app.add_middleware(
 # JSON-RPC Method Handlers
 # ============================================================================
 
-async def handle_analyze_pr(pr_url: str, focus_areas: list = None) -> Dict[str, Any]:
+async def handle_analyze_pr(pr_url: str, focus_areas: list = None) -> dict[str, Any]:
     """
     JSON-RPC method: analyze_pr
     
@@ -134,7 +134,7 @@ async def handle_analyze_pr(pr_url: str, focus_areas: list = None) -> Dict[str, 
     }
 
 
-async def handle_introspect() -> Dict[str, Any]:
+async def handle_introspect() -> dict[str, Any]:
     """
     JSON-RPC method: introspect
     
@@ -151,7 +151,7 @@ async def handle_introspect() -> Dict[str, Any]:
     }
 
 
-async def handle_message_send(message: Dict[str, Any], configuration: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+async def handle_message_send(message: dict[str, Any], configuration: dict[str, Any] | None = None) -> dict[str, Any]:
     """
     JSON-RPC method: message/send
     
@@ -166,7 +166,7 @@ async def handle_message_send(message: Dict[str, Any], configuration: Optional[D
     Returns:
         A2A Task response
     """
-    logger.info(f"RPC: message/send called")
+    logger.info("RPC: message/send called")
     
     message_handler: MessageHandler = app.state.message_handler
     result = await message_handler.handle_message_send(message, configuration)
@@ -199,7 +199,7 @@ async def get_agent_card():
         Agent card JSON
     """
     try:
-        with open(AGENT_CARD_PATH, "r") as f:
+        with open(AGENT_CARD_PATH) as f:
             agent_card = json.load(f)
         
         return JSONResponse(content=agent_card)
@@ -247,7 +247,7 @@ async def root():
 # Include Routers
 # ============================================================================
 
-from app.routes import health, webhooks, jsonrpc, a2a_tasks
+from app.routes import a2a_tasks, health, jsonrpc, webhooks
 
 app.include_router(health.router)
 app.include_router(webhooks.router)

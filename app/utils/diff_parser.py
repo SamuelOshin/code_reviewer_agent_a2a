@@ -6,10 +6,10 @@ Parses unified diff format from GitHub PRs to extract file changes,
 additions, deletions, and context lines for analysis.
 """
 
-import re
-from typing import List, Dict, Any, Optional
-from dataclasses import dataclass
 import logging
+import re
+from dataclasses import dataclass
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ class DiffHunk:
     new_start: int
     new_lines: int
     header: str
-    lines: List[str]
+    lines: list[str]
     
     @property
     def old_count(self) -> int:
@@ -39,20 +39,20 @@ class DiffHunk:
 class FileDiff:
     """Represents changes to a single file"""
     filename: str
-    old_filename: Optional[str]
+    old_filename: str | None
     status: str  # 'added', 'deleted', 'modified', 'renamed'
-    additions: List[Dict[str, Any]]  # [{line_number, content}]
-    deletions: List[Dict[str, Any]]   # [{line_number, content}]
-    hunks: List[DiffHunk]
-    language: Optional[str] = None
-    old_path: Optional[str] = None
-    new_path: Optional[str] = None
+    additions: list[dict[str, Any]]  # [{line_number, content}]
+    deletions: list[dict[str, Any]]   # [{line_number, content}]
+    hunks: list[DiffHunk]
+    language: str | None = None
+    old_path: str | None = None
+    new_path: str | None = None
     
-    def get_added_code(self) -> List[str]:
+    def get_added_code(self) -> list[str]:
         """Get list of added code lines"""
         return [item['content'] for item in self.additions]
     
-    def get_deleted_code(self) -> List[str]:
+    def get_deleted_code(self) -> list[str]:
         """Get list of deleted code lines"""
         return [item['content'] for item in self.deletions]
 
@@ -95,7 +95,7 @@ class DiffParser:
     }
     
     @classmethod
-    def parse(cls, diff_content: str) -> List[FileDiff]:
+    def parse(cls, diff_content: str) -> list[FileDiff]:
         """
         Parse unified diff content into structured FileDiff objects
         
@@ -130,7 +130,7 @@ class DiffParser:
         return file_diffs
     
     @classmethod
-    def _parse_file_diff(cls, lines: List[str], start_idx: int) -> tuple[Optional[FileDiff], int]:
+    def _parse_file_diff(cls, lines: list[str], start_idx: int) -> tuple[FileDiff | None, int]:
         """Parse a single file's diff"""
         i = start_idx
         
@@ -273,7 +273,7 @@ class DiffParser:
         return file_diff, i
     
     @classmethod
-    def _parse_hunk(cls, lines: List[str], start_idx: int) -> tuple[DiffHunk, List[Dict], List[Dict], int]:
+    def _parse_hunk(cls, lines: list[str], start_idx: int) -> tuple[DiffHunk, list[dict], list[dict], int]:
         """Parse a single hunk"""
         i = start_idx
         hunk_match = cls.HUNK_HEADER_PATTERN.match(lines[i])
@@ -367,7 +367,7 @@ class DiffParser:
         return '\n'.join([del_line['content'] for del_line in file_diff.deletions])
     
     @classmethod
-    def get_file_summary(cls, file_diff: FileDiff) -> Dict[str, Any]:
+    def get_file_summary(cls, file_diff: FileDiff) -> dict[str, Any]:
         """Get summary statistics for a file diff"""
         return {
             'filename': file_diff.filename,

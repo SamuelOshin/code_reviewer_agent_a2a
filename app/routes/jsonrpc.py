@@ -6,9 +6,9 @@ Handles JSON-RPC requests for code analysis operations.
 Methods are registered in app/main.py during startup.
 """
 
-from typing import Dict, Any
 import logging
-from fastapi import APIRouter, Request, HTTPException
+
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from app.core.errors import new_error_id

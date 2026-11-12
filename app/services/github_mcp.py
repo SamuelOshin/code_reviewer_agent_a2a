@@ -6,17 +6,18 @@ Direct GitHub API integration using PyGithub for fetching PR data, diffs, and fi
 Uses async context manager pattern for proper resource management.
 """
 
-from typing import Optional, List, Dict, Any
-import re
-import base64
 import asyncio
+import logging
 import os
+import re
 from functools import partial
+from typing import Any
+
 from github import Auth, Github, GithubException
+
 from app.core.config import settings
 from app.core.exceptions import GitHubMCPError
-from app.models.github import PullRequest, PullRequestFile, PullRequestDiff
-import logging
+from app.models.github import PullRequest, PullRequestDiff, PullRequestFile
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +27,7 @@ class GitHubMCPService:
     
     def __init__(self):
         self.token = settings.GITHUB_TOKEN
-        self._client: Optional[Github] = None
+        self._client: Github | None = None
     
     async def __aenter__(self):
         """Context manager entry - initializes GitHub client"""
@@ -61,7 +62,7 @@ class GitHubMCPService:
                 )
                 
                 logger.info(f"✅ GitHub API client initialized successfully (user: {login})")
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.error("⏱️ GitHub connection test timed out after 15s")
                 logger.warning("💡 Tip: Set SKIP_GITHUB_CONNECTION_TEST=true to skip this check on slow networks")
                 raise GitHubMCPError("GitHub API connection timed out - network may be slow or blocked")
@@ -264,7 +265,7 @@ class GitHubMCPService:
         owner: str, 
         repo: str, 
         pr_number: int
-    ) -> List[PullRequestFile]:
+    ) -> list[PullRequestFile]:
         """
         List changed files in PR using GitHub API
         
@@ -313,7 +314,7 @@ class GitHubMCPService:
         owner: str, 
         repo: str, 
         pr_number: int
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Get PR reviews using GitHub API
         
@@ -357,7 +358,7 @@ class GitHubMCPService:
         owner: str, 
         repo: str, 
         path: str, 
-        ref: Optional[str] = None
+        ref: str | None = None
     ) -> str:
         """
         Get file content using GitHub API

@@ -7,8 +7,9 @@ rule-based pattern matching.
 """
 
 import pytest
-from app.utils.security_rules import SecurityChecker
+
 from app.models.analysis import Severity
+from app.utils.security_rules import SecurityChecker
 
 
 class TestSecurityChecker:

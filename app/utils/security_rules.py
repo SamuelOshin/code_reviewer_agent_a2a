@@ -6,9 +6,8 @@ Pattern-based security scanning for common vulnerabilities
 including SQL injection, XSS, secrets, command injection, etc.
 """
 
-from typing import List, Dict, Any
-import re
 import logging
+import re
 
 from app.models.analysis import SecurityIssue, Severity
 
@@ -147,7 +146,7 @@ class SecurityChecker:
     }
     
     @classmethod
-    def check(cls, code_or_file_changes, language=None, filename=None) -> List[SecurityIssue]:
+    def check(cls, code_or_file_changes, language=None, filename=None) -> list[SecurityIssue]:
         """
         Run security checks on code changes
         
@@ -208,7 +207,7 @@ class SecurityChecker:
         return findings
     
     @classmethod
-    def check_file_content(cls, filename: str, content: str) -> List[SecurityIssue]:
+    def check_file_content(cls, filename: str, content: str) -> list[SecurityIssue]:
         """
         Check entire file content for security issues
         

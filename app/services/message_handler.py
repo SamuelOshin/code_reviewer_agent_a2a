@@ -7,15 +7,15 @@ parameters and conversation history from the parts array.
 """
 
 import logging
-import uuid
 import re
-import json
+import uuid
+from datetime import UTC, datetime
+from typing import Any
+
 import httpx
-from typing import Dict, Any, List, Optional
-from datetime import datetime, timezone
 
 from app.core.errors import new_error_id, safe_webhook_target
-from app.models.a2a import A2AMessage, MessagePart, A2ATask, TaskStatus, A2AArtifact, ArtifactPart
+from app.models.a2a import A2AArtifact, A2AMessage, A2ATask, ArtifactPart, MessagePart, TaskStatus
 from app.services.code_analyzer import CodeAnalyzerService
 from app.utils.formatters import SummaryFormatter
 
@@ -29,7 +29,7 @@ class MessageHandler:
         self.analyzer = CodeAnalyzerService()
         self.formatter = SummaryFormatter()
     
-    async def handle_message_send(self, message: Dict[str, Any], configuration: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    async def handle_message_send(self, message: dict[str, Any], configuration: dict[str, Any] | None = None) -> dict[str, Any]:
         """
         Handle message/send JSON-RPC method
         
@@ -134,7 +134,7 @@ class MessageHandler:
                 ],
                 kind="message",
                 taskId=task_id,
-                timestamp=datetime.now(timezone.utc).isoformat()
+                timestamp=datetime.now(UTC).isoformat()
             )
             
             # Return message as result (NOT Task object)
@@ -157,7 +157,7 @@ class MessageHandler:
             ],
             kind="message",
             taskId=task_id,
-            timestamp=datetime.now(timezone.utc).isoformat()
+            timestamp=datetime.now(UTC).isoformat()
         )
         
         logger.error("No webhook configuration found - cannot process request")
@@ -168,8 +168,8 @@ class MessageHandler:
         pr_url: str,
         task_id: str,
         message_id: str,
-        message: Dict[str, Any],
-        push_config: Dict[str, Any]
+        message: dict[str, Any],
+        push_config: dict[str, Any]
     ):
         """Wrapper for _process_and_push with comprehensive error handling"""
         logger.info(f"🚀 _process_and_push_safe STARTED for PR: {pr_url}")
@@ -197,10 +197,10 @@ class MessageHandler:
         self,
         task_id: str,
         message_id: str,
-        message: Dict[str, Any],
-        push_config: Dict[str, Any],
+        message: dict[str, Any],
+        push_config: dict[str, Any],
         error_message: str,
-        error_id: Optional[str] = None
+        error_id: str | None = None
     ):
         """Push error result to the client's push notification webhook
 
@@ -258,7 +258,7 @@ class MessageHandler:
             ],
             kind="message",
             taskId=task_id,
-            timestamp=datetime.now(timezone.utc)
+            timestamp=datetime.now(UTC)
         )
         
         # Create error artifact (some A2A clients don't display the message if artifacts=[])
@@ -268,7 +268,7 @@ class MessageHandler:
             parts=[
                 ArtifactPart(
                     kind="text",
-                    text=f"# ❌ PR Analysis Error\n\n{user_message}\n\n---\n*Error occurred at {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}*"
+                    text=f"# ❌ PR Analysis Error\n\n{user_message}\n\n---\n*Error occurred at {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S UTC')}*"
                 )
             ]
         )
@@ -278,7 +278,7 @@ class MessageHandler:
             contextId=message.get("contextId", str(uuid.uuid4())),
             status=TaskStatus(
                 state="failed",
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
                 message=error_msg
             ),
             artifacts=[error_artifact],  
@@ -318,93 +318,93 @@ class MessageHandler:
         lines = []
         
         # Header
-        lines.append(f"# Pull Request Analysis Report")
-        lines.append(f"")
+        lines.append("# Pull Request Analysis Report")
+        lines.append("")
         lines.append(f"**PR #{analysis_result.pr_number}**: {analysis_result.pr_title}")
         lines.append(f"**Author**: {analysis_result.author}")
         lines.append(f"**Repository**: {analysis_result.repository}")
         lines.append(f"**URL**: {pr_url}")
-        lines.append(f"")
+        lines.append("")
         
         # Executive Summary
-        lines.append(f"## Executive Summary")
-        lines.append(f"")
+        lines.append("## Executive Summary")
+        lines.append("")
         lines.append(analysis_result.executive_summary)
-        lines.append(f"")
+        lines.append("")
         
         # Risk Assessment
-        lines.append(f"## Risk Assessment")
-        lines.append(f"")
+        lines.append("## Risk Assessment")
+        lines.append("")
         lines.append(f"**Risk Level**: {analysis_result.risk_level.value.upper()}")
         lines.append(f"**Recommendation**: {analysis_result.approval_recommendation.value.upper()}")
-        lines.append(f"")
+        lines.append("")
         
         # Key Concerns
         if analysis_result.key_concerns:
-            lines.append(f"## Key Concerns")
-            lines.append(f"")
+            lines.append("## Key Concerns")
+            lines.append("")
             for concern in analysis_result.key_concerns:
                 lines.append(f"- {concern}")
-            lines.append(f"")
+            lines.append("")
         
         # Statistics
-        lines.append(f"## Statistics")
-        lines.append(f"")
+        lines.append("## Statistics")
+        lines.append("")
         lines.append(f"- Files changed: {analysis_result.files_changed}")
         lines.append(f"- Lines added: +{analysis_result.lines_added}")
         lines.append(f"- Lines deleted: -{analysis_result.lines_deleted}")
-        lines.append(f"")
+        lines.append("")
         
         # Security Findings
         if analysis_result.security_findings:
             lines.append(f"## 🔒 Security Findings ({len(analysis_result.security_findings)})")
-            lines.append(f"")
+            lines.append("")
             for i, finding in enumerate(analysis_result.security_findings, 1):
                 lines.append(f"### {i}. {finding.title}")
                 lines.append(f"**Severity**: {finding.severity.upper()}")
                 lines.append(f"**File**: `{finding.file}` (Line {finding.line_number})")
-                lines.append(f"")
+                lines.append("")
                 lines.append(f"**Description**: {finding.description}")
-                lines.append(f"")
+                lines.append("")
                 lines.append(f"**Recommendation**: {finding.recommendation}")
                 if finding.cwe_id:
                     lines.append(f"**CWE ID**: {finding.cwe_id}")
-                lines.append(f"")
+                lines.append("")
         
         # Performance Findings
         if analysis_result.performance_findings:
             lines.append(f"## ⚡ Performance Findings ({len(analysis_result.performance_findings)})")
-            lines.append(f"")
+            lines.append("")
             for i, finding in enumerate(analysis_result.performance_findings, 1):
                 lines.append(f"### {i}. {finding.title}")
                 lines.append(f"**Severity**: {finding.severity.upper()}")
                 lines.append(f"**File**: `{finding.file}`")
-                lines.append(f"")
+                lines.append("")
                 lines.append(f"**Description**: {finding.description}")
-                lines.append(f"")
+                lines.append("")
                 lines.append(f"**Impact**: {finding.impact}")
-                lines.append(f"")
+                lines.append("")
                 lines.append(f"**Recommendation**: {finding.recommendation}")
-                lines.append(f"")
+                lines.append("")
         
         # Best Practice Findings
         if analysis_result.best_practice_findings:
             lines.append(f"## 📚 Best Practice Findings ({len(analysis_result.best_practice_findings)})")
-            lines.append(f"")
+            lines.append("")
             for i, finding in enumerate(analysis_result.best_practice_findings, 1):
                 lines.append(f"### {i}. {finding.title}")
                 lines.append(f"**Category**: {finding.category}")
                 lines.append(f"**Severity**: {finding.severity.upper()}")
                 if finding.file:
                     lines.append(f"**File**: `{finding.file}`")
-                lines.append(f"")
+                lines.append("")
                 lines.append(f"**Description**: {finding.description}")
-                lines.append(f"")
+                lines.append("")
                 lines.append(f"**Recommendation**: {finding.recommendation}")
-                lines.append(f"")
+                lines.append("")
         
         # Footer
-        lines.append(f"---")
+        lines.append("---")
         lines.append(f"*Analysis completed at {analysis_result.analyzed_at.strftime('%Y-%m-%d %H:%M:%S UTC')}*")
         lines.append(f"*Powered by {analysis_result.llm_provider} ({analysis_result.llm_model})*")
         
@@ -415,8 +415,8 @@ class MessageHandler:
         pr_url: str,
         task_id: str,
         message_id: str,
-        message: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        message: dict[str, Any]
+    ) -> dict[str, Any]:
         """Analyze PR and return result dict"""
         try:
             logger.info(f"Analyzing PR: {pr_url}")
@@ -442,7 +442,7 @@ class MessageHandler:
                 ],
                 kind="message",
                 taskId=task_id,
-                timestamp=datetime.now(timezone.utc).isoformat()
+                timestamp=datetime.now(UTC).isoformat()
             )
             
             # Create artifact with full analysis data as TEXT (not JSON)
@@ -472,7 +472,7 @@ class MessageHandler:
                 contextId=message.get("contextId", str(uuid.uuid4())),
                 status=TaskStatus(
                     state="completed",
-                    timestamp=datetime.now(timezone.utc).isoformat(),
+                    timestamp=datetime.now(UTC).isoformat(),
                     message=response_msg,
                     progress=1.0
                 ),
@@ -509,7 +509,7 @@ class MessageHandler:
                 ],
                 kind="message",
                 taskId=task_id,
-                timestamp=datetime.now(timezone.utc).isoformat()
+                timestamp=datetime.now(UTC).isoformat()
             )
             
             task = A2ATask(
@@ -517,7 +517,7 @@ class MessageHandler:
                 contextId=message.get("contextId", str(uuid.uuid4())),
                 status=TaskStatus(
                     state="failed",
-                    timestamp=datetime.now(timezone.utc).isoformat(),
+                    timestamp=datetime.now(UTC).isoformat(),
                     message=error_msg
                 ),
                 artifacts=[],
@@ -532,8 +532,8 @@ class MessageHandler:
         pr_url: str,
         task_id: str,
         message_id: str,
-        message: Dict[str, Any],
-        push_config: Dict[str, Any]
+        message: dict[str, Any],
+        push_config: dict[str, Any]
     ):
         """Process PR analysis and push result to the push notification webhook (non-blocking mode)"""
         try:
@@ -542,7 +542,6 @@ class MessageHandler:
             
             # Serialize properly using Pydantic's model serialization
             # This ensures datetime objects are converted to ISO strings
-            from pydantic import BaseModel
             
             # Convert any remaining datetime objects to ISO strings
             def serialize_datetime(obj):
@@ -591,7 +590,7 @@ class MessageHandler:
             
             logger.info(f"Pushing full task result to webhook: {safe_webhook_target(webhook_url)}")
             logger.info(f"Task state: {result_lightweight.get('status', {}).get('state')}")
-            logger.info(f"Sending JSON-RPC response with complete task result")
+            logger.info("Sending JSON-RPC response with complete task result")
             
             # Use a longer read timeout for push webhooks (they can be slow)
             # Connect: 10s, Read: 60s
@@ -624,7 +623,7 @@ class MessageHandler:
             except Exception as push_error:
                 logger.error(f"Failed to push error to webhook: {push_error}", exc_info=True)
     
-    def _extract_pr_url(self, interpreted_text: Optional[str], conversation_history: List[Dict[str, Any]]) -> Optional[str]:
+    def _extract_pr_url(self, interpreted_text: str | None, conversation_history: list[dict[str, Any]]) -> str | None:
         """
         Extract GitHub PR URL from interpreted text or conversation history
         
@@ -667,7 +666,7 @@ class MessageHandler:
         
         return None
     
-    def _create_lightweight_result(self, full_result: Dict[str, Any]) -> Dict[str, Any]:
+    def _create_lightweight_result(self, full_result: dict[str, Any]) -> dict[str, Any]:
         """
         Create a lightweight version of the result for webhook push
         to avoid HTTP 413 (payload too large) errors.
@@ -702,7 +701,7 @@ class MessageHandler:
         task_id: str,
         message_id: str,
         prompt: str
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Create an input-required response to ask user for more info
         
@@ -725,7 +724,7 @@ class MessageHandler:
             ],
             kind="message",
             taskId=task_id,
-            timestamp=datetime.now(timezone.utc).isoformat()
+            timestamp=datetime.now(UTC).isoformat()
         )
         
         task = A2ATask(
@@ -733,7 +732,7 @@ class MessageHandler:
             contextId=str(uuid.uuid4()),
             status=TaskStatus(
                 state="input-required",
-                timestamp=datetime.now(timezone.utc).isoformat(),
+                timestamp=datetime.now(UTC).isoformat(),
                 message=response_msg
             ),
             artifacts=[],

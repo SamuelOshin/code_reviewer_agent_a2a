@@ -9,7 +9,8 @@ message/send request for simple clients.
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
@@ -60,7 +61,7 @@ async def handle_a2a_task(request: Request):
                     "role": "user",
                     "parts": [{"kind": "text", "text": body["message"]}],
                     "kind": "message",
-                    "timestamp": datetime.now(timezone.utc).isoformat()
+                    "timestamp": datetime.now(UTC).isoformat()
                 },
                 "configuration": {
                     "blocking": False,

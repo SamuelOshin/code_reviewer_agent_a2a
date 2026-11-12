@@ -7,7 +7,7 @@ PerformanceChecker) and DiffParser run for real, so these tests reflect current
 behaviour of the orchestration layer.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -33,8 +33,8 @@ SAMPLE_PR = PullRequest(
     title="Add user authentication",
     body="Implements JWT-based authentication",
     user=GitHubUser(login="testuser", id=1),
-    created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
-    updated_at=datetime(2026, 1, 2, tzinfo=timezone.utc),
+    created_at=datetime(2026, 1, 1, tzinfo=UTC),
+    updated_at=datetime(2026, 1, 2, tzinfo=UTC),
     html_url=PR_URL,
     head={"sha": "abc123", "ref": "feature"},
     base={"sha": "def456", "ref": "main"},

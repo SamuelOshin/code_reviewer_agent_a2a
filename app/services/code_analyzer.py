@@ -11,28 +11,28 @@ Main service that orchestrates the complete code review process:
 6. Build comprehensive CodeAnalysisResult
 """
 
-from typing import Optional, List, Dict, Any
-from datetime import datetime, timezone
 import logging
 import time
+from datetime import UTC, datetime
+from typing import Any
 
 from app.core.config import settings
 from app.core.exceptions import AnalysisError, GitHubMCPError, LLMError
-from app.models.github import PullRequest, PullRequestFile
 from app.models.analysis import (
-    CodeAnalysisResult,
-    SecurityIssue,
-    PerformanceIssue,
+    ApprovalRecommendation,
     BestPracticeIssue,
-    Severity,
+    CodeAnalysisResult,
+    PerformanceIssue,
     RiskLevel,
-    ApprovalRecommendation
+    SecurityIssue,
+    Severity,
 )
+from app.models.github import PullRequest, PullRequestFile
 from app.services.github_mcp import GitHubMCPService
 from app.services.llm_service import LLMService
 from app.utils.diff_parser import DiffParser, FileDiff
-from app.utils.security_rules import SecurityChecker
 from app.utils.performance_rules import PerformanceChecker
+from app.utils.security_rules import SecurityChecker
 
 logger = logging.getLogger(__name__)
 
@@ -161,7 +161,7 @@ class CodeAnalyzerService:
                 lines_deleted=pr_data.deletions,
                 approval_recommendation=approval_recommendation,
                 key_concerns=recommendations,  # Map recommendations to key_concerns
-                analyzed_at=datetime.now(timezone.utc),
+                analyzed_at=datetime.now(UTC),
                 analysis_duration_seconds=analysis_duration,
                 llm_provider=settings.LLM_PROVIDER,
                 llm_model=settings.LLM_MODEL
@@ -180,7 +180,7 @@ class CodeAnalyzerService:
             logger.error(f"Unexpected error during analysis: {e}")
             raise AnalysisError(f"Analysis failed: {str(e)}")
     
-    async def _fetch_pr_data(self, pr_url: str) -> tuple[PullRequest, str, List[PullRequestFile]]:
+    async def _fetch_pr_data(self, pr_url: str) -> tuple[PullRequest, str, list[PullRequestFile]]:
         """
         Fetch PR data from GitHub via API
         
@@ -201,14 +201,14 @@ class CodeAnalyzerService:
                 # Fetch PR and diff data
                 logger.info("Fetching PR and diff data...")
                 pr, pr_diff = await github_service.get_pr_with_diff(owner, repo, pr_number)
-                logger.info(f"Successfully fetched PR and diff data")
+                logger.info("Successfully fetched PR and diff data")
                 
                 return pr, pr_diff.raw_diff, pr_diff.files
         except Exception as e:
             logger.error(f"Error in _fetch_pr_data: {type(e).__name__}: {e}", exc_info=True)
             raise
     
-    def _prepare_file_changes(self, parsed_diffs: List[FileDiff]) -> List[Dict[str, Any]]:
+    def _prepare_file_changes(self, parsed_diffs: list[FileDiff]) -> list[dict[str, Any]]:
         """
         Convert parsed diffs to format expected by rule checkers
         
@@ -234,9 +234,9 @@ class CodeAnalyzerService:
     
     def _merge_security_issues(
         self,
-        rule_issues: List[SecurityIssue],
-        llm_issues: List[SecurityIssue]
-    ) -> List[SecurityIssue]:
+        rule_issues: list[SecurityIssue],
+        llm_issues: list[SecurityIssue]
+    ) -> list[SecurityIssue]:
         """
         Merge and deduplicate security issues from rule-based and LLM analysis
         
@@ -282,9 +282,9 @@ class CodeAnalyzerService:
     
     def _merge_performance_issues(
         self,
-        rule_issues: List[PerformanceIssue],
-        llm_issues: List[PerformanceIssue]
-    ) -> List[PerformanceIssue]:
+        rule_issues: list[PerformanceIssue],
+        llm_issues: list[PerformanceIssue]
+    ) -> list[PerformanceIssue]:
         """
         Merge and deduplicate performance issues
         
@@ -358,8 +358,8 @@ class CodeAnalyzerService:
     
     def _calculate_risk_level(
         self,
-        security_issues: List[SecurityIssue],
-        performance_issues: List[PerformanceIssue]
+        security_issues: list[SecurityIssue],
+        performance_issues: list[PerformanceIssue]
     ) -> RiskLevel:
         """
         Calculate overall risk level based on findings
@@ -392,10 +392,10 @@ class CodeAnalyzerService:
     
     def _generate_recommendations(
         self,
-        security_issues: List[SecurityIssue],
-        performance_issues: List[PerformanceIssue],
-        best_practice_issues: List[BestPracticeIssue]
-    ) -> List[str]:
+        security_issues: list[SecurityIssue],
+        performance_issues: list[PerformanceIssue],
+        best_practice_issues: list[BestPracticeIssue]
+    ) -> list[str]:
         """
         Generate prioritized list of recommendations
         
@@ -444,8 +444,8 @@ class CodeAnalyzerService:
     def _determine_approval(
         self,
         risk_level: RiskLevel,
-        security_issues: List[SecurityIssue],
-        performance_issues: List[PerformanceIssue]
+        security_issues: list[SecurityIssue],
+        performance_issues: list[PerformanceIssue]
     ) -> ApprovalRecommendation:
         """
         Determine approval recommendation based on risk and issues

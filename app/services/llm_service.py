@@ -6,16 +6,15 @@ Supports Google Gemini (default), OpenAI GPT, and Anthropic Claude.
 Handles code analysis, security scanning, performance review, and summary generation.
 """
 
-from typing import List, Dict, Any, Optional
-from abc import ABC, abstractmethod
-from pathlib import Path
 import json
 import logging
-import asyncio
+from abc import ABC, abstractmethod
+from pathlib import Path
+from typing import Any
 
 from app.core.config import settings
 from app.core.exceptions import LLMError
-from app.models.analysis import SecurityIssue, PerformanceIssue, BestPracticeIssue, Severity
+from app.models.analysis import BestPracticeIssue, PerformanceIssue, SecurityIssue, Severity
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +23,7 @@ class BaseLLM(ABC):
     """Base LLM interface"""
     
     @abstractmethod
-    async def generate(self, prompt: str, system_prompt: Optional[str] = None) -> str:
+    async def generate(self, prompt: str, system_prompt: str | None = None) -> str:
         """Generate response from LLM"""
         pass
 
@@ -41,7 +40,7 @@ class GoogleLLM(BaseLLM):
         except Exception as e:
             raise LLMError(f"Failed to initialize Google Gemini: {str(e)}")
     
-    async def generate(self, prompt: str, system_prompt: Optional[str] = None) -> str:
+    async def generate(self, prompt: str, system_prompt: str | None = None) -> str:
         """Generate response from Gemini"""
         try:
             # Combine system prompt and user prompt for Gemini
@@ -74,7 +73,7 @@ class OpenAILLM(BaseLLM):
         except Exception as e:
             raise LLMError(f"Failed to initialize OpenAI: {str(e)}")
     
-    async def generate(self, prompt: str, system_prompt: Optional[str] = None) -> str:
+    async def generate(self, prompt: str, system_prompt: str | None = None) -> str:
         """Generate response from OpenAI"""
         try:
             messages = []
@@ -106,7 +105,7 @@ class AnthropicLLM(BaseLLM):
         except Exception as e:
             raise LLMError(f"Failed to initialize Anthropic: {str(e)}")
     
-    async def generate(self, prompt: str, system_prompt: Optional[str] = None) -> str:
+    async def generate(self, prompt: str, system_prompt: str | None = None) -> str:
         """Generate response from Claude"""
         try:
             response = await self.client.messages.create(
@@ -140,7 +139,7 @@ class LLMService:
         self.prompts = self._load_prompts()
         logger.info(f"LLMService initialized with provider: {provider}")
     
-    def _load_prompts(self) -> Dict[str, str]:
+    def _load_prompts(self) -> dict[str, str]:
         """Load prompt templates from config/prompts/"""
         prompts = {}
         prompt_dir = Path("config/prompts")
@@ -161,7 +160,7 @@ class LLMService:
         
         return prompts
     
-    def _extract_json_from_response(self, response: str) -> List[Dict[str, Any]]:
+    def _extract_json_from_response(self, response: str) -> list[dict[str, Any]]:
         """Extract JSON array from LLM response (handles markdown code blocks)"""
         try:
             # Try direct JSON parse first
@@ -190,8 +189,8 @@ class LLMService:
     async def analyze_security(
         self, 
         diff_content: str, 
-        files: List[Dict[str, Any]]
-    ) -> List[SecurityIssue]:
+        files: list[dict[str, Any]]
+    ) -> list[SecurityIssue]:
         """LLM-powered security analysis"""
         try:
             # Format file context - handle both dict and PullRequestFile objects
@@ -238,8 +237,8 @@ Return your findings as a JSON array following the specified format."""
     async def analyze_performance(
         self, 
         diff_content: str, 
-        files: List[Dict[str, Any]]
-    ) -> List[PerformanceIssue]:
+        files: list[dict[str, Any]]
+    ) -> list[PerformanceIssue]:
         """LLM-powered performance analysis"""
         try:
             # Format file context - handle both dict and PullRequestFile objects
@@ -297,8 +296,8 @@ Return your findings as a JSON array following the specified format."""
     async def analyze_best_practices(
         self, 
         diff_content: str, 
-        files: List[Dict[str, Any]]
-    ) -> List[BestPracticeIssue]:
+        files: list[dict[str, Any]]
+    ) -> list[BestPracticeIssue]:
         """LLM-powered best practices analysis"""
         try:
             # Format file context - handle both dict and PullRequestFile objects
@@ -355,9 +354,9 @@ Return your findings as a JSON array with:
         pr_title: str,
         pr_author: str,
         pr_description: str,
-        security_issues: List[SecurityIssue],
-        performance_issues: List[PerformanceIssue],
-        best_practice_issues: List[BestPracticeIssue],
+        security_issues: list[SecurityIssue],
+        performance_issues: list[PerformanceIssue],
+        best_practice_issues: list[BestPracticeIssue],
         total_additions: int,
         total_deletions: int,
         changed_files: int

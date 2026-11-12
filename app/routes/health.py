@@ -5,11 +5,12 @@
 Provides health status for the API and its dependencies.
 """
 
-from typing import Dict, Any
-from datetime import datetime, timezone
+import logging
+from datetime import UTC, datetime
+from typing import Any
+
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
-import logging
 
 from app.core.config import settings
 
@@ -19,7 +20,7 @@ router = APIRouter(tags=["health"])
 
 
 @router.get("/health")
-async def health_check() -> Dict[str, Any]:
+async def health_check() -> dict[str, Any]:
     """
     Health check endpoint
     
@@ -28,7 +29,7 @@ async def health_check() -> Dict[str, Any]:
     """
     health_status = {
         "status": "healthy",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "service": "code_review_agent",
         "version": "1.0.0",
         "checks": {
@@ -62,7 +63,7 @@ async def health_check() -> Dict[str, Any]:
 
 
 @router.get("/ready")
-async def readiness_check() -> Dict[str, Any]:
+async def readiness_check() -> dict[str, Any]:
     """
     Readiness check endpoint (Kubernetes-style)
     
@@ -75,14 +76,14 @@ async def readiness_check() -> Dict[str, Any]:
     return JSONResponse(
         content={
             "ready": ready,
-            "timestamp": datetime.now(timezone.utc).isoformat()
+            "timestamp": datetime.now(UTC).isoformat()
         },
         status_code=200 if ready else 503
     )
 
 
 @router.get("/live")
-async def liveness_check() -> Dict[str, Any]:
+async def liveness_check() -> dict[str, Any]:
     """
     Liveness check endpoint (Kubernetes-style)
     
@@ -92,7 +93,7 @@ async def liveness_check() -> Dict[str, Any]:
     return JSONResponse(
         content={
             "alive": True,
-            "timestamp": datetime.now(timezone.utc).isoformat()
+            "timestamp": datetime.now(UTC).isoformat()
         },
         status_code=200
     )

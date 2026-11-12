@@ -6,10 +6,10 @@ Pydantic models for code analysis results including security, performance,
 and best practice findings.
 """
 
-from typing import Optional, List
-from pydantic import BaseModel, ConfigDict, Field
 from datetime import UTC, datetime
 from enum import Enum
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class Severity(str, Enum):
@@ -44,11 +44,11 @@ class SecurityIssue(BaseModel):
     title: str
     description: str
     file: str
-    line_number: Optional[int] = None
-    code_snippet: Optional[str] = None
+    line_number: int | None = None
+    code_snippet: str | None = None
     recommendation: str
-    cwe_id: Optional[str] = None  # Common Weakness Enumeration ID
-    references: List[str] = []
+    cwe_id: str | None = None  # Common Weakness Enumeration ID
+    references: list[str] = []
 
 
 class PerformanceIssue(BaseModel):
@@ -57,11 +57,11 @@ class PerformanceIssue(BaseModel):
     title: str
     description: str
     file: str
-    line_number: Optional[int] = None
-    code_snippet: Optional[str] = None
+    line_number: int | None = None
+    code_snippet: str | None = None
     impact: str  # Free-text description of the effect. Risk is driven by `severity`, not this field.
     recommendation: str
-    estimated_impact: Optional[str] = None  # e.g., "50% slower", "2x memory usage"
+    estimated_impact: str | None = None  # e.g., "50% slower", "2x memory usage"
 
 
 class BestPracticeIssue(BaseModel):
@@ -71,10 +71,10 @@ class BestPracticeIssue(BaseModel):
     title: str
     description: str
     file: str
-    line_number: Optional[int] = None
-    code_snippet: Optional[str] = None
+    line_number: int | None = None
+    code_snippet: str | None = None
     recommendation: str
-    references: List[str] = []
+    references: list[str] = []
 
 
 class CodeAnalysisResult(BaseModel):
@@ -91,9 +91,9 @@ class CodeAnalysisResult(BaseModel):
     risk_level: RiskLevel
     
     # Findings
-    security_findings: List[SecurityIssue] = []
-    performance_findings: List[PerformanceIssue] = []
-    best_practice_findings: List[BestPracticeIssue] = []
+    security_findings: list[SecurityIssue] = []
+    performance_findings: list[PerformanceIssue] = []
+    best_practice_findings: list[BestPracticeIssue] = []
     
     # Metrics
     files_changed: int
@@ -102,15 +102,15 @@ class CodeAnalysisResult(BaseModel):
     
     # Recommendations
     approval_recommendation: ApprovalRecommendation
-    key_concerns: List[str] = []
-    positive_aspects: List[str] = []
-    suggested_reviewers: List[str] = []
+    key_concerns: list[str] = []
+    positive_aspects: list[str] = []
+    suggested_reviewers: list[str] = []
     
     # Metadata
     analyzed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     analysis_duration_seconds: float
-    llm_provider: Optional[str] = None
-    llm_model: Optional[str] = None
+    llm_provider: str | None = None
+    llm_model: str | None = None
     
     model_config = ConfigDict(json_schema_extra={
             "example": {
