@@ -32,7 +32,8 @@ class GitHubMCPService:
         """Context manager entry - initializes GitHub client"""
         try:
             logger.info("Creating GitHub client with token...")
-            logger.info(f"Token present: {bool(self.token)}, Length: {len(self.token) if self.token else 0}")
+            # Presence only: the token length narrows a brute-force search
+            logger.info(f"Token present: {bool(self.token)}")
             
             self._client = Github(self.token)
             logger.info("GitHub client object created, testing connection...")
@@ -67,7 +68,7 @@ class GitHubMCPService:
             
             return self
         except GithubException as e:
-            logger.error(f"GitHub API error: {e.status}, {e.data}")
+            logger.error(f"GitHub API error: status={e.status}")
             raise GitHubMCPError(f"GitHub API initialization failed: {str(e)}")
         except GitHubMCPError:
             raise  # Re-raise our custom errors
