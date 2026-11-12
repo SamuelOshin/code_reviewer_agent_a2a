@@ -1,0 +1,31 @@
+[project]
+name = "prrover"
+version = "1.0.0"
+description = "AI code review agent for GitHub Pull Requests"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "anthropic>=0.72",
+    "fastapi>=0.120",
+    "google-generativeai>=0.8.5",
+    "httpx>=0.28",
+    "openai>=2.6",
+    "pydantic>=2.12",
+    "pydantic-settings>=2.11",
+    "pygithub>=2.8",
+    "uvicorn>=0.38",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4",
+    "pytest-asyncio>=1.2",
+    "pytest-cov>=7.0",
+    "ruff>=0.14",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
