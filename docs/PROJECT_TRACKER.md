@@ -4,7 +4,7 @@ The single source of truth for this project: what we are building, how, what is
 done, what is left, and where to resume. Any person or agent should be able to
 read this file alone and continue the work.
 
-**Last updated:** 2026-11-05
+**Last updated:** 2026-11-12
 
 ---
 
@@ -12,11 +12,11 @@ read this file alone and continue the work.
 
 | | |
 |---|---|
-| **Current phase** | Phase 0: planning |
-| **Active task** | None. Waiting for the owner to approve Phase 1 |
-| **Next action** | Owner answers the open decisions in section 5, then start `P1-01` |
-| **Working branch** | `docs/project-tracker` (tracker committed, not pushed) |
-| **Blockers** | `P1-01` needs the owner's explicit OK to run repo code (see section 8) |
+| **Current phase** | Phase 1: make it honest and working (planning complete) |
+| **Active task** | None |
+| **Next action** | Start `P1-01` on a new branch from `docs/project-tracker` or `main`: record a test baseline, then move to `pyproject.toml` with `uv` |
+| **Working branch** | `docs/project-tracker` (pushed to `origin`, not merged) |
+| **Blockers** | `P1-01` needs the owner's explicit OK to run repo code (see section 8). Only `D-08` is open, and it doesn't block Phase 1 |
 
 ---
 
@@ -94,7 +94,7 @@ then a risk score and summary are built. Results can only reach Telex.
 **Keep:** diff parser, the hybrid design (rules plus LLM), risk scoring logic,
 webhook HMAC verification.
 
-**Target (proposed, see `D-05`):**
+**Target (approved, see `D-05`):**
 
 ```
 GitHub PR event / A2A client / MCP client / CLI
@@ -182,23 +182,23 @@ baselines. Routing ships only if it cuts cost without a meaningful drop in recal
 | D-02 | Project lives at `Documents\code_reviewer_agent_a2a`, cloned from `SamuelOshin/code_reviewer_agent_a2a` | Owner's request | 2026-11-05 |
 | D-03 | This file is the shared tracker, with `AGENTS.md` as the entry point | Any agent can resume work | 2026-11-05 |
 | D-04 | No AI attribution in commits or PRs | Owner's global rule | 2026-11-05 |
+| D-05 | Adopt the target architecture in section 4, and the three-phase plan in section 7 | Owner accepted the recommendation | 2026-11-12 |
 | D-06 | The LLM layer is provider agnostic, and provider and model are configuration | Owner's request. Avoids lock-in, survives model retirements, and lets evals compare models | 2026-11-05 |
+| D-07 | Ship as a GitHub Action first. Add a GitHub App later only if a live demo needs it | Owner accepted the recommendation. An Action needs no hosting | 2026-11-12 |
+| D-09 | Keep the name PRRover and use it consistently | Owner accepted the recommendation | 2026-11-12 |
+| D-10 | Don't rewrite git history. Deleting `test_webhook_only.py` in `P1-02` is enough | Owner accepted the recommendation. The token expired in November 2025 and Telex is gone | 2026-11-12 |
+| D-11 | The old Render deployment is not running, so the public tracker exposes no live endpoint. Don't redeploy until `P1-07` lands | Confirmed by the owner | 2026-11-12 |
+| D-12 | Keep our own small model interface and implement it with Pydantic AI, so the library stays replaceable. Confirm Pydantic AI covers section 4 at the start of `P1-05`, and write our own adapters if it doesn't | Owner accepted the recommendation | 2026-11-12 |
+| D-13 | Choose the example config's default model from eval results in `P3-01`. Until then, use any current model that passes the contract tests | Owner accepted the recommendation | 2026-11-12 |
 | D-14 | Add a model routing strategy | Owner's request. Controls cost while keeping risky code on strong models | 2026-11-05 |
 | D-15 | Jev is an optional, replaceable routing classifier, kept only if evals justify it. Call the decision API directly and don't use `typesafe/jev-router` | Owner's choice. Keeps the design provider agnostic and model selection auditable | 2026-11-05 |
+| D-16 | Send only metadata to a third-party classifier by default (paths, sizes, languages, rule hits). Sending diff text is opt-in, and never for private repos without the repo owner's consent | Owner accepted the recommendation | 2026-11-12 |
 
 ### Proposed: need the owner's answer
 
 | ID | Question | Recommendation |
 |---|---|---|
-| D-05 | Approve the target architecture in section 4? | Yes |
-| D-12 | Build the model layer on a library or write our own adapters? | Keep our own small interface and implement it with Pydantic AI, so the library stays replaceable. Confirm it covers section 4 before adopting it |
-| D-13 | Which model should the example config default to? | Choose from eval results in `P3-01`. Until then, any current model that passes the contract tests |
-| D-16 | What may be sent to a third-party classifier? | Metadata only by default (paths, sizes, languages, rule hits). Sending diff text is opt-in, and never for private repos without the repo owner's consent |
-| D-07 | GitHub App, GitHub Action, or both? | Action first (no hosting needed), App later if a live demo needs it |
-| D-08 | Where will the demo be hosted? | Decide in Phase 3 |
-| D-09 | Keep the name "PRRover" (used in `config/agent_card.json`) or rename? | Keep it, and use it consistently |
-| D-10 | Rewrite git history to remove the committed token (`P1-02`)? | Not needed if Telex is gone, since the token expired in November 2025. Deleting the file is enough |
-| D-11 | Is the old Render deployment still running? If so, shut it down | Shut it down until `P1-07` lands. Owner to check |
+| D-08 | Where will the demo be hosted? | Deferred. Decide during Phase 3 |
 
 ---
 
@@ -234,7 +234,7 @@ standalone script that did not import repo code. **Audit** = reported by a tool.
 
 ## 7. Work plan
 
-Phases are proposed until `D-05` is answered.
+Phases approved under `D-05`.
 
 ### Phase 1: make it honest and working
 
@@ -305,6 +305,15 @@ Keep this honest. It records what has actually been proven.
 ## 9. Session log
 
 Newest first. Keep entries short.
+
+### 2026-11-12: decisions settled
+
+- **Done:** owner confirmed `D-11` and accepted the recommendations for `D-05`,
+  `D-07`, `D-09`, `D-10`, `D-12`, `D-13` and `D-16`. `D-08` is deferred to Phase 3.
+  Branch pushed to `origin`.
+- **Not done:** Phase 1 has not started. Pydantic AI has not been checked against
+  section 4 yet.
+- **Next:** owner OKs running repo code, then `P1-01`.
 
 ### 2026-11-05: routing strategy added
 
