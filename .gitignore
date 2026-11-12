@@ -75,3 +75,5 @@ docker-compose
 
 # Agent worktrees
 .claude/worktrees/
+.mypy_cache/
+.ruff_cache/
