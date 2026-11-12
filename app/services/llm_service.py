@@ -15,7 +15,7 @@ import asyncio
 
 from app.core.config import settings
 from app.core.exceptions import LLMError
-from app.models.analysis import SecurityIssue, PerformanceIssue, BestPracticeIssue
+from app.models.analysis import SecurityIssue, PerformanceIssue, BestPracticeIssue, Severity
 
 logger = logging.getLogger(__name__)
 
@@ -365,9 +365,9 @@ Return your findings as a JSON array with:
         """Generate executive summary for PR review"""
         try:
             # Format findings for context
-            critical_security = [s for s in security_issues if s.severity == "CRITICAL"]
-            high_security = [s for s in security_issues if s.severity == "HIGH"]
-            high_perf = [p for p in performance_issues if p.impact == "HIGH"]
+            critical_security = [s for s in security_issues if s.severity == Severity.CRITICAL]
+            high_security = [s for s in security_issues if s.severity == Severity.HIGH]
+            high_perf = [p for p in performance_issues if p.severity in (Severity.CRITICAL, Severity.HIGH)]
             
             prompt = f"""Generate an executive summary for this Pull Request review.
 
@@ -383,7 +383,7 @@ Code Changes:
 
 Findings Summary:
 - Security Issues: {len(security_issues)} total ({len(critical_security)} critical, {len(high_security)} high)
-- Performance Issues: {len(performance_issues)} total ({len(high_perf)} high impact)
+- Performance Issues: {len(performance_issues)} total ({len(high_perf)} high severity)
 - Best Practice Violations: {len(best_practice_issues)}
 
 Top Security Concerns:

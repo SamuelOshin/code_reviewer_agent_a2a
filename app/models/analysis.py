@@ -7,7 +7,7 @@ and best practice findings.
 """
 
 from typing import Optional, List
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from datetime import datetime
 from enum import Enum
 
@@ -59,7 +59,7 @@ class PerformanceIssue(BaseModel):
     file: str
     line_number: Optional[int] = None
     code_snippet: Optional[str] = None
-    impact: str
+    impact: str  # Free-text description of the effect. Risk is driven by `severity`, not this field.
     recommendation: str
     estimated_impact: Optional[str] = None  # e.g., "50% slower", "2x memory usage"
 
@@ -112,8 +112,7 @@ class CodeAnalysisResult(BaseModel):
     llm_provider: Optional[str] = None
     llm_model: Optional[str] = None
     
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(json_schema_extra={
             "example": {
                 "pr_number": 123,
                 "pr_title": "Add new authentication system",
@@ -141,3 +140,4 @@ class CodeAnalysisResult(BaseModel):
                 "analysis_duration_seconds": 12.5
             }
         }
+    )
