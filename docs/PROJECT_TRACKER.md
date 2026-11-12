@@ -13,7 +13,7 @@ read this file alone and continue the work.
 | | |
 |---|---|
 | **Current phase** | Phase 1: make it honest and working (planning complete) |
-| **Active task** | None. Done: `P1-01` to `P1-03`, `P1-08` to `P1-10`, `P1-14`. Open: `P1-11` (needs Docker running), `P1-12` (needs CI to run on GitHub) |
+| **Active task** | None. Done: `P1-01` to `P1-03`, `P1-08` to `P1-11`, `P1-14`. Open: `P1-12` (needs CI to run on GitHub) |
 | **Next action** | Push `chore/p1-01-pyproject` and open a PR so CI runs (closes `P1-12`). Then the next batch: `P1-04` (result path) and `P1-05` (model layer) can run in parallel. `P1-07` follows `P1-04`, and `P1-06` follows `P1-05` |
 | **Working branch** | `chore/p1-01-pyproject` holds all Phase 1 work so far, not pushed. `docs/project-tracker` is pushed |
 | **Blockers** | None. Owner approved running repo code on 2026-11-12. Use `uv` for everything (`uv sync`, `uv run`). If an install fails on a Windows cache file lock, retry or set a different `UV_CACHE_DIR` |
@@ -254,7 +254,7 @@ in CI, and the README is accurate.
 | P1-08 | done | Stop logging tokens and payloads, and return safe error messages. Clients now get a generic message plus an error id, and the full error is logged server-side under that id | P1-03 | No token or payload in logs, proven by a test using a sentinel value |
 | P1-09 | done | Use the `Severity` enum throughout and add a structured impact level | P1-03 | Test: critical findings are counted correctly in the summary |
 | P1-10 | done | Tune rules: fix `eval`, `exec`, `open` and concatenation patterns, and report each performance match once on its real line | P1-03 | Regression tests cover the `F-08` examples |
-| P1-11 | blocked | Fix Docker: remove unused `SECRET_KEY` and Node.js, correct env vars, make the healthcheck fail on bad status. All changes are made: the image installs from `uv.lock`, `requirements.txt` is deleted, and compose uses `env_file`. Blocked only on the acceptance check, because Docker Desktop was not running | P1-03 | `docker compose up` reaches healthy from a clean clone |
+| P1-11 | done | Fix Docker: remove unused `SECRET_KEY` and Node.js, correct env vars, make the healthcheck fail on bad status. The image installs from `uv.lock`, `requirements.txt` is deleted, compose uses `env_file`, and the host port is configurable with `HOST_PORT` | P1-03 | `docker compose up` reaches healthy from a clean clone |
 | P1-12 | doing | Done: empty test files filled, ruff and mypy config, ruff findings fixed, and `.github/workflows/ci.yml` (ruff, pytest with coverage, `pip-audit`). Every CI step passes locally. Left: CI has never run on GitHub. mypy is out of CI because of 55 errors, moved to `P2-09` | P1-03 | CI green on a PR. Coverage figure recorded |
 | P1-13 | todo | Rewrite the README so every claim is true. It still describes Telex, MCP, `python-a2a`, Node.js and `pip install -r requirements.txt` (deleted), documents removed RPC methods and settings, and its Docker section should be `cp .env.example .env` then `docker compose up --build` | All above | Every feature listed maps to code or a test |
 | P1-14 | done | Repo hygiene: add `.gitattributes` to normalise line endings, ignore `.claude/worktrees/` and tool caches, replace deprecated `datetime.utcnow` everywhere in `app/`, and use PyGithub's `Auth.Token` | P1-03 | `git add --renormalize .` leaves a clean diff. No `utcnow` in `app/` |
@@ -297,7 +297,7 @@ Keep this honest. It records what has actually been proven.
 |---|---|---|
 | Test suite | Passing 2026-11-12 | On `chore/p1-01-pyproject`: **215 passed, 1 strict xfail** (F-03). Coverage **73%** (baseline was 63 passed, 1 collection error, 21%). New tests were run against the old code and fail there, so they catch the bugs they target |
 | App startup | Starts in-process | `/`, `/health` (`healthy`), `/ready` and the agent card return 200, with or without `SECRET_KEY`. Real LLM and GitHub calls not tested |
-| Docker | **Not run** | Docker Desktop was not running. `docker compose config` parses, and the pinned `ghcr.io/astral-sh/uv:0.12.13` tag exists, but the image has never been built |
+| Docker | Passing 2026-11-12 | From `.env.example` copied to `.env`, `docker compose up --build` reached `healthy` (Docker 29.8). `/health` returned 200 from this app. The container runs as `appuser` with no Node.js. Tested on host port 8010, because another local service holds 8000 |
 | CI | Local only | Every workflow step passes locally. The workflow has never run on GitHub |
 | Radon, vulture | Done | Highest complexity: `DiffParser._parse_file_diff` at 30 and `_parse_hunk` at 22 |
 | Ruff | Passing | `ruff check .` is clean with the rules in `pyproject.toml`. `ruff format` is not enforced yet (`P2-09`) |
@@ -313,6 +313,14 @@ Keep this honest. It records what has actually been proven.
 ## 9. Session log
 
 Newest first. Keep entries short.
+
+### 2026-11-12: Docker verified, `P1-11` done
+
+- **Done:** with Docker Desktop running, built the image and ran the stack. It
+  reached `healthy` and `/health` returned 200. Port 8000 was taken by another
+  local service, so the compose host port is now `${HOST_PORT:-8000}`, documented
+  in `.env.example`.
+- **Not done:** the container used placeholder keys, so no real review ran.
 
 ### 2026-11-12: second parallel batch merged
 

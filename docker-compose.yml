@@ -10,7 +10,8 @@ services:
       dockerfile: Dockerfile
     container_name: code_review_agent
     ports:
-      - "8000:8000"
+      # Host port; set HOST_PORT in .env if 8000 is taken
+      - "${HOST_PORT:-8000}:8000"
     # Secrets and settings come from .env (copy .env.example). Compose does not
     # list each variable, so every setting the app reads can be set there.
     env_file:
