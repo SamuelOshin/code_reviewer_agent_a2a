@@ -7,6 +7,7 @@ including N+1 queries, inefficient loops, blocking I/O, etc.
 """
 
 from typing import List, Dict, Any
+import bisect
 import re
 import logging
 
@@ -145,35 +146,38 @@ class PerformanceChecker:
             filename = file_change.get('filename', 'unknown')
             additions = file_change.get('additions', [])
             
-            # Combine consecutive lines for multi-line pattern matching
+            # Combine consecutive lines so multi-line patterns can match. Each match is
+            # reported once, on the added line where it starts (F-08).
             full_content = '\n'.join([add.get('content', '') for add in additions])
-            
-            for addition in additions:
-                line_number = addition.get('line_number', 0)
-                content = addition.get('content', '')
-                
-                # Check against all performance patterns
-                for rule_name, rule_data in cls.PERFORMANCE_PATTERNS.items():
-                    for pattern in rule_data['patterns']:
-                        # Check single line
-                        match = re.search(pattern, content, re.IGNORECASE | re.MULTILINE)
-                        # Also check in full content for multi-line patterns
-                        full_match = re.search(pattern, full_content, re.IGNORECASE | re.MULTILINE)
-                        
-                        if match or full_match:
-                            findings.append(PerformanceIssue(
-                                severity=rule_data['impact'].lower(),  # Convert impact to severity
-                                impact=rule_data['impact'],
-                                title=rule_data['title'],
-                                description=f"Performance pattern '{rule_name}' detected in code change.",
-                                file=filename,
-                                line_number=line_number,
-                                code_snippet=content.strip()[:200],
-                                estimated_impact=rule_data['estimated_impact'],
-                                recommendation=rule_data['recommendation']
-                            ))
-                            break  # Only report once per line per rule
-        
+            # Offset of each added line's start within full_content.
+            line_starts = []
+            offset = 0
+            for add in additions:
+                line_starts.append(offset)
+                offset += len(add.get('content', '')) + 1
+
+            for rule_name, rule_data in cls.PERFORMANCE_PATTERNS.items():
+                reported = set()  # additions indexes already reported for this rule
+                for pattern in rule_data['patterns']:
+                    for match in re.finditer(pattern, full_content, re.IGNORECASE | re.MULTILINE):
+                        idx = bisect.bisect_right(line_starts, match.start()) - 1
+                        if idx < 0 or idx in reported:
+                            continue
+                        reported.add(idx)
+                        addition = additions[idx]
+                        content = addition.get('content', '')
+                        findings.append(PerformanceIssue(
+                            severity=rule_data['impact'].lower(),  # Convert impact to severity
+                            impact=rule_data['impact'],
+                            title=rule_data['title'],
+                            description=f"Performance pattern '{rule_name}' detected in code change.",
+                            file=filename,
+                            line_number=addition.get('line_number', 0),
+                            code_snippet=content.strip()[:200],
+                            estimated_impact=rule_data['estimated_impact'],
+                            recommendation=rule_data['recommendation']
+                        ))
+
         logger.info(f"Rule-based performance check found {len(findings)} issues")
         return findings
     
@@ -209,26 +213,5 @@ class PerformanceChecker:
                             recommendation=rule_data['recommendation']
                         ))
                         break
-        
-        return findings
-        
-        for file_data in changes.get('files', []):
-            file_name = file_data['name']
-            additions = file_data.get('additions', [])
-            
-            for line_num, line in enumerate(additions, 1):
-                for rule_name, rule_data in self.PERFORMANCE_PATTERNS.items():
-                    for pattern in rule_data['patterns']:
-                        if re.search(pattern, line):
-                            findings.append(PerformanceFinding(
-                                severity=rule_data['severity'],
-                                title=rule_data['title'],
-                                description=f"Detected in: {line.strip()[:50]}...",
-                                file=file_name,
-                                line_number=line_num,
-                                code_snippet=line.strip(),
-                                impact=rule_data['impact'],
-                                recommendation=rule_data['recommendation']
-                            ))
         
         return findings
