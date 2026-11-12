@@ -13,8 +13,8 @@ read this file alone and continue the work.
 | | |
 |---|---|
 | **Current phase** | Phase 1: make it honest and working (planning complete) |
-| **Active task** | None. `P1-01`, `P1-02`, `P1-03`, `P1-09` and `P1-10` are done |
-| **Next action** | Next parallel batch, with no shared files: `P1-08` (logging), `P1-11` (Docker), `P1-12` (CI and tests), `P1-14` (repo hygiene). `P1-04` and `P1-07` both touch `message_handler.py` and routes, so run them one after the other. `P1-05` starts with the Pydantic AI check under `D-12` |
+| **Active task** | None. Done: `P1-01` to `P1-03`, `P1-08` to `P1-10`, `P1-14`. Open: `P1-11` (needs Docker running), `P1-12` (needs CI to run on GitHub) |
+| **Next action** | Push `chore/p1-01-pyproject` and open a PR so CI runs (closes `P1-12`). Then the next batch: `P1-04` (result path) and `P1-05` (model layer) can run in parallel. `P1-07` follows `P1-04`, and `P1-06` follows `P1-05` |
 | **Working branch** | `chore/p1-01-pyproject` holds all Phase 1 work so far, not pushed. `docs/project-tracker` is pushed |
 | **Blockers** | None. Owner approved running repo code on 2026-11-12. Use `uv` for everything (`uv sync`, `uv run`). If an install fails on a Windows cache file lock, retry or set a different `UV_CACHE_DIR` |
 | **Working rule** | Parallel agents don't edit this file. The coordinating session records their results |
@@ -249,15 +249,15 @@ in CI, and the README is accurate.
 | P1-03 | done | Remove Telex and dead code: `telex_client.py`, `telex_service.py`, `a2a_service.py`, `routes/a2a.py`, `config/agent_card_telex.json`, `telex_workflow.json`, `/a2a/webhooks/{hook_id}`, legacy task format, placeholder RPC handlers, unused `public/fonts`, empty `scripts/*`, unreachable code in `performance_rules.py`, debug prints | P1-01 | `grep -ri telex app config` returns nothing. App starts. Tests no worse than baseline |
 | P1-04 | todo | Add a working result path: `message/send` returns a completed task without push config, and GitHub webhook runs have an output | P1-03 | A test proves a request with no push config returns a completed task |
 | P1-05 | todo | Build the provider-agnostic model layer from section 4, replacing the `llm_service.py` provider classes and deprecated `google-generativeai`. Check vendor docs for current model IDs | P1-01, D-12 | Provider SDKs imported only in the model layer. Contract tests pass for every adapter. One real review succeeds on at least two providers using configuration changes only. No model ID in application code |
-| P1-06 | todo | Fail closed: a parse failure or partial analysis gives a `failed` or `incomplete` result and never `approve`. Report any truncated diff. Keep rule findings when an LLM call fails | P1-05 | Tests: malformed, truncated and nested-array LLM output never yields approve. The strict xfail `test_llm_error_falls_back_to_rule_results` (F-03) passes and its marker is removed |
+| P1-06 | todo | Fail closed: a parse failure or partial analysis gives a `failed` or `incomplete` result and never `approve`. Report any truncated diff. Keep rule findings when an LLM call fails. Stop logging raw LLM output (`llm_service.py` logs the first 200 characters of an unparseable response, which can echo PR code) | P1-05 | Tests: malformed, truncated and nested-array LLM output never yields approve. The strict xfail `test_llm_error_falls_back_to_rule_results` (F-03) passes and its marker is removed |
 | P1-07 | todo | Add auth to `/rpc` and `/a2a/*`, make the webhook secret mandatory, block caller-supplied URLs unless allowlisted, restrict CORS, and limit batch size | P1-03 | Tests: unauthenticated call is rejected, disallowed URL is rejected, missing secret stops startup |
-| P1-08 | todo | Stop logging tokens and payloads, and return safe error messages. Banner and full-payload logging went in `P1-03`, but `message_handler.py:62` still logs the whole `configuration`, including the push token | P1-03 | No token or payload in logs, proven by a test using a sentinel value |
+| P1-08 | done | Stop logging tokens and payloads, and return safe error messages. Clients now get a generic message plus an error id, and the full error is logged server-side under that id | P1-03 | No token or payload in logs, proven by a test using a sentinel value |
 | P1-09 | done | Use the `Severity` enum throughout and add a structured impact level | P1-03 | Test: critical findings are counted correctly in the summary |
 | P1-10 | done | Tune rules: fix `eval`, `exec`, `open` and concatenation patterns, and report each performance match once on its real line | P1-03 | Regression tests cover the `F-08` examples |
-| P1-11 | todo | Fix Docker: remove unused `SECRET_KEY` and Node.js, correct env vars, make the healthcheck fail on bad status | P1-03 | `docker compose up` reaches healthy from a clean clone |
-| P1-12 | todo | `test_code_analyzer.py` was repaired in `P1-09`. Still to do: fill or delete the empty test files, set `asyncio_default_fixture_loop_scope`, run ruff and fix findings, and add CI for lint, types, tests and `pip-audit` | P1-03 | CI green on a PR. Coverage figure recorded |
-| P1-13 | todo | Rewrite the README so every claim is true. It still describes Telex, MCP and `python-a2a`, and documents removed RPC methods | All above | Every feature listed maps to code or a test |
-| P1-14 | todo | Repo hygiene: add `.gitattributes` to normalise line endings, ignore `.claude/worktrees/`, and replace deprecated `datetime.utcnow` in `app/core/logging.py` and `app/models/a2a.py` | P1-03 | `git add --renormalize .` leaves a clean diff. No `utcnow` in `app/` |
+| P1-11 | blocked | Fix Docker: remove unused `SECRET_KEY` and Node.js, correct env vars, make the healthcheck fail on bad status. All changes are made: the image installs from `uv.lock`, `requirements.txt` is deleted, and compose uses `env_file`. Blocked only on the acceptance check, because Docker Desktop was not running | P1-03 | `docker compose up` reaches healthy from a clean clone |
+| P1-12 | doing | Done: empty test files filled, ruff and mypy config, ruff findings fixed, and `.github/workflows/ci.yml` (ruff, pytest with coverage, `pip-audit`). Every CI step passes locally. Left: CI has never run on GitHub. mypy is out of CI because of 55 errors, moved to `P2-09` | P1-03 | CI green on a PR. Coverage figure recorded |
+| P1-13 | todo | Rewrite the README so every claim is true. It still describes Telex, MCP, `python-a2a`, Node.js and `pip install -r requirements.txt` (deleted), documents removed RPC methods and settings, and its Docker section should be `cp .env.example .env` then `docker compose up --build` | All above | Every feature listed maps to code or a test |
+| P1-14 | done | Repo hygiene: add `.gitattributes` to normalise line endings, ignore `.claude/worktrees/` and tool caches, replace deprecated `datetime.utcnow` everywhere in `app/`, and use PyGithub's `Auth.Token` | P1-03 | `git add --renormalize .` leaves a clean diff. No `utcnow` in `app/` |
 
 ### Phase 2: modernize the core
 
@@ -271,6 +271,7 @@ in CI, and the README is accurate.
 | P2-06 | todo | Defend against prompt injection: isolate untrusted content, keep the model's tools read-only, and make verdicts depend on validated findings | P2-01 | Eval cases with injected instructions cannot change the verdict |
 | P2-07 | todo | Review whole PRs by chunking large diffs per file, and state any coverage limit in the result | P2-01 | Test: a bug past the old 8,000-character limit is reviewed |
 | P2-08 | todo | Tune the remaining noisy performance rules (`inefficient_list_operations`, `synchronous_in_async`, `loading_all_records`) | P3-01 | Eval shows fewer false positives without lower recall |
+| P2-09 | todo | Fix the 55 mypy errors (mostly in `message_handler.py`, `performance_rules.py`, `health.py` and `security_rules.py`), add mypy to CI, and add `ruff format --check` once the code is formatted | Phase 1 | CI runs mypy and the format check, both green |
 
 ### Phase 3: the portfolio piece
 
@@ -294,10 +295,14 @@ Keep this honest. It records what has actually been proven.
 
 | Check | State | Notes |
 |---|---|---|
-| Test suite | Passing 2026-11-12 | On `chore/p1-01-pyproject`: **109 passed, 1 strict xfail** (F-03), no collection errors. Coverage **37%** (baseline was 63 passed, 1 collection error, 21%). New tests were run against the old code and fail there, so they catch the bugs they target |
-| App startup | Starts in-process | `/`, `/health` (now `healthy`), `/ready` and the agent card return 200. RPC exposes `analyze_pr`, `introspect` and `message/send`. Config import fails if `SECRET_KEY` is unset. Real LLM and GitHub calls not tested |
+| Test suite | Passing 2026-11-12 | On `chore/p1-01-pyproject`: **215 passed, 1 strict xfail** (F-03). Coverage **73%** (baseline was 63 passed, 1 collection error, 21%). New tests were run against the old code and fail there, so they catch the bugs they target |
+| App startup | Starts in-process | `/`, `/health` (`healthy`), `/ready` and the agent card return 200, with or without `SECRET_KEY`. Real LLM and GitHub calls not tested |
+| Docker | **Not run** | Docker Desktop was not running. `docker compose config` parses, and the pinned `ghcr.io/astral-sh/uv:0.12.13` tag exists, but the image has never been built |
+| CI | Local only | Every workflow step passes locally. The workflow has never run on GitHub |
 | Radon, vulture | Done | Highest complexity: `DiffParser._parse_file_diff` at 30 and `_parse_hunk` at 22 |
-| Ruff, bandit | **Failed** | Could not install because of a Windows file lock on the uv cache |
+| Ruff | Passing | `ruff check .` is clean with the rules in `pyproject.toml`. `ruff format` is not enforced yet (`P2-09`) |
+| mypy | 55 errors | Lenient config in `pyproject.toml`, not in CI (`P2-09`) |
+| Bandit | **Not run** | Never installed successfully |
 | `pip-audit` | Done 2026-11-12 | Full audit of every locked package, dev included: no known vulnerabilities. `F-15` is resolved by the dependency refresh |
 | Secret scan | Partial | Pattern scan of history found one JWT, which expired 2025-11-02. Use a dedicated scanner in CI |
 | Telex and Render reachability | **Inconclusive** | Hosts did not resolve from the agent's environment, which may be a network limit |
@@ -308,6 +313,22 @@ Keep this honest. It records what has actually been proven.
 ## 9. Session log
 
 Newest first. Keep entries short.
+
+### 2026-11-12: second parallel batch merged
+
+- **Done:** three Bobby Build agents (Sonnet) finished `P1-08`, `P1-11` and most of
+  `P1-12` from `e95fb24`. The coordinating session checked each branch, reran the
+  tests, confirmed the new log-safety tests fail on the old code, and merged all
+  three. It then did `P1-14` and the ruff pass itself, because those touch nearly
+  every file: `.gitattributes`, timezone-aware datetimes, PyGithub `Auth.Token`,
+  and fixes for all 359 ruff findings (exception chaining, `StrEnum`, dead code).
+  Result: 215 passed, 1 strict xfail, 73% coverage, ruff clean, `pip-audit` clean.
+- **Behaviour changes:** JSON-RPC errors no longer include exception text, only a
+  generic message and an error id. `SECRET_KEY` and other unused settings are
+  gone. `requirements.txt` is deleted, and Docker installs from `uv.lock`. The
+  severity, risk and approval enums are now `StrEnum`.
+- **Not verified:** the Docker image was never built, and CI has never run on
+  GitHub. Real LLM and GitHub calls are still untested.
 
 ### 2026-11-12: first parallel batch merged
 
