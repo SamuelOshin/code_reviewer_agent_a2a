@@ -11,6 +11,8 @@ import logging
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
 
+from app.core.errors import new_error_id
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/rpc", tags=["jsonrpc"])
@@ -42,14 +44,15 @@ async def jsonrpc_endpoint(request: Request):
         try:
             body = await request.json()
         except Exception as e:
-            logger.error(f"Failed to parse JSON-RPC request body: {e}")
+            error_id = new_error_id()
+            logger.error(f"Failed to parse JSON-RPC request body [error_id={error_id}]: {e}")
             return JSONResponse(
                 content={
                     "jsonrpc": "2.0",
                     "error": {
                         "code": -32700,
                         "message": "Parse error",
-                        "data": str(e)
+                        "data": {"error_id": error_id}
                     },
                     "id": None
                 },
@@ -70,14 +73,15 @@ async def jsonrpc_endpoint(request: Request):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Unexpected error in JSON-RPC endpoint: {e}")
+        error_id = new_error_id()
+        logger.error(f"Unexpected error in JSON-RPC endpoint [error_id={error_id}]: {e}", exc_info=True)
         return JSONResponse(
             content={
                 "jsonrpc": "2.0",
                 "error": {
                     "code": -32603,
                     "message": "Internal error",
-                    "data": str(e)
+                    "data": {"error_id": error_id}
                 },
                 "id": None
             },

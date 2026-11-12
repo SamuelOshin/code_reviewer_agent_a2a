@@ -14,6 +14,7 @@ import httpx
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
 
+from app.core.errors import new_error_id, safe_webhook_target
 from app.models.a2a import A2AMessage, MessagePart, A2ATask, TaskStatus, A2AArtifact, ArtifactPart
 from app.services.code_analyzer import CodeAnalyzerService
 from app.utils.formatters import SummaryFormatter
@@ -59,7 +60,12 @@ class MessageHandler:
         """
         logger.info(f"Handling message/send: {message.get('messageId')}")
         if configuration:
-            logger.info(f"Configuration: {configuration}")
+            # Never log the configuration itself: pushNotificationConfig carries a bearer token
+            logger.info(
+                "Configuration received: keys=%s, has_push_config=%s",
+                sorted(str(k) for k in configuration.keys()),
+                bool(configuration.get("pushNotificationConfig")),
+            )
         
         # Parse message
         message_id = message.get("messageId", str(uuid.uuid4()))
@@ -76,7 +82,7 @@ class MessageHandler:
         if len(parts) > 1 and parts[1].get("kind") == "data":
             conversation_history = parts[1].get("data", [])
         
-        logger.info(f"Interpreted text: {interpreted_text}")
+        logger.info(f"Interpreted text length: {len(interpreted_text or '')} chars")
         logger.info(f"Conversation history length: {len(conversation_history)}")
         
         # Determine intent and extract PR URL
@@ -175,12 +181,15 @@ class MessageHandler:
             await self._process_and_push(pr_url, task_id, message_id, message, push_config)
             logger.info(f"Background task completed successfully for PR: {pr_url}")
         except Exception as e:
-            logger.error(f"💥 Fatal error in background task: {e}", exc_info=True)
-            logger.error(f"Error type: {type(e).__name__}")
-            logger.error(f"Error occurred at PR: {pr_url}")
+            error_id = new_error_id()
+            logger.error(
+                f"Fatal error in background task [error_id={error_id}] for PR {pr_url}: "
+                f"{type(e).__name__}: {e}",
+                exc_info=True,
+            )
             # Try to push the error to the client's webhook
             try:
-                await self._push_error(task_id, message_id, message, push_config, str(e))
+                await self._push_error(task_id, message_id, message, push_config, str(e), error_id)
             except Exception as push_error:
                 logger.error(f"Failed to push error to webhook: {push_error}", exc_info=True)
     
@@ -190,11 +199,17 @@ class MessageHandler:
         message_id: str,
         message: Dict[str, Any],
         push_config: Dict[str, Any],
-        error_message: str
+        error_message: str,
+        error_id: Optional[str] = None
     ):
-        """Push error result to the client's push notification webhook"""
-        logger.info(f"Pushing error for task {task_id}")
-        
+        """Push error result to the client's push notification webhook
+
+        error_message is used only to pick a user-friendly category. It is never
+        sent to the client; the client gets error_id, and the detail is in the logs.
+        """
+        error_id = error_id or new_error_id()
+        logger.info(f"Pushing error for task {task_id} [error_id={error_id}]")
+
         # Determine error type and create user-friendly message
         if "429" in error_message or "Resource exhausted" in error_message:
             user_message = (
@@ -206,7 +221,7 @@ class MessageHandler:
                 "**What you can do:**\n"
                 "1. ⏰ Wait 5-10 minutes and try again\n"
                 "2. 🔄 Ask me to analyze the PR again later\n\n"
-                f"_Technical details: {error_message}_"
+                f"_Error id: {error_id}_"
             )
         elif "GitHub" in error_message or "404" in error_message:
             user_message = (
@@ -220,7 +235,7 @@ class MessageHandler:
                 "1. ✅ Verify the PR URL is correct\n"
                 "2. 🔑 Ensure I have access to private repositories (if applicable)\n"
                 "3. 🔄 Try again in a few moments\n\n"
-                f"_Technical details: {error_message}_"
+                f"_Error id: {error_id}_"
             )
         else:
             user_message = (
@@ -228,8 +243,8 @@ class MessageHandler:
                 "I encountered an unexpected error while analyzing this PR.\n\n"
                 "**What you can do:**\n"
                 "1. 🔄 Try again - it might be a temporary issue\n"
-                "2. 📝 If the problem persists, please report this error\n\n"
-                f"**Error details:**\n```\n{error_message[:500]}\n```"
+                "2. 📝 If the problem persists, please report this error id\n\n"
+                f"_Error id: {error_id}_"
             )
         
         error_msg = A2AMessage(
@@ -253,7 +268,7 @@ class MessageHandler:
             parts=[
                 ArtifactPart(
                     kind="text",
-                    text=f"# ❌ PR Analysis Error\n\n{user_message}\n\n---\n\n## Technical Details\n\n```\n{error_message}\n```\n\n---\n*Error occurred at {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}*"
+                    text=f"# ❌ PR Analysis Error\n\n{user_message}\n\n---\n*Error occurred at {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}*"
                 )
             ]
         )
@@ -290,7 +305,7 @@ class MessageHandler:
             "id": str(uuid.uuid4())
         }
         
-        logger.info(f"Pushing error result to webhook: {webhook_url}")
+        logger.info(f"Pushing error result to webhook: {safe_webhook_target(webhook_url)}")
         logger.info(f"Error task state: {task_result.get('status', {}).get('state')}")
         
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -479,16 +494,17 @@ class MessageHandler:
             return result
             
         except Exception as e:
-            logger.error(f"Error analyzing PR {pr_url}: {e}", exc_info=True)
-            
-            # Create error response
+            error_id = new_error_id()
+            logger.error(f"Error analyzing PR {pr_url} [error_id={error_id}]: {e}", exc_info=True)
+
+            # Create error response (generic text; the detail stays in the logs)
             error_msg = A2AMessage(
                 messageId=str(uuid.uuid4()),
                 role="agent",
                 parts=[
                     MessagePart(
                         kind="text",
-                        text=f"Failed to analyze PR: {str(e)}"
+                        text=f"Failed to analyze PR. Please try again later. (error id: {error_id})"
                     )
                 ],
                 kind="message",
@@ -573,7 +589,7 @@ class MessageHandler:
                 "id": str(uuid.uuid4())
             }
             
-            logger.info(f"Pushing full task result to webhook: {webhook_url}")
+            logger.info(f"Pushing full task result to webhook: {safe_webhook_target(webhook_url)}")
             logger.info(f"Task state: {result_lightweight.get('status', {}).get('state')}")
             logger.info(f"Sending JSON-RPC response with complete task result")
             
@@ -595,15 +611,16 @@ class MessageHandler:
                     logger.info("Result was prepared successfully but webhook didn't respond in time")
                     # Don't raise - analysis was successful, webhook timeout is not critical
                 except httpx.HTTPStatusError as http_err:
+                    # Status only: the response body is third-party content and may echo secrets
                     logger.error(f"Webhook returned error status: {http_err.response.status_code}")
-                    logger.error(f"Response body: {http_err.response.text}")
                     raise
                 
         except Exception as e:
-            logger.error(f"Error processing and pushing result: {e}", exc_info=True)
+            error_id = new_error_id()
+            logger.error(f"Error processing and pushing result [error_id={error_id}]: {e}", exc_info=True)
             # Try to push the error to the client's webhook
             try:
-                await self._push_error(task_id, message_id, message, push_config, str(e))
+                await self._push_error(task_id, message_id, message, push_config, str(e), error_id)
             except Exception as push_error:
                 logger.error(f"Failed to push error to webhook: {push_error}", exc_info=True)
     
