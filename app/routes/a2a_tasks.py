@@ -13,6 +13,8 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
+from app.core.errors import new_error_id
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/a2a", tags=["a2a"])
@@ -36,8 +38,9 @@ async def handle_a2a_task(request: Request):
     try:
         body = await request.json()
     except Exception as e:
-        logger.error(f"Failed to parse A2A task request: {e}")
-        raise HTTPException(status_code=422, detail=f"Invalid request format: {str(e)}")
+        error_id = new_error_id()
+        logger.error(f"Failed to parse A2A task request [error_id={error_id}]: {e}")
+        raise HTTPException(status_code=422, detail=f"Invalid request format (error id: {error_id})")
 
     if not isinstance(body, dict):
         raise HTTPException(status_code=422, detail="Invalid request format: expected a JSON object")

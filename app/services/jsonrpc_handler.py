@@ -8,8 +8,8 @@ Supports async handlers and proper error handling per JSON-RPC 2.0 spec.
 
 from typing import Dict, Any, Callable, Awaitable, Optional
 import logging
-import traceback
 
+from app.core.errors import new_error_id
 from app.models.jsonrpc import (
     JSONRPCRequest,
     JSONRPCResponse,
@@ -88,12 +88,14 @@ class JSONRPCHandler:
             try:
                 request = JSONRPCRequest.model_validate(request_data)
             except Exception as e:
-                logger.error(f"Invalid JSON-RPC request: {e}")
+                # Pydantic errors echo the offending input, so keep them server-side
+                error_id = new_error_id()
+                logger.error(f"Invalid JSON-RPC request [error_id={error_id}]: {type(e).__name__}")
                 return self._error_response(
-                    request_id=request_data.get("id"),
+                    request_id=request_data.get("id") if isinstance(request_data, dict) else None,
                     code=JSONRPCErrorCode.INVALID_REQUEST,
                     message="Invalid Request",
-                    data=str(e)
+                    data={"error_id": error_id}
                 )
             
             logger.info(f"Handling JSON-RPC request: {request.method} (id={request.id})")
@@ -133,39 +135,45 @@ class JSONRPCHandler:
                 
             except TypeError as e:
                 # Invalid params (wrong arguments)
-                logger.error(f"Invalid params for {request.method}: {e}")
+                error_id = new_error_id()
+                logger.error(
+                    f"Invalid params for {request.method} [error_id={error_id}]: {e}",
+                    exc_info=True,
+                )
                 return self._error_response(
                     request_id=request.id,
                     code=JSONRPCErrorCode.INVALID_PARAMS,
                     message="Invalid method parameters",
-                    data=str(e)
+                    data={"error_id": error_id}
                 )
             
             except Exception as e:
                 # Internal error during method execution
-                logger.error(f"Error executing {request.method}: {e}")
-                logger.debug(traceback.format_exc())
-                
+                error_id = new_error_id()
+                logger.error(
+                    f"Error executing {request.method} [error_id={error_id}]: "
+                    f"{type(e).__name__}: {e}",
+                    exc_info=True,
+                )
                 return self._error_response(
                     request_id=request.id,
                     code=JSONRPCErrorCode.INTERNAL_ERROR,
-                    message=f"Internal error: {str(e)}",
-                    data={
-                        "error_type": type(e).__name__,
-                        "error_message": str(e)
-                    }
+                    message="Internal error",
+                    data={"error_id": error_id}
                 )
         
         except Exception as e:
             # Unexpected error in handler itself
-            logger.error(f"Unexpected error in JSON-RPC handler: {e}")
-            logger.debug(traceback.format_exc())
-            
+            error_id = new_error_id()
+            logger.error(
+                f"Unexpected error in JSON-RPC handler [error_id={error_id}]: {e}",
+                exc_info=True,
+            )
             return self._error_response(
                 request_id=None,
                 code=JSONRPCErrorCode.INTERNAL_ERROR,
                 message="Internal server error",
-                data=str(e)
+                data={"error_id": error_id}
             )
     
     async def handle_batch(self, batch_data: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
