@@ -425,4 +425,39 @@ token = str(random.random())
         assert len(medium) > 0
 
 
+class TestF08FalsePositives:
+    """Regression tests for tracker finding F-08: false CRITICALs force REJECT."""
+
+    @staticmethod
+    def _critical(code):
+        issues = SecurityChecker.check(code, "python", "app/x.py")
+        return [i for i in issues if i.severity == Severity.CRITICAL]
+
+    @pytest.mark.parametrize("line", [
+        "model.eval()",
+        "m = pattern.exec(text)",
+        "with open(config_path) as f:",
+        'query = base_url + "/search"',
+        "retrieval(x)",  # name ending in 'eval' is not eval()
+    ])
+    def test_f08_examples_do_not_match(self, line):
+        assert self._critical(line) == []
+
+    @pytest.mark.parametrize("line", [
+        "result = eval(user_input)",
+        "eval(user_input)",
+        "exec(code)",
+        "    exec (code)",
+        'cursor.execute("SELECT * FROM users WHERE id = " + uid)',
+        'query = "SELECT * FROM users WHERE id = " + uid',
+        'q = f"SELECT * FROM users WHERE id = {uid}"',
+    ])
+    def test_real_cases_still_match(self, line):
+        assert len(self._critical(line)) > 0
+
+    def test_open_variable_still_covered_by_path_traversal(self):
+        issues = SecurityChecker.check("open(file_path)", "python", "a.py")
+        assert any(i.cwe_id == "CWE-22" for i in issues)
+
+
 # Run tests with: pytest tests/test_security_rules.py -v
