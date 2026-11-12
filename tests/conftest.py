@@ -12,6 +12,9 @@ import os
 
 for _key in ("GITHUB_TOKEN", "GITHUB_WEBHOOK_SECRET", "SECRET_KEY", "GOOGLE_API_KEY"):
     os.environ.setdefault(_key, "dummy")
+# The app builds its model client at startup and needs a model setting. A fake ID:
+# tests never call a real model.
+os.environ.setdefault("LLM_MODEL", "google:test-model")
 
 import pytest  # noqa: E402
 from fastapi import FastAPI  # noqa: E402
