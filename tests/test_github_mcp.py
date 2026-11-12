@@ -2,7 +2,7 @@
 
 """GitHubMCPService with PyGithub mocked. No network."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -12,7 +12,7 @@ from github import GithubException
 from app.core.exceptions import GitHubMCPError
 from app.services.github_mcp import GitHubMCPService
 
-NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
+NOW = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 @pytest.fixture
