@@ -1,70 +1,60 @@
 # Dockerfile
-
-# Multi-stage build for Code Review Agent
-# Includes Node.js for python-a2a MCP support
+#
+# Multi-stage build: dependencies are installed from uv.lock with uv (no pip,
+# no Node.js), then only the virtualenv and the app code go into the runtime image.
 
 # ============================================================================
 # Stage 1: Builder
 # ============================================================================
-FROM python:3.11-slim as builder
+FROM python:3.11-slim AS builder
 
-# Install Node.js (required by python-a2a for GitHub MCP)
-RUN apt-get update && apt-get install -y \
-    curl \
-    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y nodejs \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+# Pinned uv binary from the official image (keep in step with the uv used to
+# generate uv.lock).
+COPY --from=ghcr.io/astral-sh/uv:0.12.13 /uv /uvx /bin/
 
-# Set working directory
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never
+
 WORKDIR /app
 
-# Copy requirements
-COPY requirements.txt .
-
-# Install Python dependencies
-RUN pip install --no-cache-dir --user -r requirements.txt
+# Install only the locked runtime dependencies. The project itself is not a
+# package (tool.uv.package = false), so pyproject.toml and uv.lock are enough
+# and this layer is cached until the lock changes.
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev --no-install-project
 
 # ============================================================================
 # Stage 2: Runtime
 # ============================================================================
 FROM python:3.11-slim
 
-# Install Node.js in runtime (needed for MCP at runtime)
-RUN apt-get update && apt-get install -y \
-    curl \
-    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y nodejs \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
-
-# Create non-root user
+# Non-root user
 RUN useradd -m -u 1000 appuser
 
-# Set working directory
 WORKDIR /app
 
-# Copy Python packages from builder
-COPY --from=builder /root/.local /home/appuser/.local
+# Virtualenv from the builder (same base image, so the interpreter path matches)
+COPY --from=builder --chown=appuser:appuser /app/.venv /app/.venv
 
-# Copy application code
-COPY --chown=appuser:appuser . .
+# Application code and runtime config (prompts and the agent card are read
+# relative to /app)
+COPY --chown=appuser:appuser app ./app
+COPY --chown=appuser:appuser config ./config
 
-# Set environment variables
-ENV PATH=/home/appuser/.local/bin:$PATH \
+ENV PATH=/app/.venv/bin:$PATH \
     PYTHONPATH=/app \
     PYTHONUNBUFFERED=1 \
     ENVIRONMENT=production
 
-# Switch to non-root user
 USER appuser
 
-# Expose port
 EXPOSE 8000
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import requests; requests.get('http://localhost:8000/health')" || exit 1
+# urlopen raises on any non-2xx response, so a 503 from /health marks the
+# container unhealthy (the old check ignored the status code and imported
+# `requests`, which is not a dependency).
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"]
 
-# Run the application
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
