@@ -6,6 +6,7 @@ Handles message/send JSON-RPC requests from A2A clients, extracting the interpre
 parameters and conversation history from the parts array.
 """
 
+import asyncio
 import logging
 import re
 import uuid
@@ -28,6 +29,7 @@ class MessageHandler:
     def __init__(self):
         self.analyzer = CodeAnalyzerService()
         self.formatter = SummaryFormatter()
+        self._background_tasks: set[asyncio.Task] = set()
     
     async def handle_message_send(self, message: dict[str, Any], configuration: dict[str, Any] | None = None) -> dict[str, Any]:
         """
@@ -110,8 +112,9 @@ class MessageHandler:
             message_id = message.get("messageId", str(uuid.uuid4()))
             
             # Start background task for real analysis
-            import asyncio
-            asyncio.create_task(
+            # Keep a strong reference: the event loop holds tasks weakly, so an
+            # unreferenced task can be garbage-collected before it finishes.
+            bg_task = asyncio.create_task(
                 self._process_and_push_safe(
                     pr_url=pr_url,
                     task_id=task_id,
@@ -120,6 +123,8 @@ class MessageHandler:
                     push_config=push_config
                 )
             )
+            self._background_tasks.add(bg_task)
+            bg_task.add_done_callback(self._background_tasks.discard)
             
             # Return MESSAGE (not Task) for immediate response
             accepting_msg = A2AMessage(
@@ -144,24 +149,10 @@ class MessageHandler:
             logger.info("✅ Returned 'working' message - real analysis will happen in background")
             return result
         
-        # No webhook config - return error
-        error_msg = A2AMessage(
-            messageId=str(uuid.uuid4()),
-            role="agent",
-            parts=[
-                MessagePart(
-                    kind="text",
-                    text="❌ Unable to process PR review. Please ensure the agent is properly configured with webhook support."
-                )
-            ],
-            kind="message",
-            taskId=task_id,
-            timestamp=datetime.now(UTC).isoformat()
-        )
-        
-        logger.error("No webhook configuration found - cannot process request")
-        return error_msg.model_dump(mode="json", exclude_none=True)
-    
+        # BLOCKING MODE: no push config, or blocking requested. Return the finished task.
+        logger.info(f"Blocking mode: analyzing {pr_url} and returning the completed task")
+        return await self._analyze_and_return(pr_url, task_id, message_id, message)
+
     async def _process_and_push_safe(
         self,
         pr_url: str,
