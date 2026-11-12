@@ -136,7 +136,7 @@ class CodeAnalyzerService:
                 'total_issues': len(all_security_issues) + len(all_performance_issues) + len(all_best_practice_issues),
                 'critical_security_issues': len([s for s in all_security_issues if s.severity == Severity.CRITICAL]),
                 'high_security_issues': len([s for s in all_security_issues if s.severity == Severity.HIGH]),
-                'high_performance_issues': len([p for p in all_performance_issues if p.impact == "HIGH"]),
+                'high_performance_issues': len([p for p in all_performance_issues if p.severity in (Severity.CRITICAL, Severity.HIGH)]),
             }
             
             # Step 12: Build final result
@@ -310,9 +310,15 @@ class CodeAnalyzerService:
             if not is_duplicate:
                 merged.append(llm_issue)
         
-        # Sort by impact (HIGH first)
-        impact_order = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
-        merged.sort(key=lambda x: impact_order.get(x.impact, 999))
+        # Sort by severity (CRITICAL first). `impact` is free text, so it is not used for ordering.
+        severity_order = {
+            Severity.CRITICAL: 0,
+            Severity.HIGH: 1,
+            Severity.MEDIUM: 2,
+            Severity.LOW: 3,
+            Severity.INFO: 4
+        }
+        merged.sort(key=lambda x: severity_order.get(x.severity, 999))
         
         return merged
     
@@ -367,7 +373,7 @@ class CodeAnalyzerService:
         """
         critical_security = len([s for s in security_issues if s.severity == Severity.CRITICAL])
         high_security = len([s for s in security_issues if s.severity == Severity.HIGH])
-        high_performance = len([p for p in performance_issues if p.impact == "HIGH"])
+        high_performance = len([p for p in performance_issues if p.severity in (Severity.CRITICAL, Severity.HIGH)])
         
         # Risk calculation logic
         if critical_security > 0:
@@ -413,10 +419,10 @@ class CodeAnalyzerService:
         if high_security:
             recommendations.append(f"⚠️ HIGH: Fix {len(high_security)} high-severity security issue(s) before merging")
         
-        # High impact performance
-        high_performance = [p for p in performance_issues if p.impact == "HIGH"]
+        # High severity performance
+        high_performance = [p for p in performance_issues if p.severity in (Severity.CRITICAL, Severity.HIGH)]
         if high_performance:
-            recommendations.append(f"⚡ PERFORMANCE: Optimize {len(high_performance)} high-impact performance issue(s)")
+            recommendations.append(f"⚡ PERFORMANCE: Optimize {len(high_performance)} high-severity performance issue(s)")
         
         # Best practices
         if best_practice_issues:
