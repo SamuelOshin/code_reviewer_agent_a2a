@@ -3,7 +3,7 @@
 """Output Formatters
 
 Format code analysis results for different outputs including
-Telex messages, GitHub comments, and terminal display.
+A2A messages, GitHub comments, and terminal display.
 """
 
 from typing import List, Dict, Any
@@ -51,10 +51,10 @@ class SummaryFormatter:
     }
     
     @classmethod
-    def format_for_telex(cls, analysis: CodeAnalysisResult) -> str:
+    def format_short(cls, analysis: CodeAnalysisResult) -> str:
         """
-        Format analysis result as SHORT markdown for Telex A2A messages
-        MUST be concise - Telex has display limits!
+        Format analysis result as SHORT markdown for A2A messages
+        Keep it concise: A2A clients may truncate long messages.
         
         Args:
             analysis: Complete code analysis result
@@ -213,8 +213,8 @@ class SummaryFormatter:
         Returns:
             Formatted markdown for GitHub
         """
-        # Similar to Telex format but with GitHub-specific adjustments
-        return cls.format_for_telex(analysis)
+        # Similar to the short format but with GitHub-specific adjustments
+        return cls.format_short(analysis)
     
     @classmethod
     def format_summary_table(cls, analysis: CodeAnalysisResult) -> str:

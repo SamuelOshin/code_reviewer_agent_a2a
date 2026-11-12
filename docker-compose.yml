@@ -28,10 +28,6 @@ services:
       - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      
-      # Telex Configuration
-      - TELEX_URL=${TELEX_URL:-}
-      - TELEX_API_KEY=${TELEX_API_KEY:-}
     volumes:
       # Mount config directory for agent card and prompts
       - ./config:/app/config:ro

@@ -214,13 +214,6 @@ class JSONRPCHandler:
         # Serialize the complete JSON-RPC response
         response_dict = response.model_dump(mode="json", exclude_none=True)
         
-        # Log the complete JSON-RPC envelope
-        import json
-        logger.info("=" * 80)
-        logger.info("COMPLETE JSON-RPC RESPONSE:")
-        logger.info(json.dumps(response_dict, indent=2))
-        logger.info("=" * 80)
-        
         return response_dict
     
     def _error_response(

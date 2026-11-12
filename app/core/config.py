@@ -36,11 +36,6 @@ class Settings(BaseSettings):
     LLM_TEMPERATURE: float = 0.3
     LLM_MAX_TOKENS: int = 4000
     
-    # Telex Integration
-    TELEX_WEBHOOK_URL: str = ""  # Telex webhook endpoint for sending notifications
-    TELEX_WEBHOOK_HOOK_ID: str = ""  # Your hook ID from Telex (used if TELEX_WEBHOOK_URL not set)
-    TELEX_CHANNEL: str = "#code-reviews"
-    
     # A2A Configuration
     A2A_AGENT_URL: str = ""
     A2A_AGENT_NAME: str = "Code Review Summarizer"

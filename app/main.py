@@ -19,21 +19,12 @@ from typing import Dict, Any, Optional
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
 
 from app.core.config import settings
 from app.core.logging import setup_logging
 from app.services.jsonrpc_handler import JSONRPCHandler
 from app.services.code_analyzer import CodeAnalyzerService
-from app.services.telex_client import TelexClient
 from app.services.message_handler import MessageHandler
-from app.schemas.rpc import (
-    AnalyzePRRequest,
-    AnalyzePRResponse,
-    GetAnalysisStatusRequest,
-    ListAnalysesRequest,
-    IntrospectResponse
-)
 
 # Setup logging
 setup_logging()
@@ -57,7 +48,6 @@ async def lifespan(app: FastAPI):
     logger.info(f"Environment: {settings.ENVIRONMENT}")
     logger.info(f"LLM Provider: {settings.LLM_PROVIDER} ({settings.LLM_MODEL})")
     logger.info(f"GitHub Token: {'✓ Configured' if settings.GITHUB_TOKEN else '✗ Not configured'}")
-    logger.info(f"Telex URL: {settings.TELEX_WEBHOOK_URL or 'Not configured'}")
     
     # Initialize JSON-RPC handler
     jsonrpc_handler = JSONRPCHandler()
@@ -68,7 +58,6 @@ async def lifespan(app: FastAPI):
     # Store in app state
     app.state.jsonrpc_handler = jsonrpc_handler
     app.state.code_analyzer = CodeAnalyzerService()
-    app.state.telex_client = TelexClient()
     app.state.message_handler = MessageHandler()
     
     logger.info(f"Registered {len(jsonrpc_handler.list_methods())} JSON-RPC methods")
@@ -106,7 +95,7 @@ app.add_middleware(
 # JSON-RPC Method Handlers
 # ============================================================================
 
-async def handle_analyze_pr(pr_url: str, send_to_telex: bool = True, focus_areas: list = None) -> Dict[str, Any]:
+async def handle_analyze_pr(pr_url: str, focus_areas: list = None) -> Dict[str, Any]:
     """
     JSON-RPC method: analyze_pr
     
@@ -116,19 +105,9 @@ async def handle_analyze_pr(pr_url: str, send_to_telex: bool = True, focus_areas
     
     # Get services from app state
     analyzer: CodeAnalyzerService = app.state.code_analyzer
-    telex_client: TelexClient = app.state.telex_client
     
     # Run analysis
     result = await analyzer.analyze_pr(pr_url)
-    
-    # Send to Telex if requested
-    telex_sent = False
-    if send_to_telex and settings.TELEX_WEBHOOK_URL:
-        try:
-            await telex_client.send_review_summary(result)
-            telex_sent = True
-        except Exception as e:
-            logger.error(f"Failed to send to Telex: {e}")
     
     # Build response
     return {
@@ -151,57 +130,8 @@ async def handle_analyze_pr(pr_url: str, send_to_telex: bool = True, focus_areas
         "analyzed_at": result.analyzed_at.isoformat(),
         "analysis_duration_seconds": result.analysis_duration_seconds,
         "llm_provider": result.llm_provider,
-        "llm_model": result.llm_model,
-        "telex_sent": telex_sent
+        "llm_model": result.llm_model
     }
-
-
-async def handle_get_analysis_status(analysis_id: str) -> Dict[str, Any]:
-    """
-    JSON-RPC method: get_analysis_status
-    
-    Gets the status of an analysis (placeholder for future implementation)
-    """
-    logger.info(f"RPC: get_analysis_status called for {analysis_id}")
-    
-    # TODO: Implement analysis tracking/storage
-    return {
-        "analysis_id": analysis_id,
-        "status": "completed",  # Placeholder
-        "pr_url": None,
-        "started_at": None,
-        "completed_at": None,
-        "error": "Analysis tracking not yet implemented"
-    }
-
-
-async def handle_list_analyses(limit: int = 10, offset: int = 0, status_filter: str = None) -> Dict[str, Any]:
-    """
-    JSON-RPC method: list_analyses
-    
-    Lists recent analyses (placeholder for future implementation)
-    """
-    logger.info(f"RPC: list_analyses called (limit={limit}, offset={offset})")
-    
-    # TODO: Implement analysis storage and listing
-    return {
-        "analyses": [],
-        "total": 0,
-        "limit": limit,
-        "offset": offset
-    }
-
-
-async def handle_get_analysis_details(analysis_id: str) -> Dict[str, Any]:
-    """
-    JSON-RPC method: get_analysis_details
-    
-    Gets detailed analysis results (placeholder for future implementation)
-    """
-    logger.info(f"RPC: get_analysis_details called for {analysis_id}")
-    
-    # TODO: Implement analysis storage and retrieval
-    raise ValueError("Analysis details retrieval not yet implemented")
 
 
 async def handle_introspect() -> Dict[str, Any]:
@@ -225,13 +155,13 @@ async def handle_message_send(message: Dict[str, Any], configuration: Optional[D
     """
     JSON-RPC method: message/send
     
-    Handles incoming messages from Telex with the new format:
+    Handles incoming A2A messages with this format:
     - parts[0]: Text part with system's interpretation/extracted parameters
     - parts[1]: Data part with last 20 messages from conversation history
     
     Args:
-        message: Message object from Telex
-        configuration: Optional configuration from Telex (workflow settings, etc.)
+        message: A2A message object
+        configuration: Optional A2A message/send configuration (blocking, pushNotificationConfig)
         
     Returns:
         A2A Task response
@@ -252,11 +182,8 @@ async def register_rpc_methods(handler: JSONRPCHandler):
         handler: JSONRPCHandler instance
     """
     handler.register_method("analyze_pr", handle_analyze_pr)
-    handler.register_method("get_analysis_status", handle_get_analysis_status)
-    handler.register_method("list_analyses", handle_list_analyses)
-    handler.register_method("get_analysis_details", handle_get_analysis_details)
     handler.register_method("introspect", handle_introspect)
-    handler.register_method("message/send", handle_message_send)  # Telex message handler
+    handler.register_method("message/send", handle_message_send)
 
 
 # ============================================================================

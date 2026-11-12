@@ -15,7 +15,6 @@ from fastapi.responses import JSONResponse
 
 from app.core.config import settings
 from app.services.code_analyzer import CodeAnalyzerService
-from app.services.telex_client import TelexClient
 
 logger = logging.getLogger(__name__)
 
@@ -173,31 +172,29 @@ async def handle_pull_request_event(
 
 async def analyze_pr_background(pr_url: str, pr_number: int):
     """
-    Background task to analyze PR and send to Telex
-    
+    Background task to analyze a PR
+
+    For now the completed result is only logged. Posting it back to the PR is
+    a later task.
+
     Args:
         pr_url: PR URL
         pr_number: PR number
     """
     try:
         logger.info(f"Starting background analysis for PR #{pr_number}")
-        
-        # Initialize services
+
         analyzer = CodeAnalyzerService()
-        telex_client = TelexClient()
-        
-        # Run analysis
         analysis_result = await analyzer.analyze_pr(pr_url)
-        
-        # Send to Telex
-        try:
-            await telex_client.send_review_summary(analysis_result)
-            logger.info(f"Successfully sent analysis for PR #{pr_number} to Telex")
-        except Exception as e:
-            logger.error(f"Failed to send to Telex for PR #{pr_number}: {e}")
-            # Continue even if Telex fails
-        
-        logger.info(f"Background analysis completed for PR #{pr_number}")
-        
+
+        logger.info(
+            f"Background analysis completed for PR #{pr_number}: "
+            f"risk={analysis_result.risk_level.value}, "
+            f"recommendation={analysis_result.approval_recommendation.value}, "
+            f"security={len(analysis_result.security_findings)}, "
+            f"performance={len(analysis_result.performance_findings)}, "
+            f"best_practices={len(analysis_result.best_practice_findings)}"
+        )
+
     except Exception as e:
         logger.error(f"Background analysis failed for PR #{pr_number}: {e}")

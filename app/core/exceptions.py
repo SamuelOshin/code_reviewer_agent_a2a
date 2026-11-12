@@ -27,10 +27,6 @@ class LLMError(CodeReviewAgentException):
     pass
 
 
-class TelexError(CodeReviewAgentException):
-    """Exception raised when Telex integration fails"""
-    pass
-
 
 class A2AError(CodeReviewAgentException):
     """Exception raised when A2A protocol operations fail"""
