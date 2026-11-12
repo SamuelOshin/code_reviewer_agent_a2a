@@ -173,3 +173,26 @@ class TestErrors:
         with pytest.raises(GitHubMCPError):
             async with GitHubMCPService():
                 pass
+
+
+class TestPostPrComment:
+    @pytest.mark.asyncio
+    async def test_posts_comment_on_the_pr(self, service):
+        await service.post_pr_comment("octo", "repo", 42, "hello")
+        repo = service._client.get_repo
+        repo.assert_called_once_with("octo/repo")
+        repo.return_value.get_issue.assert_called_once_with(42)
+        create = repo.return_value.get_issue.return_value.create_comment
+        create.assert_called_once_with("hello")
+
+    @pytest.mark.asyncio
+    async def test_github_error_becomes_github_mcp_error(self, service):
+        issue = service._client.get_repo.return_value.get_issue.return_value
+        issue.create_comment.side_effect = GithubException(403, {"message": "no"}, None)
+        with pytest.raises(GitHubMCPError, match="403"):
+            await service.post_pr_comment("octo", "repo", 42, "hello")
+
+    @pytest.mark.asyncio
+    async def test_uninitialised_client_raises(self):
+        with pytest.raises(GitHubMCPError):
+            await GitHubMCPService().post_pr_comment("octo", "repo", 42, "hello")
