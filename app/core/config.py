@@ -1,21 +1,15 @@
 # app/core/config.py
 
 from pydantic_settings import BaseSettings
-from typing import List
 
 class Settings(BaseSettings):
     """Application Settings"""
     
     # Application
-    APP_NAME: str = "Code Review Summarizer Agent"
     ENVIRONMENT: str = "development"  # development, staging, production
-    DEBUG: bool = False
-    VERSION: str = "1.0.0"
     
     # Server
-    HOST: str = "0.0.0.0"
     PORT: int = 8000
-    ALLOWED_ORIGINS: List[str] = ["*"]
     
     # GitHub
     GITHUB_TOKEN: str
@@ -35,19 +29,6 @@ class Settings(BaseSettings):
     LLM_MODEL: str = "gemini-1.5-flash"
     LLM_TEMPERATURE: float = 0.3
     LLM_MAX_TOKENS: int = 4000
-    
-    # A2A Configuration
-    A2A_AGENT_URL: str = ""
-    A2A_AGENT_NAME: str = "Code Review Summarizer"
-    
-    # Security
-    SECRET_KEY: str
-    
-    
-    DATABASE_URL: str = "sqlite:///./code_review_agent.db"
-    
-    # Redis (Optional - for caching)
-    REDIS_URL: str = "redis://localhost:6379/0"
     
     # Logging
     LOG_LEVEL: str = "INFO"
