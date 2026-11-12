@@ -1,7 +1,5 @@
 # docker-compose.yml
 
-version: '3.8'
-
 services:
   # ============================================================================
   # Code Review Agent Service
@@ -13,28 +11,16 @@ services:
     container_name: code_review_agent
     ports:
       - "8000:8000"
+    # Secrets and settings come from .env (copy .env.example). Compose does not
+    # list each variable, so every setting the app reads can be set there.
+    env_file:
+      - .env
     environment:
-      # Environment (set to production in Docker)
+      # Fixed for the container; overrides anything in .env
       - ENVIRONMENT=production
-      - LOG_LEVEL=INFO
-      
-      # GitHub Configuration (set via .env file)
-      - GITHUB_TOKEN=${GITHUB_TOKEN}
-      - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET:-}
-      
-      # LLM Configuration (Gemini as default)
-      - LLM_PROVIDER=${LLM_PROVIDER:-google}
-      - LLM_MODEL=${LLM_MODEL:-gemini-1.5-flash}
-      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-    volumes:
-      # Mount config directory for agent card and prompts
-      - ./config:/app/config:ro
-      # Optional: Mount logs directory
-      - ./logs:/app/logs
     healthcheck:
-      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health')"]
+      # Non-2xx responses raise, so an unhealthy /health fails the check
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -50,24 +36,28 @@ networks:
 # ============================================================================
 # Usage Instructions
 # ============================================================================
-# 
-# 1. Create .env file with required variables:
+#
+# 1. Create .env with the required variables:
 #    cp .env.example .env
-#    # Edit .env with your actual credentials
+#    # Edit .env: GITHUB_TOKEN and GITHUB_WEBHOOK_SECRET are required, plus the
+#    # API key for the LLM provider you choose
 #
 # 2. Build and run:
-#    docker-compose up --build
+#    docker compose up --build
 #
 # 3. Run in background:
-#    docker-compose up -d
+#    docker compose up -d
 #
-# 4. View logs:
-#    docker-compose logs -f app
+# 4. Check health:
+#    docker compose ps
+#    curl http://localhost:8000/health
 #
-# 5. Stop:
-#    docker-compose down
+# 5. View logs:
+#    docker compose logs -f app
 #
-# 6. Run tests in container:
-#    docker-compose run --rm app pytest -v
+# 6. Stop:
+#    docker compose down
+#
+# Tests are not part of the image. Run them on the host: uv run pytest
 #
 # ============================================================================
