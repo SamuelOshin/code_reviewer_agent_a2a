@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from app.models.analysis import ApprovalRecommendation, CodeAnalysisResult, RiskLevel
 from app.routes import webhooks
 
 PR_URL = "https://github.com/octo/repo/pull/42"
@@ -32,16 +33,36 @@ def pr_payload(action="opened"):
     return {"action": action, "pull_request": {"number": 42, "html_url": PR_URL}}
 
 
+def make_result() -> CodeAnalysisResult:
+    return CodeAnalysisResult(
+        pr_number=42,
+        pr_title="Fix thing",
+        author="octo",
+        repository="octo/repo",
+        executive_summary="Looks fine.",
+        risk_level=RiskLevel.LOW,
+        files_changed=1,
+        lines_added=3,
+        lines_deleted=1,
+        approval_recommendation=ApprovalRecommendation.APPROVE,
+        analysis_duration_seconds=0.1,
+    )
+
+
 @pytest.fixture
-def analyzer(monkeypatch):
+def github(monkeypatch):
+    """Mock PyGithub itself, so the real GitHubMCPService runs without a network."""
+    monkeypatch.setenv("SKIP_GITHUB_CONNECTION_TEST", "true")
+    client = MagicMock()
+    monkeypatch.setattr("app.services.github_mcp.Github", MagicMock(return_value=client))
+    return client
+
+
+@pytest.fixture
+def analyzer(monkeypatch, github):
     """Replace the analyzer class used by the background task."""
     instance = MagicMock()
-    instance.analyze_pr = AsyncMock()
-    instance.analyze_pr.return_value.risk_level.value = "low"
-    instance.analyze_pr.return_value.approval_recommendation.value = "approve"
-    instance.analyze_pr.return_value.security_findings = []
-    instance.analyze_pr.return_value.performance_findings = []
-    instance.analyze_pr.return_value.best_practice_findings = []
+    instance.analyze_pr = AsyncMock(return_value=make_result())
     monkeypatch.setattr(webhooks, "CodeAnalyzerService", MagicMock(return_value=instance))
     return instance
 
@@ -125,3 +146,34 @@ class TestPullRequest:
         res = post(client, webhook_secret, "pull_request", pr_payload())
         assert res.status_code == 200
         assert res.json()["status"] == "queued"
+
+
+class TestPostsComment:
+    @staticmethod
+    def comments(github):
+        return github.get_repo.return_value.get_issue.return_value.create_comment
+
+    def test_posts_exactly_one_summary_comment(self, client, webhook_secret, analyzer, github):
+        res = post(client, webhook_secret, "pull_request", pr_payload())
+        assert res.status_code == 200
+        github.get_repo.assert_called_once_with("octo/repo")
+        github.get_repo.return_value.get_issue.assert_called_once_with(42)
+        self.comments(github).assert_called_once()
+        body = self.comments(github).call_args.args[0]
+        assert body == webhooks.SummaryFormatter.format_for_github_comment(make_result())
+
+    def test_posting_failure_is_handled_and_not_leaked(
+        self, client, webhook_secret, analyzer, github, caplog
+    ):
+        self.comments(github).side_effect = RuntimeError("boom ghp_SECRETTOKEN")
+        res = post(client, webhook_secret, "pull_request", pr_payload())
+        assert res.status_code == 200
+        assert res.json()["status"] == "queued"
+        self.comments(github).assert_called_once()
+        assert "Failed to post" in caplog.text
+        assert "ghp_SECRETTOKEN" not in caplog.text
+
+    def test_no_comment_when_analysis_fails(self, client, webhook_secret, analyzer, github):
+        analyzer.analyze_pr.side_effect = RuntimeError("llm down")
+        post(client, webhook_secret, "pull_request", pr_payload())
+        self.comments(github).assert_not_called()

@@ -16,6 +16,8 @@ from fastapi.responses import JSONResponse
 
 from app.core.config import settings
 from app.services.code_analyzer import CodeAnalyzerService
+from app.services.github_mcp import GitHubMCPService
+from app.utils.formatters import SummaryFormatter
 
 logger = logging.getLogger(__name__)
 
@@ -175,8 +177,8 @@ async def analyze_pr_background(pr_url: str, pr_number: int):
     """
     Background task to analyze a PR
 
-    For now the completed result is only logged. Posting it back to the PR is
-    a later task.
+    The result is logged and posted back to the PR as one summary comment. A
+    failure to post is logged (without the token) and never raised.
 
     Args:
         pr_url: PR URL
@@ -196,6 +198,15 @@ async def analyze_pr_background(pr_url: str, pr_number: int):
             f"performance={len(analysis_result.performance_findings)}, "
             f"best_practices={len(analysis_result.best_practice_findings)}"
         )
+
+        comment = SummaryFormatter.format_for_github_comment(analysis_result)
+        try:
+            async with GitHubMCPService() as github:
+                owner, repo, number = github.parse_pr_url(pr_url)
+                await github.post_pr_comment(owner, repo, number, comment)
+        except Exception as e:
+            # Exception text can echo request details; log the type only
+            logger.error(f"Failed to post comment for PR #{pr_number}: {type(e).__name__}")
 
     except Exception as e:
         logger.error(f"Background analysis failed for PR #{pr_number}: {e}")
