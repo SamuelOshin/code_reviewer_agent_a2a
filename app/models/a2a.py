@@ -8,7 +8,7 @@ These models define the structure for Agent-to-Agent (A2A) protocol communicatio
 
 from typing import List, Optional, Dict, Any, TYPE_CHECKING
 from pydantic import BaseModel, Field
-from datetime import datetime
+from datetime import UTC, datetime
 
 if TYPE_CHECKING:
     from typing import ForwardRef
@@ -30,13 +30,13 @@ class A2AMessage(BaseModel):
     parts: List[MessagePart]
     kind: str = "message"
     taskId: str
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class TaskStatus(BaseModel):
     """Task status information"""
     state: str  # "pending", "in_progress", "completed", "failed", "input-required"
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     message: Optional[A2AMessage] = None  # Nested message in status
     progress: Optional[float] = Field(None, ge=0.0, le=1.0)
 

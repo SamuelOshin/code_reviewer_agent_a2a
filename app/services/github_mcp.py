@@ -12,7 +12,7 @@ import base64
 import asyncio
 import os
 from functools import partial
-from github import Github, GithubException
+from github import Auth, Github, GithubException
 from app.core.config import settings
 from app.core.exceptions import GitHubMCPError
 from app.models.github import PullRequest, PullRequestFile, PullRequestDiff
@@ -35,7 +35,7 @@ class GitHubMCPService:
             # Presence only: the token length narrows a brute-force search
             logger.info(f"Token present: {bool(self.token)}")
             
-            self._client = Github(self.token)
+            self._client = Github(auth=Auth.Token(self.token))
             logger.info("GitHub client object created, testing connection...")
             
             # Test the connection - run blocking call in thread pool WITH TIMEOUT

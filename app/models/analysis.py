@@ -8,7 +8,7 @@ and best practice findings.
 
 from typing import Optional, List
 from pydantic import BaseModel, ConfigDict, Field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 
 
@@ -107,7 +107,7 @@ class CodeAnalysisResult(BaseModel):
     suggested_reviewers: List[str] = []
     
     # Metadata
-    analyzed_at: datetime = Field(default_factory=datetime.utcnow)
+    analyzed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     analysis_duration_seconds: float
     llm_provider: Optional[str] = None
     llm_model: Optional[str] = None
