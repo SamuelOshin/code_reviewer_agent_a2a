@@ -5,6 +5,7 @@ Nothing here touches the network: DNS answers come from a stubbed resolver.
 """
 
 import os
+import secrets
 import subprocess
 import sys
 from pathlib import Path
@@ -17,7 +18,7 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from app.core import auth, push_url
-from app.core.config import MIN_API_KEY_LENGTH, Settings
+from app.core.config import MIN_API_KEY_LENGTH, PLACEHOLDER_SECRETS, Settings
 from app.core.push_url import PushUrlRejected, validate_push_url
 from app.models.jsonrpc import JSONRPCErrorCode as Code
 from app.services.message_handler import MessageHandler
@@ -174,6 +175,37 @@ class TestStartupValidation:
     def test_empty_short_or_padded_api_key_is_refused(self, value):
         with pytest.raises(ValidationError, match="API_KEY"):
             make_settings(API_KEY=value)
+
+    @pytest.mark.parametrize("name", sorted(PLACEHOLDER_SECRETS))
+    def test_env_example_placeholders_are_refused(self, name):
+        with pytest.raises(ValidationError, match=f"{name} is still the public placeholder"):
+            make_settings(**{name: PLACEHOLDER_SECRETS[name]})
+
+    def test_random_values_are_accepted(self):
+        s = make_settings(
+            API_KEY=secrets.token_urlsafe(32), GITHUB_WEBHOOK_SECRET=secrets.token_hex(32)
+        )
+        assert s.API_KEY not in PLACEHOLDER_SECRETS.values()
+
+    def test_placeholder_list_matches_env_example(self):
+        # The refused values must be the ones .env.example actually prints
+        values = dict(
+            line.split("=", 1)
+            for line in (ROOT / ".env.example").read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#") and "=" in line
+        )
+        for name, placeholder in PLACEHOLDER_SECRETS.items():
+            assert values[name] == placeholder
+
+    def test_unedited_env_example_does_not_start(self, tmp_path):
+        env = {k: v for k, v in os.environ.items() if k not in PLACEHOLDER_SECRETS}
+        env.pop("GITHUB_TOKEN", None)
+        (tmp_path / ".env").write_text(
+            (ROOT / ".env.example").read_text(encoding="utf-8"), encoding="utf-8"
+        )
+        proc = self.import_app(env, tmp_path)
+        assert proc.returncode != 0
+        assert "is still the public placeholder" in proc.stderr
 
     def test_defaults_disable_push_and_cors(self):
         s = make_settings()

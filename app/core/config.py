@@ -11,6 +11,22 @@ MIN_API_KEY_LENGTH = 32
 _HOSTNAME_RE = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$")
 _ORIGIN_RE = re.compile(r"^https?://[a-z0-9.-]+(:[0-9]{1,5})?$")
 
+# Placeholder values printed in the public .env.example (P1-07). A copied but
+# unedited .env would otherwise start with a secret anyone can read, so these are
+# refused at startup. Keep in sync with .env.example.
+PLACEHOLDER_SECRETS = {
+    "API_KEY": "replace_with_a_long_random_api_key_0123456789",
+    "GITHUB_WEBHOOK_SECRET": "your_random_webhook_secret_here",
+}
+
+
+def _reject_placeholder(name: str, value: str, how_to_generate: str) -> None:
+    if value.strip() == PLACEHOLDER_SECRETS[name]:
+        raise ValueError(
+            f"{name} is still the public placeholder from .env.example; replace it "
+            f"with a random value (e.g. {how_to_generate})"
+        )
+
 
 def _split_csv(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
@@ -93,17 +109,22 @@ class Settings(BaseSettings):
     def _webhook_secret_required(cls, value: str) -> str:
         if not value.strip():
             raise ValueError("GITHUB_WEBHOOK_SECRET must be set to a non-empty value")
+        _reject_placeholder(
+            "GITHUB_WEBHOOK_SECRET", value,
+            "python -c \"import secrets; print(secrets.token_hex(32))\"",
+        )
         return value
 
     @field_validator("API_KEY")
     @classmethod
     def _api_key_strong_enough(cls, value: str) -> str:
+        generate = "python -c \"import secrets; print(secrets.token_urlsafe(32))\""
         if value != value.strip() or len(value) < MIN_API_KEY_LENGTH:
             raise ValueError(
                 f"API_KEY must be at least {MIN_API_KEY_LENGTH} characters with no "
-                "surrounding whitespace (e.g. python -c \"import secrets; "
-                "print(secrets.token_urlsafe(32))\")"
+                f"surrounding whitespace (e.g. {generate})"
             )
+        _reject_placeholder("API_KEY", value, generate)
         return value
 
     @field_validator("PUSH_URL_ALLOWED_HOSTS")
