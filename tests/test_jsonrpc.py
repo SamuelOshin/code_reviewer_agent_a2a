@@ -10,6 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.models.jsonrpc import JSONRPCErrorCode as Code
+from tests.conftest import AUTH_HEADERS
 
 
 def call(client: TestClient, body):
@@ -141,7 +142,7 @@ class TestRpcEndpoint:
 
     def test_missing_handler_in_app_state_is_http_500(self, test_app):
         del test_app.state.jsonrpc_handler
-        response = TestClient(test_app).post("/rpc", json={"jsonrpc": "2.0", "method": "x", "id": 1})
+        response = TestClient(test_app, headers=AUTH_HEADERS).post("/rpc", json={"jsonrpc": "2.0", "method": "x", "id": 1})
         assert response.status_code == 500
 
 
@@ -152,7 +153,7 @@ class TestRealApp:
     def real_client(self):
         from app.main import app
 
-        with TestClient(app) as c:
+        with TestClient(app, headers=AUTH_HEADERS) as c:
             yield c
 
     def test_introspect_lists_registered_methods(self, real_client):

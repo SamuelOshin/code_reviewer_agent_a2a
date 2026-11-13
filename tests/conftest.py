@@ -15,6 +15,12 @@ for _key in ("GITHUB_TOKEN", "GITHUB_WEBHOOK_SECRET", "SECRET_KEY", "GOOGLE_API_
 # The app builds its model client at startup and needs a model setting. A fake ID:
 # tests never call a real model.
 os.environ.setdefault("LLM_MODEL", "google:test-model")
+# /rpc and /a2a/* need a bearer key of at least 32 characters (P1-07). Test value only.
+os.environ.setdefault("API_KEY", "test-api-key-not-a-secret-0123456789")
+API_KEY = os.environ["API_KEY"]
+AUTH_HEADERS = {"Authorization": f"Bearer {API_KEY}"}
+# A public address returned by the stubbed resolver; nothing ever connects to it
+PUBLIC_IP = "8.8.8.8"
 
 import pytest  # noqa: E402
 from fastapi import FastAPI  # noqa: E402
@@ -63,7 +69,29 @@ def test_app(rpc_handler: JSONRPCHandler) -> FastAPI:
 
 @pytest.fixture
 def client(test_app: FastAPI) -> TestClient:
+    """Authenticated client: sends the API key on every request."""
+    return TestClient(test_app, headers=AUTH_HEADERS)
+
+
+@pytest.fixture
+def anon_client(test_app: FastAPI) -> TestClient:
+    """Client that sends no Authorization header."""
     return TestClient(test_app)
+
+
+@pytest.fixture
+def push_allowed(monkeypatch) -> None:
+    """Allowlist the test push hosts and resolve every name to a public IP offline."""
+    from app.core import push_url
+
+    monkeypatch.setattr(
+        push_url.settings, "PUSH_URL_ALLOWED_HOSTS", "hooks.example.test,x.test"
+    )
+
+    async def resolve(host, port):
+        return [PUBLIC_IP]
+
+    monkeypatch.setattr(push_url, "_resolve", resolve)
 
 
 @pytest.fixture

@@ -24,7 +24,6 @@ logger = logging.getLogger(__name__)
 # GitHub rejects comment bodies over 65,536 characters; stay safely below
 MAX_COMMENT_CHARS = 60000
 TRUNCATION_NOTE = " ...[comment truncated to fit GitHub's size limit]"
-_warned_unsigned = False
 
 
 def _truncate_comment(body: str) -> str:
@@ -44,13 +43,10 @@ def verify_github_signature(payload_body: bytes, signature_header: str) -> bool:
         signature_header: X-Hub-Signature-256 header value
         
     Returns:
-        True if signature is valid
+        True if signature is valid. GITHUB_WEBHOOK_SECRET is required at startup
+        (P1-07); an empty secret here still fails closed.
     """
-    if not settings.GITHUB_WEBHOOK_SECRET:
-        logger.warning("GITHUB_WEBHOOK_SECRET not set - skipping signature verification")
-        return True
-    
-    if not signature_header:
+    if not settings.GITHUB_WEBHOOK_SECRET or not signature_header:
         return False
     
     # GitHub sends signature as "sha256=<hex_digest>"
@@ -170,20 +166,12 @@ async def handle_pull_request_event(
         logger.error("No PR URL in webhook payload")
         raise HTTPException(status_code=400, detail="Missing PR URL in payload")
     
-    # Queue analysis as background task
-    # Without a webhook secret the sender is unauthenticated, so review but never
-    # write to the PR (a forged event must not make the bot comment).
-    post_comment = bool(settings.GITHUB_WEBHOOK_SECRET)
-    global _warned_unsigned
-    if not post_comment and not _warned_unsigned:
-        _warned_unsigned = True
-        logger.warning("GITHUB_WEBHOOK_SECRET not set: reviews run but PR comments are not posted")
-
+    # Queue analysis as background task. The signature was verified above, so the
+    # event really came from GitHub and the summary can be posted back.
     background_tasks.add_task(
         analyze_pr_background,
         pr_url=pr_url,
         pr_number=pr_number,
-        post_comment=post_comment,
     )
     
     return JSONResponse({
@@ -193,7 +181,7 @@ async def handle_pull_request_event(
     })
 
 
-async def analyze_pr_background(pr_url: str, pr_number: int, post_comment: bool = True):
+async def analyze_pr_background(pr_url: str, pr_number: int):
     """
     Background task to analyze a PR
 
@@ -203,7 +191,6 @@ async def analyze_pr_background(pr_url: str, pr_number: int, post_comment: bool 
     Args:
         pr_url: PR URL
         pr_number: PR number
-        post_comment: Post the summary back to the PR (False for unauthenticated webhooks)
     """
     try:
         logger.info(f"Starting background analysis for PR #{pr_number}")
@@ -219,9 +206,6 @@ async def analyze_pr_background(pr_url: str, pr_number: int, post_comment: bool 
             f"performance={len(analysis_result.performance_findings)}, "
             f"best_practices={len(analysis_result.best_practice_findings)}"
         )
-
-        if not post_comment:
-            return
 
         comment = _truncate_comment(SummaryFormatter.format_for_github_comment(analysis_result))
         try:

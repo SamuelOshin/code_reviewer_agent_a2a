@@ -9,6 +9,14 @@ import uuid
 from urllib.parse import urlsplit
 
 
+class ClientInputError(ValueError):
+    """Bad input whose message is written for the caller and safe to return as-is.
+
+    The JSON-RPC handler maps it to Invalid params with this message instead of the
+    generic internal error.
+    """
+
+
 def new_error_id() -> str:
     """Short id shown to the client and logged next to the full error."""
     return uuid.uuid4().hex[:8]

@@ -10,7 +10,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from app.core.errors import new_error_id
+from app.core.errors import ClientInputError, new_error_id
 from app.models.jsonrpc import JSONRPCError, JSONRPCErrorCode, JSONRPCRequest, JSONRPCResponse
 
 logger = logging.getLogger(__name__)
@@ -129,6 +129,15 @@ class JSONRPCHandler:
                     result=result
                 )
                 
+            except ClientInputError as e:
+                # The message was written for the caller (e.g. a rejected push URL)
+                logger.warning(f"Rejected params for {request.method}: {e}")
+                return self._error_response(
+                    request_id=request.id,
+                    code=JSONRPCErrorCode.INVALID_PARAMS,
+                    message=str(e),
+                )
+
             except TypeError as e:
                 # Invalid params (wrong arguments)
                 error_id = new_error_id()
