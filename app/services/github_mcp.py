@@ -142,6 +142,9 @@ class GitHubMCPService:
             raise GitHubMCPError(f"Invalid GitHub PR URL format: {pr_url}")
         
         owner, repo, pr_number = match.groups()
+        # GitHub numbers PRs from 1 (P1-21)
+        if int(pr_number) == 0:
+            raise GitHubMCPError(f"Invalid GitHub PR URL format: {pr_url}")
         return owner, repo, int(pr_number)
     
     async def _run_sync(self, func, *args, **kwargs):

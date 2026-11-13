@@ -141,8 +141,19 @@ once and pushes the result to that URL. The URL must be `https`, its host must b
 resolve to public addresses only. A blocking call that runs longer than
 `A2A_BLOCKING_TIMEOUT_SECONDS` returns error `-32004`. A JSON-RPC batch runs its calls
 concurrently, at most 5 at a time across the whole process (all batches share one
-limit), so a batch of n blocking calls can take up to ceil(n/5) times that timeout, and
-longer while other batches are running. On timeout, a GitHub request that has already started
+limit). Each batch call waits at most `A2A_BLOCKING_TIMEOUT_SECONDS` for a slot; if none
+is free it returns `-32004` for that call without running it. A call that gets a slot then
+runs under the same timeout, so a batch finishes within about twice the timeout. Single
+requests are not queued behind this limit. If the push to your webhook fails with an error
+status (for example 429, 413 or 5xx), the service makes one more post with a short
+"could not deliver the result" message and an error id; if the webhook cannot be reached at
+all, it does not retry. A review that fails because GitHub could not be reached or the
+PR could not be read says so, as fixed text plus an error id, never the exception text.
+A model failure, including a rate limit, does not fail the task: it shows in the review
+as a failed analysis step (for example "Security analysis failed (LLMRateLimitError)"). PR URLs
+in message text are accepted as `http://` or `https://`, with `github.com` in any case
+(and without a scheme), and are rewritten to `https://github.com/...`; PR number 0 is
+rejected. On timeout, a GitHub request that has already started
 cannot be stopped: it finishes in a worker thread (bounded by a 15 s socket timeout, at
 most 3 retries and a 30 s cap on rate-limit waits) and its result is discarded; queued
 GitHub calls are skipped.
@@ -183,7 +194,8 @@ or restart the service to retry.
   keeps up to 8192 entries per store, so past 8192 distinct deliveries or failing bodies
   within the hour the oldest entry is dropped early: that body can be replayed, or gets a
   fresh retry budget (a shared store would remove that limit; it is not built).
-- PyGithub (`github`), `urllib3`, the Anthropic SDK (`anthropic`) and `google_genai` log
+- PyGithub (`github`), `urllib3`, the Anthropic SDK (`anthropic`), `google_genai` and
+  `google` (google-auth) log
   at INFO or higher even when `LOG_LEVEL=DEBUG`, so rate-limit response text, request
   details and prompts are not printed by them. Other libraries may still log at DEBUG,
   so don't run production at `LOG_LEVEL=DEBUG`.

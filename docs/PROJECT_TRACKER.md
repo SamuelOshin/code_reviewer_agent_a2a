@@ -13,9 +13,9 @@ read this file alone and continue the work.
 | | |
 |---|---|
 | **Current phase** | Phase 1: make it honest and working (planning complete) |
-| **Active task** | None. Done: `P1-01` to `P1-04`, `P1-06` to `P1-20`. Open: `P1-05` (needs one real review on two providers), `P1-21` |
-| **Next action** | Owner sets a random `API_KEY` and a random `GITHUB_WEBHOOK_SECRET` (both at least 32 characters) in `.env`, then runs one real review on two providers (closes `P1-05`). Owner picks a license (the old README claimed MIT; no LICENSE file exists). Then `P1-21` |
-| **Working branch** | `main`. Start each new task on its own branch from `main`. `P1-19` and `P1-20` combined on `chore/p1-19-p1-20` for one PR |
+| **Active task** | None. Done: `P1-01` to `P1-04`, `P1-06` to `P1-21`. Open: `P1-05` (needs one real review on two providers), `P1-22` |
+| **Next action** | Owner sets a random `API_KEY` and a random `GITHUB_WEBHOOK_SECRET` (both at least 32 characters) in `.env`, then runs one real review on two providers (closes `P1-05`). Owner picks a license (the old README claimed MIT; no LICENSE file exists). Then `P1-22` |
+| **Working branch** | `main`. Start each new task on its own branch from `main`. `P1-21` on `chore/p1-21` for one PR |
 | **Blockers** | None. Owner approved running repo code on 2026-11-12. Use `uv` for everything (`uv sync`, `uv run`). If an install fails on a Windows cache file lock, retry or set a different `UV_CACHE_DIR` |
 | **Working rule** | Parallel agents don't edit this file. The coordinating session records their results |
 
@@ -263,7 +263,8 @@ in CI, and the README is accurate.
 | P1-18 | done | Smaller follow-ups from the PR #3 review: a JSON-RPC batch of blocking `message/send` calls runs sequentially (up to 100 times the timeout), so cap or parallelise it; on timeout, an in-flight GitHub call keeps running in its executor thread; `fec0::1` passes the push URL guard; `parse_pr_url` is unanchored, so `pull/12abc` parses as PR 12 | P1-15 | Tests for each case |
 | P1-19 | done | Webhook follow-ups from the `P1-16` to `P1-18` review: a delivery whose analysis keeps failing before any comment is posted is released each time, so it can be resent without limit (each resend re-runs the analysis and GitHub calls, no comment); add a per-body retry budget, e.g. at most 3 releases an hour. The replay cache drops its oldest entries early once 2048 arrive within the hour. PyGithub's own `github` logger prints rate-limit response text at DEBUG; pin it to INFO or higher | P1-16 | Tests: a body whose analysis always raises runs at most N times an hour; the `github` logger stays at INFO under `LOG_LEVEL=DEBUG` |
 | P1-20 | done | Parsing and batching follow-ups from the same review: a PR number thousands of digits long raises `ValueError` instead of `GitHubMCPError` (use `[0-9]{1,10}`); the A2A PR URL extractor has no left boundary, so `evilgithub.com/o/r/pull/1` becomes a github.com URL, and it accepts `pull/12-x` where `parse_pr_url` rejects it; batch concurrency is 5 per batch, not per process (4 batches reached 20 calls at once); `_push_error` sorts errors by substrings of the message, so an error id containing `404` or `429` gets the wrong category | P1-18 | Tests for each case |
-| P1-21 | todo | Follow-ups from the `P1-19` and `P1-20` review: `_push_error` categories almost never fire, because `_analyze_and_return` turns LLM and GitHub errors into a failed task, and a 429 from the client's own webhook is pushed back as "I've hit my API rate limit"; waiting for a batch slot has no limit and does not count against `A2A_BLOCKING_TIMEOUT_SECONDS`, and single requests are not limited at all; the A2A extractor accepts `http://`, `GitHub.com` and `HTTPS://GITHUB.COM`, which `parse_pr_url` then rejects (the last becomes `https://HTTPS://...`); `pull/0` is accepted; optionally pin google-auth's `google` logger to INFO like the others | P1-19, P1-20 | Tests: a webhook 429 gets its own message; a batch call waiting for a slot times out with `-32004`; the extractor and `parse_pr_url` agree on scheme and host case |
+| P1-21 | done | Follow-ups from the `P1-19` and `P1-20` review: `_push_error` categories almost never fire, because `_analyze_and_return` turns LLM and GitHub errors into a failed task, and a 429 from the client's own webhook is pushed back as "I've hit my API rate limit"; waiting for a batch slot has no limit and does not count against `A2A_BLOCKING_TIMEOUT_SECONDS`, and single requests are not limited at all; the A2A extractor accepts `http://`, `GitHub.com` and `HTTPS://GITHUB.COM`, which `parse_pr_url` then rejects (the last becomes `https://HTTPS://...`); `pull/0` is accepted; optionally pin google-auth's `google` logger to INFO like the others | P1-19, P1-20 | Tests: a webhook 429 gets its own message; a batch call waiting for a slot times out with `-32004`; the extractor and `parse_pr_url` agree on scheme and host case |
+| P1-22 | todo | Follow-ups from the `P1-21` review: the A2A extractor matches `/PULL/` and `/Pull/` (IGNORECASE) and `parse_pr_url` then rejects them, so lowercase the path segment or match it case-sensitively; when a client webhook stores the result but answers 5xx or 3xx, the extra error post marks the same task `failed`, so send it only for 413 and 429 or mark it as a delivery failure; a model rate limit never gets the friendly message, because `CodeAnalyzerService` turns model errors into a failed step (decide whether a review whose steps all failed on rate limits should say so); JSON-RPC responses with no readable id leave out `id` instead of sending `"id": null` (the route already sends null); on a batch slot timeout an id of `1.0` loses its id while the normal path coerces it to `1` | P1-21 | Tests: `/PULL/1` is extracted and parsed (or rejected by both); a webhook 500 after storing the result does not mark the task failed; every error response carries `"id": null` when the id is unreadable |
 | P1-14 | done | Repo hygiene: add `.gitattributes` to normalise line endings, ignore `.claude/worktrees/` and tool caches, replace deprecated `datetime.utcnow` everywhere in `app/`, and use PyGithub's `Auth.Token` | P1-03 | `git add --renormalize .` leaves a clean diff. No `utcnow` in `app/` |
 
 ### Phase 2: modernize the core
@@ -302,7 +303,7 @@ Keep this honest. It records what has actually been proven.
 
 | Check | State | Notes |
 |---|---|---|
-| Test suite | Passing 2026-11-13 | After merging `P1-19` and `P1-20`: **716 passed, 0 xfail**. Coverage **90%**. LLM, GitHub and push calls are mocked; no real provider was called |
+| Test suite | Passing 2026-11-13 | After merging `P1-21`: **745 passed, 0 xfail**. Coverage **90%**. LLM, GitHub and push calls are mocked; no real provider was called |
 | App startup | Starts in-process | `/`, `/health` (`healthy`), `/ready` and the agent card return 200, with or without `SECRET_KEY`. Real LLM and GitHub calls not tested |
 | Docker | Passing 2026-11-12 | From `.env.example` copied to `.env`, `docker compose up --build` reached `healthy` (Docker 29.8). `/health` returned 200 from this app. The container runs as `appuser` with no Node.js. Tested on host port 8010, because another local service holds 8000 |
 | CI | Passing 2026-11-13 | Green on GitHub for PR #2 at `549f481` (ruff, pytest with coverage, `pip-audit`). GitGuardian also passed |
@@ -320,6 +321,32 @@ Keep this honest. It records what has actually been proven.
 ## 9. Session log
 
 Newest first. Keep entries short.
+
+### 2026-11-13: `P1-21` built, reviewed and fixed
+
+- **Done:** one Sonnet side session built it from `main`. Auto mode blocked its later
+  commits, so the coordinating session read the diff and committed the rest on the
+  owner's go-ahead. On `chore/p1-21`: 745 passed, 90% coverage, ruff clean,
+  `pip-audit` clean.
+  - Push failures: an `httpx` error from posting to the client's webhook gets its own
+    "Could Not Deliver the Result" message. One short extra post is made only when the
+    webhook answered with an error status; an unreachable webhook is not posted to again.
+    The second post is re-checked by the push URL guard.
+  - GitHub access failures reach the client as fixed text plus an error id. Model
+    failures, rate limits included, show as a failed analysis step, not a failed task.
+    The rate-limit text no longer names a provider.
+  - A batch call waits at most `A2A_BLOCKING_TIMEOUT_SECONDS` for a slot, else `-32004`
+    without running, so a batch finishes within about twice the timeout. Single requests
+    are not queued behind the limit (explained in a code comment).
+  - The extractor rewrites `http://`, mixed-case and upper-case GitHub URLs to
+    `https://github.com/...`; both parsers reject PR number 0. The `google` logger stays
+    at INFO or higher under `LOG_LEVEL=DEBUG`.
+- **Review:** Bobby Review gave "ready with follow-ups" with three should-fix items: the
+  README promised a rate-limit message the analyzer can never produce; the README and a
+  comment still said a batch takes ceil(n/5) times the timeout; a malformed id on a call
+  that timed out waiting for a slot failed the whole batch. All fixed; the re-review gave
+  "ready". The rest is `P1-22`.
+- **Not verified:** no real webhook, GitHub, model or multi-worker run; Python 3.11 only.
 
 ### 2026-11-13: `P1-19` and `P1-20` built, reviewed and fixed
 
