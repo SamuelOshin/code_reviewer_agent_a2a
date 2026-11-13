@@ -143,20 +143,22 @@ LOG_LEVEL=INFO
 GITHUB_TOKEN=ghp_your_github_token_here
 GITHUB_WEBHOOK_SECRET=your_webhook_secret
 
-# LLM Configuration (Google Gemini - Primary & Recommended)
-LLM_PROVIDER=google
-LLM_MODEL=gemini-2.0-flash-lite
-GOOGLE_API_KEY=your_gemini_api_key
+# LLM Configuration: <provider>:<model-id>
+# Providers: google, openai, anthropic, openai-compatible
+LLM_MODEL=google:gemini-3.8-flash
+GOOGLE_API_KEY=your_google_api_key
 
-# Alternative: OpenAI (Compatible)
-# LLM_PROVIDER=openai
-# LLM_MODEL=gpt-4
+# Switching provider is a config change only, for example:
+# LLM_MODEL=openai:gpt-6.1-sol
 # OPENAI_API_KEY=sk-your-openai-key
-
-# Alternative: Anthropic (Compatible)
-# LLM_PROVIDER=anthropic
-# LLM_MODEL=claude-3-sonnet-20240229
+# LLM_MODEL=anthropic:claude-sonnet-5-5
 # ANTHROPIC_API_KEY=sk-ant-your-anthropic-key
+
+# Optional: per-role models, fallback models, and OpenAI-compatible servers
+# LLM_MODEL_SECURITY=anthropic:claude-sonnet-5-5
+# LLM_MODEL_SUMMARY=google:gemini-3.5-flash-lite
+# LLM_FALLBACK_MODELS=openai:gpt-6.1-sol
+# OPENAI_COMPATIBLE_BASE_URL=http://localhost:11434/v1
 
 # Telex Configuration (Optional)
 TELEX_WEBHOOK_URL=https://telex.example.com
@@ -168,15 +170,17 @@ TELEX_API_KEY=your_telex_api_key
 1. **GitHub Token**: https://github.com/settings/tokens
    - Select scopes: `repo`, `read:org`
 
-2. **Google AI Studio**: https://makersuite.google.com/app/apikey
-   - Recommended model: `gemini-2.0-flash-lite` (fast, cost-effective)
-   - Free tier available with generous limits
+2. **Google Gemini API**: https://ai.google.dev/gemini-api/docs/api-key
 
 3. **OpenAI**: https://platform.openai.com/api-keys
-   - Paid service, good for GPT-4 access
 
 4. **Anthropic**: https://console.anthropic.com/
-   - Paid service, excellent for Claude models
+
+You only need a key for the providers your configured models use. Model IDs in
+these examples were checked against the vendors' docs on 2026-11-12; see
+`.env.example` for every LLM setting. The old `LLM_PROVIDER` setting is no longer
+read, and a model without a provider prefix (such as `gemini-1.5-flash`) stops
+startup with an error that explains the format.
 
 ## 🎯 Usage
 

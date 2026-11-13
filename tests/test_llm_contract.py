@@ -456,3 +456,18 @@ async def test_unknown_model_is_a_configuration_error(provider):
     with pytest.raises(LLMConfigurationError):
         await client.generate(Role.SUMMARY, "hi")
 
+
+def test_old_style_model_setting_explains_the_new_format():
+    with pytest.raises(LLMConfigurationError) as info:
+        build_client(make_settings("google", LLM_MODEL="gemini-1.5-flash"))
+    message = str(info.value)
+    assert "LLM_MODEL='gemini-1.5-flash'" in message
+    assert "<provider>:<model-id>" in message
+    assert "google:<model-id>" in message
+    assert "LLM_PROVIDER is no longer read" in message
+
+
+def test_role_setting_is_named_in_the_error():
+    with pytest.raises(LLMConfigurationError, match="LLM_MODEL_SUMMARY"):
+        build_client(make_settings("google", LLM_MODEL_SUMMARY="no-prefix"))
+

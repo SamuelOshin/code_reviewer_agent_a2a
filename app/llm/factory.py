@@ -61,15 +61,19 @@ def build_model(spec: ModelSpec, settings: Any, http_client: Any = None) -> Mode
 
 def role_chain(role: Role, settings: Any) -> list[ModelSpec]:
     """The configured model for a role, followed by any fallback models."""
-    primary = getattr(settings, f"LLM_MODEL_{role.name}", "") or settings.LLM_MODEL
+    role_setting = f"LLM_MODEL_{role.name}"
+    primary = getattr(settings, role_setting, "")
+    setting = role_setting if primary else "LLM_MODEL"
+    primary = primary or settings.LLM_MODEL
     if not primary:
         raise LLMConfigurationError(
-            "LLM_MODEL is not set. Use '<provider>:<model-id>', for example in .env.example"
+            "LLM_MODEL is not set. The format is <provider>:<model-id>, for example "
+            "'google:<model-id>'. See .env.example for current model IDs."
         )
-    chain = [ModelSpec.parse(primary)]
+    chain = [ModelSpec.parse(primary, setting)]
     for item in (settings.LLM_FALLBACK_MODELS or "").split(","):
         if item.strip():
-            spec = ModelSpec.parse(item)
+            spec = ModelSpec.parse(item, "LLM_FALLBACK_MODELS")
             if spec not in chain:
                 chain.append(spec)
     return chain

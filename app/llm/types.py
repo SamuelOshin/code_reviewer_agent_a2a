@@ -34,19 +34,22 @@ class ModelSpec:
     model_id: str
 
     @classmethod
-    def parse(cls, value: str) -> "ModelSpec":
+    def parse(cls, value: str, setting: str = "LLM_MODEL") -> "ModelSpec":
         text = (value or "").strip()
         provider, sep, model_id = text.partition(":")
         provider, model_id = provider.strip().lower(), model_id.strip()
+        providers = ", ".join(SUPPORTED_PROVIDERS)
         if not sep or not provider or not model_id:
             raise LLMConfigurationError(
-                f"Invalid model setting {text!r}: expected '<provider>:<model-id>', "
-                f"with provider one of {', '.join(SUPPORTED_PROVIDERS)}"
+                f"Invalid {setting}={text!r}. The format is <provider>:<model-id>, for "
+                f"example 'google:<model-id>' or 'anthropic:<model-id>', with provider one "
+                f"of {providers}. LLM_PROVIDER is no longer read: put the provider in "
+                f"front of the model ID. See .env.example for current model IDs."
             )
         if provider not in SUPPORTED_PROVIDERS:
             raise LLMConfigurationError(
-                f"Unsupported LLM provider {provider!r} in {text!r}: "
-                f"use one of {', '.join(SUPPORTED_PROVIDERS)}"
+                f"Unsupported provider {provider!r} in {setting}={text!r}. "
+                f"Use one of {providers}, as <provider>:<model-id>."
             )
         return cls(provider=provider, model_id=model_id)
 
