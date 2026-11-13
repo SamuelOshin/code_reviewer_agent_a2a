@@ -87,6 +87,10 @@ def setup_logging() -> None:
     logging.getLogger("uvicorn").setLevel(logging.INFO)
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
+    # PyGithub logs response text (rate-limit bodies) and urllib3 logs request lines
+    # at DEBUG; keep both at INFO or higher even when LOG_LEVEL=DEBUG (P1-19)
+    logging.getLogger("github").setLevel(max(log_level, logging.INFO))
+    logging.getLogger("urllib3").setLevel(max(log_level, logging.INFO))
     
     # Log initial message
     logger = logging.getLogger(__name__)
