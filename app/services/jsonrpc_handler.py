@@ -12,6 +12,7 @@ import weakref
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from app.core.config import settings
 from app.core.errors import ClientInputError, RequestTimeoutError, new_error_id
 from app.models.jsonrpc import JSONRPCError, JSONRPCErrorCode, JSONRPCRequest, JSONRPCResponse
 
@@ -228,9 +229,32 @@ class JSONRPCHandler:
         
         semaphore = _batch_semaphore()
 
+        # P1-21: waiting for a slot is bounded by A2A_BLOCKING_TIMEOUT_SECONDS, so a
+        # busy process answers -32004 instead of holding the request open. The wait
+        # does not count against the call's own run time, which has its own limit.
+        # Single (non-batch) requests are deliberately not routed through this limit:
+        # a blocking message/send already has the same timeout, a non-blocking one
+        # returns at once, and queuing ordinary requests behind batches would add
+        # latency for clients that never batch. A process-wide cap on model calls
+        # would be a separate feature.
         async def run_one(request_data: dict[str, Any]) -> dict[str, Any]:
-            async with semaphore:
+            limit = settings.A2A_BLOCKING_TIMEOUT_SECONDS
+            try:
+                await asyncio.wait_for(semaphore.acquire(), timeout=limit)
+            except TimeoutError:
+                logger.warning(f"Batch call waited {limit:g}s for a slot")
+                return self._error_response(
+                    request_id=request_data.get("id") if isinstance(request_data, dict) else None,
+                    code=JSONRPCErrorCode.TIMEOUT,
+                    message=(
+                        f"The server is busy: no batch slot was free within {limit:g} seconds. "
+                        "Retry later or send fewer calls at once."
+                    ),
+                )
+            try:
                 return await self.handle_request(request_data)
+            finally:
+                semaphore.release()
 
         # gather returns results in input order, so responses match request order.
         # handle_request never raises, so one failing call cannot cancel the others.
