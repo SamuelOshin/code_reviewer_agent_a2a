@@ -24,12 +24,18 @@ from app.models.github import PullRequest, PullRequestDiff, PullRequestFile
 
 logger = logging.getLogger(__name__)
 
-# Per-request timeout (seconds) and retry budget for PyGithub (P1-18). An executor
+# Socket timeout, retry budget and rate-limit wait cap for PyGithub (P1-18). An executor
 # thread cannot be killed, so when a review times out the call already running keeps
-# going until it returns. These bound that: one request is at most ~GITHUB_REQUEST_TIMEOUT
-# seconds, and failed requests are retried only a few times (PyGithub's default is 10).
+# going until it returns. These bound that call:
+# - GITHUB_REQUEST_TIMEOUT applies per socket operation (connect or read), not per call;
+#   15 s is also PyGithub's default, kept here so the value is explicit.
+# - failed requests are retried at most GITHUB_RETRY_TOTAL times (PyGithub's default is 10).
+# - a rate-limit backoff longer than GITHUB_RATE_LIMIT_MAX_WAIT raises instead of sleeping.
+#   Without the cap, GithubRetry sleeps until X-RateLimit-Reset (up to an hour). Secondary
+#   limits ask for 60 s, so with a 30 s cap they raise at once.
 GITHUB_REQUEST_TIMEOUT = 15
 GITHUB_RETRY_TOTAL = 3
+GITHUB_RATE_LIMIT_MAX_WAIT = 30
 
 
 class GitHubMCPService:
@@ -50,7 +56,9 @@ class GitHubMCPService:
             self._client = Github(
                 auth=Auth.Token(self.token),
                 timeout=GITHUB_REQUEST_TIMEOUT,
-                retry=GithubRetry(total=GITHUB_RETRY_TOTAL),
+                retry=GithubRetry(
+                    total=GITHUB_RETRY_TOTAL, max_rate_limit_wait=GITHUB_RATE_LIMIT_MAX_WAIT
+                ),
             )
             logger.info("GitHub client object created, testing connection...")
             
@@ -159,8 +167,8 @@ class GitHubMCPService:
             return call()
 
         # Known limit (P1-18): a call that has already started cannot be stopped. It runs
-        # until it returns, bounded by GITHUB_REQUEST_TIMEOUT per request and a small
-        # retry budget. Its result is discarded.
+        # until it returns, bounded by the socket timeout, a small retry budget and the
+        # rate-limit wait cap (see GITHUB_RATE_LIMIT_MAX_WAIT). Its result is discarded.
         try:
             return await loop.run_in_executor(None, guarded)
         except asyncio.CancelledError:

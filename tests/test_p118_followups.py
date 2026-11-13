@@ -140,6 +140,10 @@ def test_github_client_has_request_timeout_and_bounded_retry(monkeypatch):
     asyncio.run(go())
     assert seen["timeout"] == github_mcp.GITHUB_REQUEST_TIMEOUT
     assert seen["retry"].total == github_mcp.GITHUB_RETRY_TOTAL
+    # Without a cap, GithubRetry sleeps until the rate-limit reset (up to an hour)
+    assert seen["retry"].max_rate_limit_wait == github_mcp.GITHUB_RATE_LIMIT_MAX_WAIT
+    # urllib3 rebuilds the Retry on each attempt; the cap must survive that
+    assert seen["retry"].new(total=2).max_rate_limit_wait == github_mcp.GITHUB_RATE_LIMIT_MAX_WAIT
 
 
 # --- 3. push URL guard: ranges ipaddress calls global -----------------------------------

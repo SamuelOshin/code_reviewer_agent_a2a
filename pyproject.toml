@@ -10,7 +10,7 @@ dependencies = [
     "pydantic>=2.12",
     "pydantic-ai-slim[anthropic,google,openai]>=2.68",
     "pydantic-settings>=2.11",
-    "pygithub>=2.8",
+    "pygithub>=2.10",  # GithubRetry(max_rate_limit_wait=...)
     "uvicorn>=0.38",
 ]
 

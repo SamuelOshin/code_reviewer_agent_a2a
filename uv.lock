@@ -1430,7 +1430,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.12" },
     { name = "pydantic-ai-slim", extras = ["anthropic", "google", "openai"], specifier = ">=2.68" },
     { name = "pydantic-settings", specifier = ">=2.11" },
-    { name = "pygithub", specifier = ">=2.8" },
+    { name = "pygithub", specifier = ">=2.10" },
     { name = "uvicorn", specifier = ">=0.38" },
 ]
 
