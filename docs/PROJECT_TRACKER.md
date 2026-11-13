@@ -13,9 +13,9 @@ read this file alone and continue the work.
 | | |
 |---|---|
 | **Current phase** | Phase 1: make it honest and working (planning complete) |
-| **Active task** | None. Done: `P1-01` to `P1-04`, `P1-06` to `P1-12`, `P1-14`. Open: `P1-05` (needs one real review on two providers) |
-| **Next action** | Owner adds a random `API_KEY` and a real `GITHUB_WEBHOOK_SECRET` to `.env` (startup now refuses missing or placeholder values), then runs one real review on two providers (closes `P1-05`). Then `P1-13` (README rewrite, including the new auth settings) and `P1-15` (review follow-ups) |
-| **Working branch** | `main`. Start each new task on its own branch from `main`. `P1-06` and `P1-07` merged through the `chore/p1-06-p1-07` PR |
+| **Active task** | None. Done: `P1-01` to `P1-04`, `P1-06` to `P1-15`. Open: `P1-05` (needs one real review on two providers), `P1-16` |
+| **Next action** | Owner sets a random `API_KEY` and a random `GITHUB_WEBHOOK_SECRET` (both at least 32 characters) in `.env`, then runs one real review on two providers (closes `P1-05`). Owner picks a license (the old README claimed MIT; no LICENSE file exists). Then `P1-16` |
+| **Working branch** | `main`. Start each new task on its own branch from `main`. `P1-13` and `P1-15` merged through the `chore/p1-13-p1-15` PR |
 | **Blockers** | None. Owner approved running repo code on 2026-11-12. Use `uv` for everything (`uv sync`, `uv run`). If an install fails on a Windows cache file lock, retry or set a different `UV_CACHE_DIR` |
 | **Working rule** | Parallel agents don't edit this file. The coordinating session records their results |
 
@@ -256,8 +256,9 @@ in CI, and the README is accurate.
 | P1-10 | done | Tune rules: fix `eval`, `exec`, `open` and concatenation patterns, and report each performance match once on its real line | P1-03 | Regression tests cover the `F-08` examples |
 | P1-11 | done | Fix Docker: remove unused `SECRET_KEY` and Node.js, correct env vars, make the healthcheck fail on bad status. The image installs from `uv.lock`, `requirements.txt` is deleted, compose uses `env_file`, and the host port is configurable with `HOST_PORT` | P1-03 | `docker compose up` reaches healthy from a clean clone |
 | P1-12 | done | Done: empty test files filled, ruff and mypy config, ruff findings fixed, and `.github/workflows/ci.yml` (ruff, pytest with coverage, `pip-audit`). CI went green on PR #1 on 2026-11-13. Coverage 82%. mypy is out of CI because of 55 errors, moved to `P2-09` | P1-03 | CI green on a PR. Coverage figure recorded |
-| P1-13 | todo | Rewrite the README so every claim is true. It still describes Telex, MCP, `python-a2a`, Node.js and `pip install -r requirements.txt` (deleted), documents removed RPC methods and settings, it must document `API_KEY` (its `/rpc` examples now return 401 without it), and its Docker section should be `cp .env.example .env` then `docker compose up --build` | All above | Every feature listed maps to code or a test |
-| P1-15 | todo | Review follow-ups from `P1-04` and `P1-05`: dedupe replayed webhook deliveries by `X-GitHub-Delivery`; add a timeout to blocking `message/send`; use `[0-9]` instead of `\d` in `parse_pr_url`; map a Google 404 to `LLMConfigurationError` like the other providers; record the model each role used in the result, not just the default. From the PR #2 review: show the P1-06 status and incomplete reasons in the A2A report and the `analyze_pr` RPC result; reject `::7f00:1` and NAT64 push URL addresses and restrict the port; set a minimum length for the webhook secret; reject or normalize mixed-case CORS origins; return an error for an empty JSON-RPC batch | P1-04, P1-05, P1-06, P1-07 | Tests: a replayed delivery posts once, a non-ASCII-digit PR URL is rejected, a Google 404 raises a configuration error |
+| P1-13 | done | Rewrite the README so every claim is true. It still describes Telex, MCP, `python-a2a`, Node.js and `pip install -r requirements.txt` (deleted), documents removed RPC methods and settings, it must document `API_KEY` (its `/rpc` examples now return 401 without it), and its Docker section should be `cp .env.example .env` then `docker compose up --build` | All above | Every feature listed maps to code or a test |
+| P1-15 | done | Review follow-ups from `P1-04` and `P1-05`: dedupe replayed webhook deliveries by `X-GitHub-Delivery`; add a timeout to blocking `message/send`; use `[0-9]` instead of `\d` in `parse_pr_url`; map a Google 404 to `LLMConfigurationError` like the other providers; record the model each role used in the result, not just the default. From the PR #2 review: show the P1-06 status and incomplete reasons in the A2A report and the `analyze_pr` RPC result; reject `::7f00:1` and NAT64 push URL addresses and restrict the port; set a minimum length for the webhook secret; reject or normalize mixed-case CORS origins; return an error for an empty JSON-RPC batch | P1-04, P1-05, P1-06, P1-07 | Tests: a replayed delivery posts once, a non-ASCII-digit PR URL is rejected, a Google 404 raises a configuration error |
+| P1-16 | todo | Close the webhook replay gap: the `X-GitHub-Delivery` id is not covered by the signature, so a captured body resent with a new id is processed again. Also dedupe on a hash of the signed body, and let a failed review be redelivered manually instead of blocking its id for an hour | P1-15 | Tests: the same signed body with a new delivery id posts once; a delivery whose analysis failed can be redelivered |
 | P1-14 | done | Repo hygiene: add `.gitattributes` to normalise line endings, ignore `.claude/worktrees/` and tool caches, replace deprecated `datetime.utcnow` everywhere in `app/`, and use PyGithub's `Auth.Token` | P1-03 | `git add --renormalize .` leaves a clean diff. No `utcnow` in `app/` |
 
 ### Phase 2: modernize the core
@@ -296,7 +297,7 @@ Keep this honest. It records what has actually been proven.
 
 | Check | State | Notes |
 |---|---|---|
-| Test suite | Passing 2026-11-13 | After the PR #2 review fixes: **516 passed, 0 xfail** (the F-03 xfail now passes). Coverage 86% before the fixes, not re-measured. LLM, GitHub and push calls are mocked; no real provider was called |
+| Test suite | Passing 2026-11-13 | After merging `P1-13` and `P1-15`: **575 passed, 0 xfail**. Coverage **88%**. LLM, GitHub and push calls are mocked; no real provider was called |
 | App startup | Starts in-process | `/`, `/health` (`healthy`), `/ready` and the agent card return 200, with or without `SECRET_KEY`. Real LLM and GitHub calls not tested |
 | Docker | Passing 2026-11-12 | From `.env.example` copied to `.env`, `docker compose up --build` reached `healthy` (Docker 29.8). `/health` returned 200 from this app. The container runs as `appuser` with no Node.js. Tested on host port 8010, because another local service holds 8000 |
 | CI | Passing 2026-11-13 | Green on GitHub for PR #2 at `549f481` (ruff, pytest with coverage, `pip-audit`). GitGuardian also passed |
@@ -314,6 +315,26 @@ Keep this honest. It records what has actually been proven.
 ## 9. Session log
 
 Newest first. Keep entries short.
+
+### 2026-11-13: `P1-13` and `P1-15` built
+
+- **Done:** two Sonnet side sessions built them in parallel from `main`, in separate
+  files. The coordinating session checked authorship, scope and overlap, ran the
+  merged result (575 passed, 88% coverage, ruff clean, `pip-audit` clean), read the
+  webhook, push URL and config changes, then updated the README for `P1-15`.
+  - **P1-13:** README rewritten; each feature maps to a file or test. Planned work is
+    labelled as planned.
+  - **P1-15:** replayed delivery ids are ignored for an hour (in memory, per process);
+    blocking `message/send` times out (`A2A_BLOCKING_TIMEOUT_SECONDS`, error
+    `-32004`); `[0-9]` in PR URLs; any 404 maps to `LLMConfigurationError`; the
+    result records the configured model per role; status and reasons appear in the
+    A2A report and the `analyze_pr` result (`analysis_status`); embedded IPv4 in
+    IPv6 and NAT64 is judged by the IPv4; push ports limited to 443 plus
+    `PUSH_URL_ALLOWED_PORTS`; webhook secret at least 32 characters; CORS origins
+    lowercased; an empty batch is "Invalid Request".
+- **Not done:** no real GitHub, model or Docker run, and the replay cache is not
+  shared across workers. The replay gap on the unsigned delivery id is `P1-16`. No
+  LICENSE file; the owner decides.
 
 ### 2026-11-13: PR #2 reviewed, fixed and merged
 
