@@ -100,3 +100,9 @@ def push_allowed(monkeypatch) -> None:
 def webhook_secret(monkeypatch) -> str:
     monkeypatch.setattr(webhooks.settings, "GITHUB_WEBHOOK_SECRET", WEBHOOK_SECRET)
     return WEBHOOK_SECRET
+
+
+@pytest.fixture(autouse=True)
+def _fresh_delivery_cache(monkeypatch):
+    """Each test starts with an empty replay cache (P1-16): tests reuse the same bodies."""
+    monkeypatch.setattr(webhooks, "delivery_cache", webhooks.DeliveryCache())

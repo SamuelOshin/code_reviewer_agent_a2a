@@ -9,15 +9,18 @@ Includes HMAC signature verification for security.
 import hashlib
 import hmac
 import logging
+import re
 import threading
 import time
 from collections import OrderedDict
+from collections.abc import Callable
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from app.core.config import settings
+from app.core.errors import new_error_id
 from app.services.code_analyzer import CodeAnalyzerService
 from app.services.github_mcp import GitHubMCPService
 from app.utils.formatters import SummaryFormatter
@@ -37,10 +40,29 @@ def _truncate_comment(body: str) -> str:
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
 
-class DeliveryCache:
-    """Remembers recent X-GitHub-Delivery ids so a replayed delivery runs once (P1-15).
+# GitHub sends X-GitHub-Delivery as a UUID (36 characters). Accept a bounded, URL-safe
+# charset a little wider than that and reject the rest, so a signed request cannot make
+# the server hold or log an arbitrary-size header value.
+DELIVERY_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 
-    Bounded by size and age. In-memory only: a restart empties it and several
+
+class DeliveryCache:
+    """Remembers recent webhook deliveries so a replay runs once (P1-15, P1-16).
+
+    Two keys, either of which marks a replay:
+
+    * the X-GitHub-Delivery id, and
+    * the SHA-256 of the raw request body, taken after the signature check passed.
+
+    The body hash is the reliable key. GitHub's HMAC covers the body but not the
+    delivery header, so a captured, validly signed body can be resent with a fresh
+    delivery id. A GitHub "Redeliver" reuses both the same body and the same id,
+    while a genuinely new event always has a different body (new timestamps, head
+    sha, delivery-specific fields). Keying on the body therefore catches the replay
+    without ever blocking a real new event.
+
+    Each key set is bounded by age and by size (oldest evicted first), so memory
+    cannot grow without limit. In-memory only: a restart empties it and several
     replicas each keep their own, so a replay that lands after a restart or on
     another replica is processed again. Sharing it would need an external store.
     """
@@ -48,26 +70,44 @@ class DeliveryCache:
     def __init__(self, ttl_seconds: float = 3600.0, max_entries: int = 2048):
         self._ttl = ttl_seconds
         self._max = max_entries
-        self._seen: OrderedDict[str, float] = OrderedDict()
+        self._seen: OrderedDict[str, float] = OrderedDict()  # delivery ids
+        self._bodies: OrderedDict[str, float] = OrderedDict()  # body SHA-256 digests
         self._lock = threading.Lock()
+
+    def _purge(self, store: "OrderedDict[str, float]", now: float) -> None:
+        while store:
+            oldest, claimed_at = next(iter(store.items()))
+            if now - claimed_at <= self._ttl and len(store) < self._max:
+                break
+            del store[oldest]
+
+    def claim(self, delivery_id: str | None, body_hash: str | None) -> bool:
+        """Return True if this is a replay. Otherwise claim both keys and return False."""
+        now = time.monotonic()
+        with self._lock:
+            self._purge(self._seen, now)
+            self._purge(self._bodies, now)
+            if (delivery_id and delivery_id in self._seen) or (
+                body_hash and body_hash in self._bodies
+            ):
+                return True
+            if delivery_id:
+                self._seen[delivery_id] = now
+            if body_hash:
+                self._bodies[body_hash] = now
+            return False
 
     def seen_before(self, delivery_id: str) -> bool:
         """True if the id was already claimed; otherwise claim it and return False."""
-        now = time.monotonic()
-        with self._lock:
-            while self._seen:
-                oldest_id, claimed_at = next(iter(self._seen.items()))
-                if now - claimed_at <= self._ttl and len(self._seen) < self._max:
-                    break
-                del self._seen[oldest_id]
-            if delivery_id in self._seen:
-                return True
-            self._seen[delivery_id] = now
-            return False
+        return self.claim(delivery_id, None)
 
-    def forget(self, delivery_id: str) -> None:
+    def forget(self, delivery_id: str | None, body_hash: str | None = None) -> None:
+        """Release both keys so a redelivery of a failed or rejected event can run."""
         with self._lock:
-            self._seen.pop(delivery_id, None)
+            if delivery_id:
+                self._seen.pop(delivery_id, None)
+            if body_hash:
+                self._bodies.pop(body_hash, None)
 
 
 delivery_cache = DeliveryCache()
@@ -143,25 +183,36 @@ async def handle_github_webhook(
         try:
             payload = await request.json()
         except Exception as e:
-            logger.error(f"Failed to parse webhook payload: {e}")
+            # Exception text can echo the request body; log the type and an id only
+            logger.error(f"Failed to parse webhook payload: {type(e).__name__} (error_id={new_error_id()})")
             raise HTTPException(status_code=400, detail="Invalid JSON payload") from e
+
+        # Checked after the signature so unauthenticated callers learn nothing. A
+        # missing header is fine: the body hash still catches a replay.
+        if x_github_delivery is not None and not DELIVERY_ID_RE.fullmatch(x_github_delivery):
+            logger.warning("Rejected webhook with a malformed X-GitHub-Delivery header")
+            raise HTTPException(status_code=400, detail="Invalid X-GitHub-Delivery header")
         
         # Handle different event types
         if x_github_event == "pull_request":
-            # Claim the id only after the signature passed, so a forged request
-            # cannot use up a real delivery's id
-            if x_github_delivery and delivery_cache.seen_before(x_github_delivery):
+            # Claim only after the signature passed, so a forged request cannot use
+            # up a real delivery's id or body
+            body_hash = hashlib.sha256(body).hexdigest()
+            if delivery_cache.claim(x_github_delivery, body_hash):
                 logger.info("Ignoring replayed webhook delivery")
                 return JSONResponse({
                     "status": "duplicate",
                     "message": "Delivery already processed"
                 })
+
+            def release() -> None:
+                delivery_cache.forget(x_github_delivery, body_hash)
+
             try:
-                return await handle_pull_request_event(payload, background_tasks)
+                return await handle_pull_request_event(payload, background_tasks, release)
             except HTTPException:
-                # Rejected payload: let a corrected redelivery with this id through
-                if x_github_delivery:
-                    delivery_cache.forget(x_github_delivery)
+                # Rejected payload: let a corrected redelivery through
+                release()
                 raise
         
         elif x_github_event == "ping":
@@ -181,13 +232,14 @@ async def handle_github_webhook(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Unexpected error in webhook handler: {e}")
+        logger.error(f"Unexpected error in webhook handler: {type(e).__name__} (error_id={new_error_id()})")
         raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
 async def handle_pull_request_event(
     payload: dict[str, Any],
-    background_tasks: BackgroundTasks
+    background_tasks: BackgroundTasks,
+    release: Callable[[], None] | None = None,
 ) -> JSONResponse:
     """
     Handle pull_request events
@@ -195,6 +247,7 @@ async def handle_pull_request_event(
     Args:
         payload: Webhook payload
         background_tasks: FastAPI background tasks
+        release: forgets the delivery's replay keys; called if the review fails
         
     Returns:
         JSON response
@@ -227,6 +280,7 @@ async def handle_pull_request_event(
         analyze_pr_background,
         pr_url=pr_url,
         pr_number=pr_number,
+        release=release,
     )
     
     return JSONResponse({
@@ -236,7 +290,9 @@ async def handle_pull_request_event(
     })
 
 
-async def analyze_pr_background(pr_url: str, pr_number: int):
+async def analyze_pr_background(
+    pr_url: str, pr_number: int, release: Callable[[], None] | None = None
+):
     """
     Background task to analyze a PR
 
@@ -246,13 +302,18 @@ async def analyze_pr_background(pr_url: str, pr_number: int):
     Args:
         pr_url: PR URL
         pr_number: PR number
+        release: called when no comment was posted (the analysis raised, or posting
+            failed), so a manual GitHub "Redeliver" is not ignored as a replay (P1-16).
+            Once a comment is posted the delivery stays claimed, even for a failed or
+            incomplete result: an incomplete result is deterministic for a large diff,
+            so releasing it would let a captured body re-run the model and re-comment.
     """
+    failed = False
     try:
         logger.info(f"Starting background analysis for PR #{pr_number}")
 
         analyzer = CodeAnalyzerService()
         analysis_result = await analyzer.analyze_pr(pr_url)
-
         logger.info(
             f"Background analysis completed for PR #{pr_number}: "
             f"risk={analysis_result.risk_level.value}, "
@@ -268,8 +329,19 @@ async def analyze_pr_background(pr_url: str, pr_number: int):
                 owner, repo, number = github.parse_pr_url(pr_url)
                 await github.post_pr_comment(owner, repo, number, comment)
         except Exception as e:
-            # Exception text can echo request details; log the type only
-            logger.error(f"Failed to post comment for PR #{pr_number}: {type(e).__name__}")
+            # Exception text can echo request details; log the type and an id only
+            failed = True
+            logger.error(
+                f"Failed to post comment for PR #{pr_number}: {type(e).__name__} "
+                f"(error_id={new_error_id()})"
+            )
 
     except Exception as e:
-        logger.error(f"Background analysis failed for PR #{pr_number}: {e}")
+        failed = True
+        logger.error(
+            f"Background analysis failed for PR #{pr_number}: {type(e).__name__} "
+            f"(error_id={new_error_id()})"
+        )
+    finally:
+        if failed and release is not None:
+            release()

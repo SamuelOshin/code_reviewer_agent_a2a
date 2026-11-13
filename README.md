@@ -145,11 +145,14 @@ resolve to public addresses only. A blocking call that runs longer than
 
 In the repository's Settings, Webhooks: payload URL `https://<your-host>/webhooks/github`,
 content type `application/json`, the secret equal to `GITHUB_WEBHOOK_SECRET`, event
-"Pull requests". Requests without a valid `X-Hub-Signature-256` are rejected. A delivery
-whose `X-GitHub-Delivery` id was seen in the last hour is ignored (in memory, per process),
-so GitHub redeliveries do not post twice. The id stays claimed even if the review then
-fails, so a manual "Redeliver" within that hour is ignored too; restart the service or
-wait an hour to retry (`P1-16`).
+"Pull requests". Requests without a valid `X-Hub-Signature-256` are rejected, and a
+malformed `X-GitHub-Delivery` header (not 1 to 64 of letters, digits, `.`, `_`, `-`) gets
+400. A delivery is ignored if its delivery id or the SHA-256 of its signed body was seen
+in the last hour (in memory, per process, bounded in size), so GitHub redeliveries and a
+captured body resent with a new id do not post twice. If no comment was posted (the
+analysis raised, or the comment could not be posted), the id and body are forgotten, so a
+manual "Redeliver" runs it again. Once a comment is posted, including a failed or
+incomplete result, the delivery stays claimed until the hour is up.
 
 ## Security notes
 
@@ -159,8 +162,10 @@ wait an hour to retry (`P1-16`).
   addresses embedded in IPv6 (mapped, compatible and NAT64) forms (SSRF guard). A known
   limit: DNS can change between the check and the connection; the allowlist is the main
   control.
-- Webhook replay protection keys on the delivery id, which the signature does not cover,
-  so it stops GitHub redeliveries but not a captured body resent with a new id.
+- Webhook replay protection keys on both the delivery id and the signed body's hash, so
+  a captured body resent with a new id is also ignored. It is in memory and per process:
+  a restart, or a second replica, forgets it, and a replay after the one-hour window
+  is processed again.
 - This repo is public. Put secrets only in `.env`, which is not committed.
 
 ## Development
