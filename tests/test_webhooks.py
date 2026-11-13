@@ -177,3 +177,38 @@ class TestPostsComment:
         analyzer.analyze_pr.side_effect = RuntimeError("llm down")
         post(client, webhook_secret, "pull_request", pr_payload())
         self.comments(github).assert_not_called()
+
+
+class TestCommentGating:
+    @staticmethod
+    def comments(github):
+        return github.get_repo.return_value.get_issue.return_value.create_comment
+
+    def test_empty_secret_reviews_but_does_not_comment(
+        self, client, monkeypatch, analyzer, github, caplog
+    ):
+        monkeypatch.setattr(webhooks.settings, "GITHUB_WEBHOOK_SECRET", "")
+        monkeypatch.setattr(webhooks, "_warned_unsigned", False)
+        for _ in range(2):  # unsigned, forged-looking request
+            res = post(client, "", "pull_request", pr_payload(), signature="sha256=bogus")
+            assert res.status_code == 200
+        assert analyzer.analyze_pr.await_count == 2
+        github.get_repo.assert_not_called()
+        self.comments(github).assert_not_called()
+        assert caplog.text.count("PR comments are not posted") == 1  # warned once
+
+    def test_valid_signature_with_secret_posts_one_comment(
+        self, client, webhook_secret, analyzer, github
+    ):
+        res = post(client, webhook_secret, "pull_request", pr_payload())
+        assert res.status_code == 200
+        self.comments(github).assert_called_once()
+
+    def test_oversized_comment_is_truncated(self, client, webhook_secret, analyzer, github, monkeypatch):
+        monkeypatch.setattr(
+            webhooks.SummaryFormatter, "format_for_github_comment", classmethod(lambda cls, a: "x" * 100000)
+        )
+        post(client, webhook_secret, "pull_request", pr_payload())
+        body = self.comments(github).call_args.args[0]
+        assert len(body) <= webhooks.MAX_COMMENT_CHARS < 65536
+        assert body.endswith(webhooks.TRUNCATION_NOTE)

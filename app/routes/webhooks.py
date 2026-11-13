@@ -21,6 +21,17 @@ from app.utils.formatters import SummaryFormatter
 
 logger = logging.getLogger(__name__)
 
+# GitHub rejects comment bodies over 65,536 characters; stay safely below
+MAX_COMMENT_CHARS = 60000
+TRUNCATION_NOTE = " ...[comment truncated to fit GitHub's size limit]"
+_warned_unsigned = False
+
+
+def _truncate_comment(body: str) -> str:
+    if len(body) <= MAX_COMMENT_CHARS:
+        return body
+    return body[: MAX_COMMENT_CHARS - len(TRUNCATION_NOTE)] + TRUNCATION_NOTE
+
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
 
@@ -160,10 +171,19 @@ async def handle_pull_request_event(
         raise HTTPException(status_code=400, detail="Missing PR URL in payload")
     
     # Queue analysis as background task
+    # Without a webhook secret the sender is unauthenticated, so review but never
+    # write to the PR (a forged event must not make the bot comment).
+    post_comment = bool(settings.GITHUB_WEBHOOK_SECRET)
+    global _warned_unsigned
+    if not post_comment and not _warned_unsigned:
+        _warned_unsigned = True
+        logger.warning("GITHUB_WEBHOOK_SECRET not set: reviews run but PR comments are not posted")
+
     background_tasks.add_task(
         analyze_pr_background,
         pr_url=pr_url,
-        pr_number=pr_number
+        pr_number=pr_number,
+        post_comment=post_comment,
     )
     
     return JSONResponse({
@@ -173,7 +193,7 @@ async def handle_pull_request_event(
     })
 
 
-async def analyze_pr_background(pr_url: str, pr_number: int):
+async def analyze_pr_background(pr_url: str, pr_number: int, post_comment: bool = True):
     """
     Background task to analyze a PR
 
@@ -183,6 +203,7 @@ async def analyze_pr_background(pr_url: str, pr_number: int):
     Args:
         pr_url: PR URL
         pr_number: PR number
+        post_comment: Post the summary back to the PR (False for unauthenticated webhooks)
     """
     try:
         logger.info(f"Starting background analysis for PR #{pr_number}")
@@ -199,7 +220,10 @@ async def analyze_pr_background(pr_url: str, pr_number: int):
             f"best_practices={len(analysis_result.best_practice_findings)}"
         )
 
-        comment = SummaryFormatter.format_for_github_comment(analysis_result)
+        if not post_comment:
+            return
+
+        comment = _truncate_comment(SummaryFormatter.format_for_github_comment(analysis_result))
         try:
             async with GitHubMCPService() as github:
                 owner, repo, number = github.parse_pr_url(pr_url)
