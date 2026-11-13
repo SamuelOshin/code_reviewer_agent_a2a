@@ -144,7 +144,10 @@ concurrently, at most 5 at a time across the whole process (all batches share on
 limit). Each batch call waits at most `A2A_BLOCKING_TIMEOUT_SECONDS` for a slot; if none
 is free it returns `-32004` for that call without running it. A call that gets a slot then
 runs under the same timeout, so a batch finishes within about twice the timeout. Single
-requests are not queued behind this limit. Every error response carries `"id"`, `null` when the request id could not be read (a string or integer is echoed; an integral float such as `1.0` is echoed as `1`). If the push to your webhook answers 413 or 429,
+requests are not queued behind this limit. Every response carries `"id"`, `null` when the request had none or it could not be read: a
+string or integer is echoed, an integral float such as `1.0` as `1`, and a `true` or `false`
+id is an Invalid Request (`-32600`) with `"id": null`. A request without an id still gets a
+response; notifications are not treated specially. If the push to your webhook answers 413 or 429,
 the service makes one more post with a short "could not deliver the result" message
 (state `failed`, same task id) and an error id. For any other error status (5xx, 3xx, 4xx)
 or an unreachable webhook it posts nothing more, because the webhook may already have
@@ -153,8 +156,8 @@ PR could not be read says so, as fixed text plus an error id, never the exceptio
 A model failure, including a rate limit, does not fail the task: it shows in the review
 as a failed analysis step (for example "Security analysis failed (RuntimeError)."). When the
 model was rate-limited, the step says so instead: "the model was rate-limited; wait a few
-minutes and run the review again." If every step failed that way, the review status is
-`failed` and the summary says it too. PR URLs
+minutes and run the review again." If every analysis step failed that way, the review status
+is `failed` and the summary starts by saying the model was rate-limited. PR URLs
 in message text are accepted as `http://` or `https://`, with `github.com` and `/pull/` in
 any case (and without a scheme), and are rewritten to `https://github.com/.../pull/N`; PR number 0 is
 rejected. On timeout, a GitHub request that has already started
