@@ -108,7 +108,8 @@ class GitHubMCPService:
         Raises:
             GitHubMCPError: If URL format is invalid
         """
-        pattern = r"https://github\.com/([^/]+)/([^/]+)/pull/(\d+)"
+        pattern = r"https://github\.com/([^/]+)/([^/]+)/pull/([0-9]+)"
+        # [0-9], not \d: \d also matches non-ASCII digits (P1-15)
         match = re.match(pattern, pr_url)
         
         if not match:
