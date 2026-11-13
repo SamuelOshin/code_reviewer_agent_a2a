@@ -17,12 +17,38 @@ import httpx
 
 from app.core.config import settings
 from app.core.errors import RequestTimeoutError, new_error_id, safe_webhook_target
+from app.core.exceptions import GitHubMCPError
 from app.core.push_url import validate_push_url
+from app.llm.errors import LLMRateLimitError
 from app.models.a2a import A2AArtifact, A2AMessage, A2ATask, ArtifactPart, MessagePart, TaskStatus
 from app.services.code_analyzer import CodeAnalyzerService
 from app.utils.formatters import SummaryFormatter
 
 logger = logging.getLogger(__name__)
+
+
+def _http_status(error: BaseException) -> int | None:
+    """HTTP status carried by an exception, if it has one (httpx, SDK errors)."""
+    for holder in (error, getattr(error, "response", None)):
+        status = getattr(holder, "status_code", None)
+        if isinstance(status, int):
+            return status
+    return None
+
+
+def _error_category(error: BaseException | None) -> str:
+    """Sort an exception into "rate_limit", "github" or "other" (P1-20).
+
+    By type and HTTP status only. The message text is never read: it can carry an
+    error id or any other digits ("404", "429") that say nothing about the cause.
+    """
+    if error is None:
+        return "other"
+    if isinstance(error, LLMRateLimitError) or _http_status(error) == 429:
+        return "rate_limit"
+    if isinstance(error, GitHubMCPError):
+        return "github"
+    return "other"
 
 
 class MessageHandler:
@@ -197,29 +223,31 @@ class MessageHandler:
             )
             # Try to push the error to the client's webhook
             try:
-                await self._push_error(task_id, message_id, message, push_config, str(e), error_id)
+                await self._push_error(task_id, message_id, message, push_config, e, error_id)
             except Exception as push_error:
                 logger.error(f"Failed to push error to webhook: {type(push_error).__name__}")
-    
+
     async def _push_error(
         self,
         task_id: str,
         message_id: str,
         message: dict[str, Any],
         push_config: dict[str, Any],
-        error_message: str,
+        error: BaseException | None,
         error_id: str | None = None
     ):
         """Push error result to the client's push notification webhook
 
-        error_message is used only to pick a user-friendly category. It is never
-        sent to the client; the client gets error_id, and the detail is in the logs.
+        The exception is used only to pick a user-friendly category, by its type and
+        HTTP status (P1-20), never by its text. Its text is never sent to the client or
+        logged; the client gets error_id.
         """
         error_id = error_id or new_error_id()
         logger.info(f"Pushing error for task {task_id} [error_id={error_id}]")
 
         # Determine error type and create user-friendly message
-        if "429" in error_message or "Resource exhausted" in error_message:
+        category = _error_category(error)
+        if category == "rate_limit":
             user_message = (
                 "⚠️ **Analysis Temporarily Unavailable**\n\n"
                 "I've hit my API rate limit while analyzing this PR. This is a temporary issue.\n\n"
@@ -231,7 +259,7 @@ class MessageHandler:
                 "2. 🔄 Ask me to analyze the PR again later\n\n"
                 f"_Error id: {error_id}_"
             )
-        elif "GitHub" in error_message or "404" in error_message:
+        elif category == "github":
             user_message = (
                 "❌ **Unable to Access Pull Request**\n\n"
                 "I couldn't fetch the PR data from GitHub.\n\n"
@@ -644,7 +672,7 @@ class MessageHandler:
             )
             # Try to push the error to the client's webhook
             try:
-                await self._push_error(task_id, message_id, message, push_config, str(e), error_id)
+                await self._push_error(task_id, message_id, message, push_config, e, error_id)
             except Exception as push_error:
                 logger.error(f"Failed to push error to webhook: {type(push_error).__name__}")
     
@@ -661,9 +689,15 @@ class MessageHandler:
         """
         # GitHub PR URL patterns. The number must not run into more word characters
         # ("pull/12abc" is not PR 12), matching parse_pr_url (P1-18)
+        # P1-20: github.com must start a token (start, whitespace, ( < quote, or a scheme
+        # "//"), so "evilgithub.com/..." is not a match. The right side matches
+        # parse_pr_url: 1-10 ASCII digits that are not followed by a word character
+        # (letters, "_", any digit incl. non-ASCII) or "-".
+        left = r'(?:(?<=//)|(?<![^\s(<"\'\[]))'
+        tail = r'github\.com/[^/\s]+/[^/\s]+/pull/[0-9]{1,10}(?![\w\-])'
         url_patterns = [
-            r'https?://github\.com/[^/]+/[^/]+/pull/[0-9]+(?![0-9A-Za-z_])',
-            r'github\.com/[^/]+/[^/]+/pull/[0-9]+(?![0-9A-Za-z_])',
+            r'https?://' + tail,
+            left + tail,
         ]
         
         # First check interpreted text
