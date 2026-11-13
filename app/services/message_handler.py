@@ -37,18 +37,71 @@ def _http_status(error: BaseException) -> int | None:
 
 
 def _error_category(error: BaseException | None) -> str:
-    """Sort an exception into "rate_limit", "github" or "other" (P1-20).
+    """Sort an exception into "push", "rate_limit", "github" or "other" (P1-20, P1-21).
 
     By type and HTTP status only. The message text is never read: it can carry an
     error id or any other digits ("404", "429") that say nothing about the cause.
     """
     if error is None:
         return "other"
+    # P1-21: an httpx error here comes from posting to the client's own webhook (the
+    # model and GitHub clients don't use httpx errors). A 429 from the webhook is the
+    # webhook's rate limit, not ours, so this check must come before the status check.
+    if isinstance(error, httpx.HTTPError):
+        return "push"
     if isinstance(error, LLMRateLimitError) or _http_status(error) == 429:
         return "rate_limit"
     if isinstance(error, GitHubMCPError):
         return "github"
     return "other"
+
+
+def _user_message(category: str, error_id: str) -> str:
+    """Client-facing text for an error category. Fixed text plus the error id only."""
+    if category == "rate_limit":
+        return (
+            "⚠️ **Analysis Temporarily Unavailable**\n\n"
+            "I've hit my API rate limit while analyzing this PR. This is a temporary issue.\n\n"
+            "**What happened:**\n"
+            "- The AI service has throttled requests due to high usage\n"
+            "- This typically resets within a few minutes\n\n"
+            "**What you can do:**\n"
+            "1. ⏰ Wait 5-10 minutes and try again\n"
+            "2. 🔄 Ask me to analyze the PR again later\n\n"
+            f"_Error id: {error_id}_"
+        )
+    if category == "github":
+        return (
+            "❌ **Unable to Access Pull Request**\n\n"
+            "I couldn't fetch the PR data from GitHub.\n\n"
+            "**Possible reasons:**\n"
+            "- The PR URL might be incorrect\n"
+            "- The repository might be private (I need access)\n"
+            "- GitHub API might be temporarily unavailable\n\n"
+            "**What you can do:**\n"
+            "1. ✅ Verify the PR URL is correct\n"
+            "2. 🔑 Ensure I have access to private repositories (if applicable)\n"
+            "3. 🔄 Try again in a few moments\n\n"
+            f"_Error id: {error_id}_"
+        )
+    if category == "push":
+        return (
+            "❌ **Could Not Deliver the Result**\n\n"
+            "I finished (or tried to finish) the review, but your push notification "
+            "webhook did not accept the result.\n\n"
+            "**What you can do:**\n"
+            "1. 🔎 Check that your webhook URL is reachable and accepts the request\n"
+            "2. 🔄 Send the request again\n\n"
+            f"_Error id: {error_id}_"
+        )
+    return (
+        "❌ **Analysis Failed**\n\n"
+        "I encountered an unexpected error while analyzing this PR.\n\n"
+        "**What you can do:**\n"
+        "1. 🔄 Try again - it might be a temporary issue\n"
+        "2. 📝 If the problem persists, please report this error id\n\n"
+        f"_Error id: {error_id}_"
+    )
 
 
 class MessageHandler:
@@ -247,42 +300,15 @@ class MessageHandler:
 
         # Determine error type and create user-friendly message
         category = _error_category(error)
-        if category == "rate_limit":
-            user_message = (
-                "⚠️ **Analysis Temporarily Unavailable**\n\n"
-                "I've hit my API rate limit while analyzing this PR. This is a temporary issue.\n\n"
-                "**What happened:**\n"
-                "- The AI service (Gemini) has throttled requests due to high usage\n"
-                "- This typically resets within a few minutes\n\n"
-                "**What you can do:**\n"
-                "1. ⏰ Wait 5-10 minutes and try again\n"
-                "2. 🔄 Ask me to analyze the PR again later\n\n"
-                f"_Error id: {error_id}_"
-            )
-        elif category == "github":
-            user_message = (
-                "❌ **Unable to Access Pull Request**\n\n"
-                "I couldn't fetch the PR data from GitHub.\n\n"
-                "**Possible reasons:**\n"
-                "- The PR URL might be incorrect\n"
-                "- The repository might be private (I need access)\n"
-                "- GitHub API might be temporarily unavailable\n\n"
-                "**What you can do:**\n"
-                "1. ✅ Verify the PR URL is correct\n"
-                "2. 🔑 Ensure I have access to private repositories (if applicable)\n"
-                "3. 🔄 Try again in a few moments\n\n"
-                f"_Error id: {error_id}_"
-            )
-        else:
-            user_message = (
-                "❌ **Analysis Failed**\n\n"
-                "I encountered an unexpected error while analyzing this PR.\n\n"
-                "**What you can do:**\n"
-                "1. 🔄 Try again - it might be a temporary issue\n"
-                "2. 📝 If the problem persists, please report this error id\n\n"
-                f"_Error id: {error_id}_"
-            )
-        
+        if category == "push" and not isinstance(error, httpx.HTTPStatusError):
+            # P1-21: the webhook did not answer at all (connect error, TLS, reset), so a
+            # second post to the same URL would fail the same way. A webhook that
+            # answered with an error status (413 too large, 429, 5xx) is worth one
+            # more try: the error message is much smaller than the result.
+            logger.warning(f"Not pushing an error to an unreachable webhook [error_id={error_id}]")
+            return
+        user_message = _user_message(category, error_id)
+
         error_msg = A2AMessage(
             messageId=str(uuid.uuid4()),
             role="agent",
@@ -545,14 +571,20 @@ class MessageHandler:
             error_id = new_error_id()
             logger.error(f"Error analyzing PR {pr_url} [error_id={error_id}]: {type(e).__name__}")
 
-            # Create error response (generic text; the detail stays in the logs)
+            # Fixed text per category, chosen by type and HTTP status only (P1-21). The
+            # exception text stays in the logs. An uncategorised error keeps the short text.
+            category = _error_category(e)
+            if category in ("rate_limit", "github"):
+                failure_text = _user_message(category, error_id)
+            else:
+                failure_text = f"Failed to analyze PR. Please try again later. (error id: {error_id})"
             error_msg = A2AMessage(
                 messageId=str(uuid.uuid4()),
                 role="agent",
                 parts=[
                     MessagePart(
                         kind="text",
-                        text=f"Failed to analyze PR. Please try again later. (error id: {error_id})"
+                        text=failure_text
                     )
                 ],
                 kind="message",
@@ -695,23 +727,27 @@ class MessageHandler:
         # are. The right side matches parse_pr_url: 1-10 ASCII digits that are not
         # followed by a word character (letters, "_", any digit incl. non-ASCII) or "-".
         left = r'(?<![\w.\-])'
-        tail = r'github\.com/[^/\s]+/[^/\s]+/pull/[0-9]{1,10}(?![\w\-])'
+        tail = r'github\.com/[^/\s]+/[^/\s]+/pull/(?!0+(?![0-9]))[0-9]{1,10}(?![\w\-])'
         url_patterns = [
             r'https?://' + tail,
             left + tail,
         ]
         
+        # P1-21: always return https://github.com/..., whatever scheme and host case the
+        # text had ("http://", "GitHub.com", "HTTPS://GITHUB.COM"), so the result is
+        # accepted by parse_pr_url. Owner and repo keep their case.
+        def normalize(url: str) -> str:
+            return re.sub(r'^(?:https?://)?github\.com/', 'https://github.com/', url, flags=re.IGNORECASE)
+
         # First check interpreted text
         if interpreted_text:
             for pattern in url_patterns:
                 match = re.search(pattern, interpreted_text, re.IGNORECASE)
                 if match:
-                    url = match.group(0)
-                    if not url.startswith('http'):
-                        url = 'https://' + url
+                    url = normalize(match.group(0))
                     logger.info(f"Found PR URL in interpreted text: {url}")
                     return url
-        
+
         # Then check conversation history (most recent first)
         for msg in reversed(conversation_history):
             if isinstance(msg, dict):
@@ -719,9 +755,7 @@ class MessageHandler:
                 for pattern in url_patterns:
                     match = re.search(pattern, text, re.IGNORECASE)
                     if match:
-                        url = match.group(0)
-                        if not url.startswith('http'):
-                            url = 'https://' + url
+                        url = normalize(match.group(0))
                         logger.info(f"Found PR URL in conversation history: {url}")
                         return url
         
