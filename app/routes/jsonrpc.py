@@ -8,14 +8,17 @@ Methods are registered in app/main.py during startup.
 
 import logging
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
+from app.core.auth import require_api_key
+from app.core.config import settings
 from app.core.errors import new_error_id
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/rpc", tags=["jsonrpc"])
+# Every call needs the API key (P1-07): methods run reviews with GITHUB_TOKEN
+router = APIRouter(prefix="/rpc", tags=["jsonrpc"], dependencies=[Depends(require_api_key)])
 
 
 @router.post("")
@@ -61,6 +64,22 @@ async def jsonrpc_endpoint(request: Request):
         
         # Handle batch requests
         if isinstance(body, list):
+            # Each call can start a full review, so cap the batch (P1-07)
+            if len(body) > settings.JSONRPC_MAX_BATCH_SIZE:
+                logger.warning(f"Rejected JSON-RPC batch of {len(body)} calls")
+                return JSONResponse(
+                    content={
+                        "jsonrpc": "2.0",
+                        "error": {
+                            "code": -32600,
+                            "message": (
+                                f"Batch too large: at most {settings.JSONRPC_MAX_BATCH_SIZE} calls"
+                            ),
+                        },
+                        "id": None
+                    },
+                    status_code=200
+                )
             logger.info(f"Processing JSON-RPC batch request with {len(body)} calls")
             responses = await rpc_handler.handle_batch(body)
             return JSONResponse(content=responses)

@@ -11,14 +11,16 @@ import logging
 import uuid
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
+from app.core.auth import require_api_key
 from app.core.errors import new_error_id
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/a2a", tags=["a2a"])
+# Every /a2a/* route needs the API key (P1-07): tasks run reviews with GITHUB_TOKEN
+router = APIRouter(prefix="/a2a", tags=["a2a"], dependencies=[Depends(require_api_key)])
 
 
 @router.post("/tasks")
