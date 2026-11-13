@@ -140,8 +140,9 @@ once and pushes the result to that URL. The URL must be `https`, its host must b
 `PUSH_URL_ALLOWED_HOSTS`, its port 443 or one in `PUSH_URL_ALLOWED_PORTS`, and it must
 resolve to public addresses only. A blocking call that runs longer than
 `A2A_BLOCKING_TIMEOUT_SECONDS` returns error `-32004`. A JSON-RPC batch runs its calls
-concurrently, at most 5 at a time per batch, so a batch of n blocking calls can take up
-to ceil(n/5) times that timeout. On timeout, a GitHub request that has already started
+concurrently, at most 5 at a time across the whole process (all batches share one
+limit), so a batch of n blocking calls can take up to ceil(n/5) times that timeout, and
+longer while other batches are running. On timeout, a GitHub request that has already started
 cannot be stopped: it finishes in a worker thread (bounded by a 15 s socket timeout, at
 most 3 retries and a 30 s cap on rate-limit waits) and its result is discarded; queued
 GitHub calls are skipped.
@@ -156,7 +157,9 @@ malformed `X-GitHub-Delivery` header (not 1 to 64 of letters, digits, `.`, `_`, 
 in the last hour (in memory, per process, bounded in size), so GitHub redeliveries and a
 captured body resent with a new id do not post twice. If no comment was posted (the
 analysis raised, or the comment could not be posted), the id and body are forgotten, so a
-manual "Redeliver" runs it again. Once a comment is posted, including a failed or
+manual "Redeliver" runs it again, up to 3 runs per body within an hour of its first
+failure (then it is ignored as a duplicate). A payload rejected with 400 is released
+without using up those runs. Once a comment is posted, including a failed or
 incomplete result, the delivery stays claimed for up to an hour: a review that failed
 because the model was unavailable cannot be redelivered in that time. Push a new commit
 or restart the service to retry.
@@ -174,7 +177,16 @@ or restart the service to retry.
   a captured body resent with a new id is also ignored. It is in memory and per process:
   a restart, or a second replica, forgets it, and a replay after the one-hour window
   is processed again. A delivery whose analysis fails before any comment is posted is
-  released, so resending it runs the analysis again (no comment is posted) (`P1-19`).
+  released so a manual "Redeliver" can retry, but each body gets at most 3 runs within
+  an hour of its first failure; after that, resends are ignored. The window is fixed,
+  not sliding, so up to 5 runs can land in about an hour across two windows. The cache
+  keeps up to 8192 entries per store, so past 8192 distinct deliveries or failing bodies
+  within the hour the oldest entry is dropped early: that body can be replayed, or gets a
+  fresh retry budget (a shared store would remove that limit; it is not built).
+- PyGithub (`github`), `urllib3`, the Anthropic SDK (`anthropic`) and `google_genai` log
+  at INFO or higher even when `LOG_LEVEL=DEBUG`, so rate-limit response text, request
+  details and prompts are not printed by them. Other libraries may still log at DEBUG,
+  so don't run production at `LOG_LEVEL=DEBUG`.
 - This repo is public. Put secrets only in `.env`, which is not committed.
 
 ## Development

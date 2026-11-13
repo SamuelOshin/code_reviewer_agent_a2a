@@ -8,6 +8,7 @@ Supports async handlers and proper error handling per JSON-RPC 2.0 spec.
 
 import asyncio
 import logging
+import weakref
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -16,12 +17,28 @@ from app.models.jsonrpc import JSONRPCError, JSONRPCErrorCode, JSONRPCRequest, J
 
 logger = logging.getLogger(__name__)
 
-# How many calls of one batch run at the same time (P1-18). A batch used to run its
-# calls one after another, so 100 blocking message/send calls could hold the request
+# How many batch calls run at the same time, across all batches (P1-18, P1-20). A batch
+# used to run its calls one after another, so 100 blocking message/send calls could hold the request
 # for 100 x A2A_BLOCKING_TIMEOUT_SECONDS. Running them concurrently, a few at a time,
 # bounds that to ceil(n / limit) x the timeout without letting one batch start 100
 # model calls at once. Kept here, not in config, because it is a protection constant.
 BATCH_CONCURRENCY = 5
+
+# P1-20: the limit is shared by every batch in the process. A semaphore per batch let
+# 4 concurrent batches run 20 calls at once. An asyncio semaphore belongs to one event
+# loop, so it is created lazily on the running loop and kept per loop (a weak key, so
+# a closed loop, e.g. one per test, takes its semaphore with it). A server has one loop.
+_batch_semaphores: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore] = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _batch_semaphore() -> asyncio.Semaphore:
+    loop = asyncio.get_running_loop()
+    semaphore = _batch_semaphores.get(loop)
+    if semaphore is None:
+        semaphore = _batch_semaphores[loop] = asyncio.Semaphore(BATCH_CONCURRENCY)
+    return semaphore
 
 
 class JSONRPCHandler:
@@ -209,7 +226,7 @@ class JSONRPCHandler:
         """
         logger.info(f"Handling batch of {len(batch_data)} JSON-RPC requests")
         
-        semaphore = asyncio.Semaphore(BATCH_CONCURRENCY)
+        semaphore = _batch_semaphore()
 
         async def run_one(request_data: dict[str, Any]) -> dict[str, Any]:
             async with semaphore:

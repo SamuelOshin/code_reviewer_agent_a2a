@@ -132,8 +132,10 @@ class GitHubMCPService:
             GitHubMCPError: If URL format is invalid
         """
         # [0-9], not \d: \d also matches non-ASCII digits (P1-15). The number must end
-        # at the end of the string, "/", "?" or "#", so "pull/12abc" is rejected (P1-18)
-        pattern = r"https://github\.com/([^/]+)/([^/]+)/pull/([0-9]+)(?=\Z|[/?#])"
+        # at the end of the string, "/", "?" or "#", so "pull/12abc" is rejected (P1-18).
+        # Capped at 10 digits: a longer number is not a real PR, and int() on thousands
+        # of digits raises ValueError (P1-20)
+        pattern = r"https://github\.com/([^/]+)/([^/]+)/pull/([0-9]{1,10})(?=\Z|[/?#])"
         match = re.match(pattern, pr_url)
         
         if not match:

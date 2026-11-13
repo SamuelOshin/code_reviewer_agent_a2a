@@ -14,6 +14,8 @@ os.environ.setdefault("GITHUB_WEBHOOK_SECRET", "test-webhook-secret-not-a-secret
 os.environ.setdefault("SECRET_KEY", "dummy")
 os.environ.setdefault("GOOGLE_API_KEY", "dummy")
 
+from app.core.exceptions import GitHubMCPError  # noqa: E402
+from app.llm.errors import LLMRateLimitError  # noqa: E402
 from app.routes import a2a_tasks, jsonrpc  # noqa: E402
 from app.services.github_mcp import GitHubMCPService  # noqa: E402
 from app.services.jsonrpc_handler import JSONRPCHandler  # noqa: E402
@@ -148,8 +150,8 @@ async def test_push_error_categories_survive_without_raw_text(app_and_handler):
             return httpx.Response(200, request=httpx.Request("POST", url))
 
     with patch("app.services.message_handler.httpx.AsyncClient", FakeClient):
-        await message_handler._push_error("t", "m", {}, _push_config(), "429 Resource exhausted " + INTERNAL, "abc12345")
-        await message_handler._push_error("t", "m", {}, _push_config(), "GitHub 404 " + INTERNAL, "abc12345")
+        await message_handler._push_error("t", "m", {}, _push_config(), LLMRateLimitError(INTERNAL), "abc12345")
+        await message_handler._push_error("t", "m", {}, _push_config(), GitHubMCPError(INTERNAL), "abc12345")
 
     assert "Temporarily Unavailable" in str(posted[0])
     assert "Unable to Access Pull Request" in str(posted[1])

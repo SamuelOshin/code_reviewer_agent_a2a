@@ -46,6 +46,15 @@ router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 DELIVERY_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 
 
+# Times one signed body may run per TTL window when its analysis keeps failing before a
+# comment is posted (P1-19). The first run plus two retries; the third failure is final.
+MAX_RUNS_PER_BODY = 3
+# Entries kept per key store. Each is a 64-character string and a float, so 8192 is a
+# few MB at most, while an hour of traffic would need more than 8192 distinct pull
+# request events before the oldest body becomes replayable early.
+DEFAULT_MAX_ENTRIES = 8192
+
+
 class DeliveryCache:
     """Remembers recent webhook deliveries so a replay runs once (P1-15, P1-16).
 
@@ -65,19 +74,33 @@ class DeliveryCache:
     cannot grow without limit. In-memory only: a restart empties it and several
     replicas each keep their own, so a replay that lands after a restart or on
     another replica is processed again. Sharing it would need an external store.
+
+    Retry budget (P1-19): a failed run releases its keys so a manual "Redeliver"
+    can retry, but a captured body must not be resendable without limit. Each body
+    may run MAX_RUNS_PER_BODY times per TTL window; the last failure is not
+    released, so further resends get "duplicate". The budget is its own bounded
+    store, keyed by body hash, and is never reset by forget(). The delivery id is
+    released and kept together with the body: a Redeliver reuses both, and a fresh
+    id on the same body is stopped by the body key, so the id adds no extra runs.
+
+    Remaining limit: once max_entries distinct deliveries arrive within the TTL, the
+    oldest entry is evicted and that body is replayable again inside the window.
     """
 
-    def __init__(self, ttl_seconds: float = 3600.0, max_entries: int = 2048):
+    def __init__(self, ttl_seconds: float = 3600.0, max_entries: int = DEFAULT_MAX_ENTRIES):
         self._ttl = ttl_seconds
         self._max = max_entries
         self._seen: OrderedDict[str, float] = OrderedDict()  # delivery ids
         self._bodies: OrderedDict[str, float] = OrderedDict()  # body SHA-256 digests
+        # body digest -> (failed runs so far, time of the first failure)
+        self._budget: OrderedDict[str, tuple[int, float]] = OrderedDict()
         self._lock = threading.Lock()
 
-    def _purge(self, store: "OrderedDict[str, float]", now: float) -> None:
+    def _purge(self, store: "OrderedDict[str, Any]", now: float) -> None:
         while store:
-            oldest, claimed_at = next(iter(store.items()))
-            if now - claimed_at <= self._ttl and len(store) < self._max:
+            oldest, value = next(iter(store.items()))
+            started = value[1] if isinstance(value, tuple) else value
+            if now - started <= self._ttl and len(store) < self._max:
                 break
             del store[oldest]
 
@@ -101,9 +124,27 @@ class DeliveryCache:
         """True if the id was already claimed; otherwise claim it and return False."""
         return self.claim(delivery_id, None)
 
-    def forget(self, delivery_id: str | None, body_hash: str | None = None) -> None:
-        """Release both keys so a redelivery of a failed or rejected event can run."""
+    def forget(
+        self, delivery_id: str | None, body_hash: str | None = None, *, charge: bool = True
+    ) -> None:
+        """Release both keys so a redelivery of a failed or rejected event can run.
+
+        With charge (a failed run), spends one run of the body's budget; when the
+        budget is used up, both keys stay claimed so the body is ignored until its TTL
+        passes. A payload rejected before any work is released without charge.
+        """
+        now = time.monotonic()
         with self._lock:
+            if body_hash and charge:
+                self._purge(self._budget, now)
+                runs, first = self._budget.get(body_hash, (0, now))
+                runs += 1
+                # Updating an existing key keeps its place, so the store stays ordered
+                # by first failure and _purge (front first) drops expired entries.
+                # Moving it to the end let an expired count hide behind a newer one.
+                self._budget[body_hash] = (runs, first)
+                if runs >= MAX_RUNS_PER_BODY:
+                    return
             if delivery_id:
                 self._seen.pop(delivery_id, None)
             if body_hash:
@@ -211,8 +252,9 @@ async def handle_github_webhook(
             try:
                 return await handle_pull_request_event(payload, background_tasks, release)
             except HTTPException:
-                # Rejected payload: let a corrected redelivery through
-                release()
+                # Rejected payload: nothing ran, so release without spending the budget
+                # and every resend gets the same 400 (P1-19)
+                delivery_cache.forget(x_github_delivery, body_hash, charge=False)
                 raise
         
         elif x_github_event == "ping":
