@@ -22,6 +22,7 @@ dev = [
     "ruff>=0.14",
     "mypy>=1.13",
     "pip-audit>=2.9",
+    "httpx2>=2.16",
 ]
 
 [tool.uv]
