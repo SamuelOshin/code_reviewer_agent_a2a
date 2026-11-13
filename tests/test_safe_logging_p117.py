@@ -259,3 +259,26 @@ async def test_message_handler_failures_log_no_raw_text(push_allowed, caplog):
     assert SENTINEL not in caplog.text
     for record in caplog.records:
         assert record.exc_info is None
+
+
+@pytest.mark.asyncio
+async def test_push_timeout_logs_no_raw_text(caplog):
+    # httpx timeout text can carry the push URL; log the type only (Bobby Review)
+    handler = MessageHandler()
+    handler._analyze_and_return = AsyncMock(return_value={})
+    handler._create_lightweight_result = MagicMock(return_value={"status": {"state": "completed"}})
+    client = MagicMock()
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=False)
+    client.post = AsyncMock(side_effect=httpx.ReadTimeout(SENTINEL))
+    with (
+        patch("app.services.message_handler.validate_push_url", AsyncMock()),
+        patch("app.services.message_handler.httpx.AsyncClient", return_value=client),
+        caplog.at_level(logging.DEBUG),
+    ):
+        await handler._process_and_push(
+            PR_URL, "t-1", "m-1", {}, {"url": "https://hooks.example.com/x"}
+        )
+    assert client.post.await_count == 1
+    assert "timed out after 60s: ReadTimeout" in caplog.text  # reached the timeout branch
+    assert SENTINEL not in caplog.text

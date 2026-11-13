@@ -629,7 +629,7 @@ class MessageHandler:
                     response.raise_for_status()
                     logger.info(f"Successfully pushed result to webhook (status: {response.status_code})")
                 except httpx.TimeoutException as timeout_err:
-                    logger.warning(f"Webhook push timed out after 60s: {timeout_err}")
+                    logger.warning(f"Webhook push timed out after 60s: {type(timeout_err).__name__}")
                     logger.info("Result was prepared successfully but webhook didn't respond in time")
                     # Don't raise - analysis was successful, webhook timeout is not critical
                 except httpx.HTTPStatusError as http_err:
