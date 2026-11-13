@@ -72,3 +72,8 @@ htmlcov/
 # Docker
 docker-compose
 .gitignore
+
+# Agent worktrees
+.claude/worktrees/
+.mypy_cache/
+.ruff_cache/

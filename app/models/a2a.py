@@ -3,112 +3,78 @@
 """A2A Protocol Models
 
 These models define the structure for Agent-to-Agent (A2A) protocol communication.
-Based on python-a2a library patterns from simple_server.py example.
+
 """
 
-from typing import List, Optional, Dict, Any, TYPE_CHECKING
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any
+
 from pydantic import BaseModel, Field
-from datetime import datetime
-from enum import Enum
 
 if TYPE_CHECKING:
-    from typing import ForwardRef
-
-
-class TaskState(str, Enum):
-    """Task execution states"""
-    PENDING = "pending"
-    IN_PROGRESS = "in_progress"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
+    pass
 
 
 class MessagePart(BaseModel):
-    """Part of a message - matches Telex A2A structure"""
+    """Part of a message"""
     kind: str  # "text", "image", "file", "data"
-    text: Optional[str] = None
-    file_url: Optional[str] = None
-    mime_type: Optional[str] = None
-    data: Optional[List[Dict[str, Any]]] = None  # For conversation history (kind="data")
+    text: str | None = None
+    file_url: str | None = None
+    mime_type: str | None = None
+    data: list[dict[str, Any]] | None = None  # For conversation history (kind="data")
 
 
 class A2AMessage(BaseModel):
-    """A2A Protocol Message - matches Telex structure"""
+    """A2A Protocol Message"""
     messageId: str
     role: str  # "user" or "agent"
-    parts: List[MessagePart]
+    parts: list[MessagePart]
     kind: str = "message"
     taskId: str
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class TaskStatus(BaseModel):
-    """Task status information - matches Telex A2A structure"""
+    """Task status information"""
     state: str  # "pending", "in_progress", "completed", "failed", "input-required"
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
-    message: Optional[A2AMessage] = None  # Nested message in status
-    progress: Optional[float] = Field(None, ge=0.0, le=1.0)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    message: A2AMessage | None = None  # Nested message in status
+    progress: float | None = Field(None, ge=0.0, le=1.0)
 
 
 class ArtifactPart(BaseModel):
-    """Part of an artifact - matches Telex A2A structure"""
+    """Part of an artifact"""
     kind: str  # "text", "json", "markdown", "code", "image", "file"
-    text: Optional[str] = None
-    data: Optional[Dict[str, Any]] = None
-    file_url: Optional[str] = None  # For file artifacts
-    mime_type: Optional[str] = None
+    text: str | None = None
+    data: dict[str, Any] | None = None
+    file_url: str | None = None  # For file artifacts
+    mime_type: str | None = None
 
 
 class A2AArtifact(BaseModel):
-    """A2A Protocol Artifact - matches Telex structure"""
+    """A2A Protocol Artifact"""
     artifactId: str
     name: str  # Artifact name/title
-    parts: List[ArtifactPart]
-    metadata: Optional[Dict[str, Any]] = None
-
-
-class A2ATaskRequest(BaseModel):
-    """A2A Task Request - from Telex webhook"""
-    task_id: str
-    skill: str
-    parameters: Dict[str, Any]
-    context: Optional[List[A2AMessage]] = []
-    message: Optional[Dict[str, Any]] = None  # Used by python-a2a
-    callback_url: Optional[str] = None  # Telex callback URL for async results
-
-
-class TaskAcceptedResponse(BaseModel):
-    """Quick acknowledgment response for webhook requests"""
-    task_id: str
-    status: str = "accepted"
-    message: str = "Task accepted and processing"
+    parts: list[ArtifactPart]
+    metadata: dict[str, Any] | None = None
 
 
 class A2ATask(BaseModel):
-    """A2A Task - matches Telex structure"""
+    """A2A Task"""
     id: str  # task ID
     contextId: str  # context/session ID
     status: TaskStatus
-    artifacts: List[A2AArtifact] = []
-    history: List[A2AMessage] = []
+    artifacts: list[A2AArtifact] = []
+    history: list[A2AMessage] = []
     kind: str = "task"
-
-
-class A2ATaskResponse(BaseModel):
-    """A2A Task Response wrapped in JSON-RPC 2.0 - matches Telex structure"""
-    jsonrpc: str = "2.0"
-    id: str  # Request ID
-    result: A2ATask
-    error: Optional[Dict[str, Any]] = None
 
 
 class AgentSkill(BaseModel):
     """Agent skill definition for agent card"""
     name: str = Field(..., description="Skill name")
     description: str = Field(..., description="What this skill does")
-    parameters: Optional[Dict[str, Any]] = Field(None, description="Skill parameters schema")
-    examples: Optional[List[str]] = None
+    parameters: dict[str, Any] | None = Field(None, description="Skill parameters schema")
+    examples: list[str] | None = None
 
 
 class AgentCard(BaseModel):
@@ -117,9 +83,9 @@ class AgentCard(BaseModel):
     name: str
     description: str
     version: str
-    capabilities: List[str]
-    skills: List[AgentSkill]
-    endpoints: Dict[str, str]
-    authentication: Optional[Dict[str, Any]] = None
-    modalities: List[str] = ["text"]
+    capabilities: list[str]
+    skills: list[AgentSkill]
+    endpoints: dict[str, str]
+    authentication: dict[str, Any] | None = None
+    modalities: list[str] = ["text"]
     streaming: bool = False

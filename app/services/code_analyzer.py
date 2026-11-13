@@ -11,28 +11,28 @@ Main service that orchestrates the complete code review process:
 6. Build comprehensive CodeAnalysisResult
 """
 
-from typing import Optional, List, Dict, Any
-from datetime import datetime, timezone
 import logging
 import time
+from datetime import UTC, datetime
+from typing import Any
 
 from app.core.config import settings
 from app.core.exceptions import AnalysisError, GitHubMCPError, LLMError
-from app.models.github import PullRequest, PullRequestFile
 from app.models.analysis import (
-    CodeAnalysisResult,
-    SecurityIssue,
-    PerformanceIssue,
+    ApprovalRecommendation,
     BestPracticeIssue,
-    Severity,
+    CodeAnalysisResult,
+    PerformanceIssue,
     RiskLevel,
-    ApprovalRecommendation
+    SecurityIssue,
+    Severity,
 )
+from app.models.github import PullRequest, PullRequestFile
 from app.services.github_mcp import GitHubMCPService
 from app.services.llm_service import LLMService
 from app.utils.diff_parser import DiffParser, FileDiff
-from app.utils.security_rules import SecurityChecker
 from app.utils.performance_rules import PerformanceChecker
+from app.utils.security_rules import SecurityChecker
 
 logger = logging.getLogger(__name__)
 
@@ -128,16 +128,6 @@ class CodeAnalyzerService:
                 all_performance_issues
             )
             
-            # Step 11: Build metrics
-            metrics = {
-                'files_changed': pr_data.changed_files,
-                'lines_added': pr_data.additions,
-                'lines_deleted': pr_data.deletions,
-                'total_issues': len(all_security_issues) + len(all_performance_issues) + len(all_best_practice_issues),
-                'critical_security_issues': len([s for s in all_security_issues if s.severity == Severity.CRITICAL]),
-                'high_security_issues': len([s for s in all_security_issues if s.severity == Severity.HIGH]),
-                'high_performance_issues': len([p for p in all_performance_issues if p.impact == "HIGH"]),
-            }
             
             # Step 12: Build final result
             analysis_duration = time.time() - start_time
@@ -161,7 +151,7 @@ class CodeAnalyzerService:
                 lines_deleted=pr_data.deletions,
                 approval_recommendation=approval_recommendation,
                 key_concerns=recommendations,  # Map recommendations to key_concerns
-                analyzed_at=datetime.now(timezone.utc),
+                analyzed_at=datetime.now(UTC),
                 analysis_duration_seconds=analysis_duration,
                 llm_provider=settings.LLM_PROVIDER,
                 llm_model=settings.LLM_MODEL
@@ -178,9 +168,9 @@ class CodeAnalyzerService:
             raise
         except Exception as e:
             logger.error(f"Unexpected error during analysis: {e}")
-            raise AnalysisError(f"Analysis failed: {str(e)}")
+            raise AnalysisError(f"Analysis failed: {str(e)}") from e
     
-    async def _fetch_pr_data(self, pr_url: str) -> tuple[PullRequest, str, List[PullRequestFile]]:
+    async def _fetch_pr_data(self, pr_url: str) -> tuple[PullRequest, str, list[PullRequestFile]]:
         """
         Fetch PR data from GitHub via API
         
@@ -201,14 +191,14 @@ class CodeAnalyzerService:
                 # Fetch PR and diff data
                 logger.info("Fetching PR and diff data...")
                 pr, pr_diff = await github_service.get_pr_with_diff(owner, repo, pr_number)
-                logger.info(f"Successfully fetched PR and diff data")
+                logger.info("Successfully fetched PR and diff data")
                 
                 return pr, pr_diff.raw_diff, pr_diff.files
         except Exception as e:
             logger.error(f"Error in _fetch_pr_data: {type(e).__name__}: {e}", exc_info=True)
             raise
     
-    def _prepare_file_changes(self, parsed_diffs: List[FileDiff]) -> List[Dict[str, Any]]:
+    def _prepare_file_changes(self, parsed_diffs: list[FileDiff]) -> list[dict[str, Any]]:
         """
         Convert parsed diffs to format expected by rule checkers
         
@@ -234,9 +224,9 @@ class CodeAnalyzerService:
     
     def _merge_security_issues(
         self,
-        rule_issues: List[SecurityIssue],
-        llm_issues: List[SecurityIssue]
-    ) -> List[SecurityIssue]:
+        rule_issues: list[SecurityIssue],
+        llm_issues: list[SecurityIssue]
+    ) -> list[SecurityIssue]:
         """
         Merge and deduplicate security issues from rule-based and LLM analysis
         
@@ -282,9 +272,9 @@ class CodeAnalyzerService:
     
     def _merge_performance_issues(
         self,
-        rule_issues: List[PerformanceIssue],
-        llm_issues: List[PerformanceIssue]
-    ) -> List[PerformanceIssue]:
+        rule_issues: list[PerformanceIssue],
+        llm_issues: list[PerformanceIssue]
+    ) -> list[PerformanceIssue]:
         """
         Merge and deduplicate performance issues
         
@@ -310,9 +300,15 @@ class CodeAnalyzerService:
             if not is_duplicate:
                 merged.append(llm_issue)
         
-        # Sort by impact (HIGH first)
-        impact_order = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
-        merged.sort(key=lambda x: impact_order.get(x.impact, 999))
+        # Sort by severity (CRITICAL first). `impact` is free text, so it is not used for ordering.
+        severity_order = {
+            Severity.CRITICAL: 0,
+            Severity.HIGH: 1,
+            Severity.MEDIUM: 2,
+            Severity.LOW: 3,
+            Severity.INFO: 4
+        }
+        merged.sort(key=lambda x: severity_order.get(x.severity, 999))
         
         return merged
     
@@ -352,8 +348,8 @@ class CodeAnalyzerService:
     
     def _calculate_risk_level(
         self,
-        security_issues: List[SecurityIssue],
-        performance_issues: List[PerformanceIssue]
+        security_issues: list[SecurityIssue],
+        performance_issues: list[PerformanceIssue]
     ) -> RiskLevel:
         """
         Calculate overall risk level based on findings
@@ -367,7 +363,7 @@ class CodeAnalyzerService:
         """
         critical_security = len([s for s in security_issues if s.severity == Severity.CRITICAL])
         high_security = len([s for s in security_issues if s.severity == Severity.HIGH])
-        high_performance = len([p for p in performance_issues if p.impact == "HIGH"])
+        high_performance = len([p for p in performance_issues if p.severity in (Severity.CRITICAL, Severity.HIGH)])
         
         # Risk calculation logic
         if critical_security > 0:
@@ -386,10 +382,10 @@ class CodeAnalyzerService:
     
     def _generate_recommendations(
         self,
-        security_issues: List[SecurityIssue],
-        performance_issues: List[PerformanceIssue],
-        best_practice_issues: List[BestPracticeIssue]
-    ) -> List[str]:
+        security_issues: list[SecurityIssue],
+        performance_issues: list[PerformanceIssue],
+        best_practice_issues: list[BestPracticeIssue]
+    ) -> list[str]:
         """
         Generate prioritized list of recommendations
         
@@ -413,10 +409,10 @@ class CodeAnalyzerService:
         if high_security:
             recommendations.append(f"⚠️ HIGH: Fix {len(high_security)} high-severity security issue(s) before merging")
         
-        # High impact performance
-        high_performance = [p for p in performance_issues if p.impact == "HIGH"]
+        # High severity performance
+        high_performance = [p for p in performance_issues if p.severity in (Severity.CRITICAL, Severity.HIGH)]
         if high_performance:
-            recommendations.append(f"⚡ PERFORMANCE: Optimize {len(high_performance)} high-impact performance issue(s)")
+            recommendations.append(f"⚡ PERFORMANCE: Optimize {len(high_performance)} high-severity performance issue(s)")
         
         # Best practices
         if best_practice_issues:
@@ -438,8 +434,8 @@ class CodeAnalyzerService:
     def _determine_approval(
         self,
         risk_level: RiskLevel,
-        security_issues: List[SecurityIssue],
-        performance_issues: List[PerformanceIssue]
+        security_issues: list[SecurityIssue],
+        performance_issues: list[PerformanceIssue]
     ) -> ApprovalRecommendation:
         """
         Determine approval recommendation based on risk and issues

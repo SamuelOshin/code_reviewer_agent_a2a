@@ -1,146 +1,50 @@
 # app/services/llm_service.py
 
-"""LLM Service with Multi-Provider Support
+"""Review-specific LLM calls: prompts in, typed findings and a summary out.
 
-Supports Google Gemini (default), OpenAI GPT, and Anthropic Claude.
-Handles code analysis, security scanning, performance review, and summary generation.
+Every model call goes through the provider-agnostic layer in `app.llm`, so this file
+never touches a provider SDK. Provider and model per role are configuration.
 """
 
-from typing import List, Dict, Any, Optional
-from abc import ABC, abstractmethod
-from pathlib import Path
 import json
 import logging
-import asyncio
+from pathlib import Path
+from typing import Any
 
 from app.core.config import settings
 from app.core.exceptions import LLMError
-from app.models.analysis import SecurityIssue, PerformanceIssue, BestPracticeIssue
+from app.llm import LLMClient, LLMResult, Role, build_client
+from app.models.analysis import BestPracticeIssue, PerformanceIssue, SecurityIssue, Severity
 
 logger = logging.getLogger(__name__)
 
 
-class BaseLLM(ABC):
-    """Base LLM interface"""
-    
-    @abstractmethod
-    async def generate(self, prompt: str, system_prompt: Optional[str] = None) -> str:
-        """Generate response from LLM"""
-        pass
-
-
-class GoogleLLM(BaseLLM):
-    """Google Gemini implementation (DEFAULT)"""
-    
-    def __init__(self):
-        try:
-            import google.generativeai as genai
-            genai.configure(api_key=settings.GOOGLE_API_KEY)
-            self.model = genai.GenerativeModel(settings.LLM_MODEL)
-            logger.info(f"Initialized Google Gemini: {settings.LLM_MODEL}")
-        except Exception as e:
-            raise LLMError(f"Failed to initialize Google Gemini: {str(e)}")
-    
-    async def generate(self, prompt: str, system_prompt: Optional[str] = None) -> str:
-        """Generate response from Gemini"""
-        try:
-            # Combine system prompt and user prompt for Gemini
-            full_prompt = prompt
-            if system_prompt:
-                full_prompt = f"{system_prompt}\n\n{prompt}"
-            
-            response = await self.model.generate_content_async(
-                full_prompt,
-                generation_config={
-                    "temperature": settings.LLM_TEMPERATURE,
-                    "max_output_tokens": settings.LLM_MAX_TOKENS,
-                }
-            )
-            return response.text
-        except Exception as e:
-            logger.error(f"Gemini generation error: {e}")
-            raise LLMError(f"Gemini generation failed: {str(e)}")
-
-
-class OpenAILLM(BaseLLM):
-    """OpenAI GPT implementation"""
-    
-    def __init__(self):
-        try:
-            import openai
-            self.client = openai.AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
-            self.model = settings.LLM_MODEL
-            logger.info(f"Initialized OpenAI: {settings.LLM_MODEL}")
-        except Exception as e:
-            raise LLMError(f"Failed to initialize OpenAI: {str(e)}")
-    
-    async def generate(self, prompt: str, system_prompt: Optional[str] = None) -> str:
-        """Generate response from OpenAI"""
-        try:
-            messages = []
-            if system_prompt:
-                messages.append({"role": "system", "content": system_prompt})
-            messages.append({"role": "user", "content": prompt})
-            
-            response = await self.client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                temperature=settings.LLM_TEMPERATURE,
-                max_tokens=settings.LLM_MAX_TOKENS
-            )
-            return response.choices[0].message.content
-        except Exception as e:
-            logger.error(f"OpenAI generation error: {e}")
-            raise LLMError(f"OpenAI generation failed: {str(e)}")
-
-
-class AnthropicLLM(BaseLLM):
-    """Anthropic Claude implementation"""
-    
-    def __init__(self):
-        try:
-            import anthropic
-            self.client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
-            self.model = settings.LLM_MODEL
-            logger.info(f"Initialized Anthropic: {settings.LLM_MODEL}")
-        except Exception as e:
-            raise LLMError(f"Failed to initialize Anthropic: {str(e)}")
-    
-    async def generate(self, prompt: str, system_prompt: Optional[str] = None) -> str:
-        """Generate response from Claude"""
-        try:
-            response = await self.client.messages.create(
-                model=self.model,
-                max_tokens=settings.LLM_MAX_TOKENS,
-                temperature=settings.LLM_TEMPERATURE,
-                system=system_prompt or "",
-                messages=[{"role": "user", "content": prompt}]
-            )
-            return response.content[0].text
-        except Exception as e:
-            logger.error(f"Anthropic generation error: {e}")
-            raise LLMError(f"Anthropic generation failed: {str(e)}")
-
 class LLMService:
-    """LLM Service Wrapper with Multi-Provider Support"""
-    
-    def __init__(self):
-        provider = settings.LLM_PROVIDER.lower()
-        
-        if provider == "google":
-            self.llm = GoogleLLM()
-        elif provider == "openai":
-            self.llm = OpenAILLM()
-        elif provider == "anthropic":
-            self.llm = AnthropicLLM()
-        else:
-            raise ValueError(f"Unsupported LLM provider: {provider}")
-        
-        # Load prompts
+    """Security, performance, best-practice and summary calls for a PR review"""
+
+    def __init__(self, client: LLMClient | None = None):
+        # Builds every configured model now, so bad config fails at startup
+        self.client = client if client is not None else build_client(settings)
         self.prompts = self._load_prompts()
-        logger.info(f"LLMService initialized with provider: {provider}")
-    
-    def _load_prompts(self) -> Dict[str, str]:
+        logger.info(
+            "LLMService initialized with models: "
+            + ", ".join(f"{role}={self.client.model_name(role)}" for role in Role)
+        )
+
+    async def _generate(self, role: Role, prompt: str, system_prompt: str | None) -> str:
+        """One text call through the model layer, with usage logged (never the output)."""
+        result: LLMResult[str] = await self.client.generate(
+            role, prompt, instructions=system_prompt or None
+        )
+        usage = result.usage
+        logger.info(
+            f"LLM {role} call on {result.model}: {usage.input_tokens} in, "
+            f"{usage.output_tokens} out, {usage.latency_ms:.0f} ms, cost "
+            f"{'unknown' if usage.cost_usd is None else f'${usage.cost_usd:.6f}'}"
+        )
+        return result.output
+
+    def _load_prompts(self) -> dict[str, str]:
         """Load prompt templates from config/prompts/"""
         prompts = {}
         prompt_dir = Path("config/prompts")
@@ -161,7 +65,7 @@ class LLMService:
         
         return prompts
     
-    def _extract_json_from_response(self, response: str) -> List[Dict[str, Any]]:
+    def _extract_json_from_response(self, response: str) -> list[dict[str, Any]]:
         """Extract JSON array from LLM response (handles markdown code blocks)"""
         try:
             # Try direct JSON parse first
@@ -190,8 +94,8 @@ class LLMService:
     async def analyze_security(
         self, 
         diff_content: str, 
-        files: List[Dict[str, Any]]
-    ) -> List[SecurityIssue]:
+        files: list[dict[str, Any]]
+    ) -> list[SecurityIssue]:
         """LLM-powered security analysis"""
         try:
             # Format file context - handle both dict and PullRequestFile objects
@@ -212,9 +116,8 @@ Code Diff:
 
 Return your findings as a JSON array following the specified format."""
             
-            response = await self.llm.generate(
-                prompt=prompt,
-                system_prompt=self.prompts.get('security_analysis', '')
+            response = await self._generate(
+                Role.SECURITY, prompt, self.prompts.get('security_analysis', '')
             )
             
             # Parse JSON response
@@ -231,15 +134,19 @@ Return your findings as a JSON array following the specified format."""
             logger.info(f"Found {len(security_issues)} security issues")
             return security_issues
             
+        except LLMError as e:
+            # Keep the shared error type (rate limit, auth, timeout...) for the caller
+            logger.error(f"Security analysis error: {e}")
+            raise
         except Exception as e:
             logger.error(f"Security analysis error: {e}")
-            raise LLMError(f"Security analysis failed: {str(e)}")
+            raise LLMError(f"Security analysis failed: {str(e)}") from e
     
     async def analyze_performance(
         self, 
         diff_content: str, 
-        files: List[Dict[str, Any]]
-    ) -> List[PerformanceIssue]:
+        files: list[dict[str, Any]]
+    ) -> list[PerformanceIssue]:
         """LLM-powered performance analysis"""
         try:
             # Format file context - handle both dict and PullRequestFile objects
@@ -260,9 +167,8 @@ Code Diff:
 
 Return your findings as a JSON array following the specified format."""
             
-            response = await self.llm.generate(
-                prompt=prompt,
-                system_prompt=self.prompts.get('performance_analysis', '')
+            response = await self._generate(
+                Role.PERFORMANCE, prompt, self.prompts.get('performance_analysis', '')
             )
             
             findings_data = self._extract_json_from_response(response)
@@ -290,15 +196,19 @@ Return your findings as a JSON array following the specified format."""
             logger.info(f"Found {len(performance_issues)} performance issues")
             return performance_issues
             
+        except LLMError as e:
+            # Keep the shared error type (rate limit, auth, timeout...) for the caller
+            logger.error(f"Performance analysis error: {e}")
+            raise
         except Exception as e:
             logger.error(f"Performance analysis error: {e}")
-            raise LLMError(f"Performance analysis failed: {str(e)}")
+            raise LLMError(f"Performance analysis failed: {str(e)}") from e
     
     async def analyze_best_practices(
         self, 
         diff_content: str, 
-        files: List[Dict[str, Any]]
-    ) -> List[BestPracticeIssue]:
+        files: list[dict[str, Any]]
+    ) -> list[BestPracticeIssue]:
         """LLM-powered best practices analysis"""
         try:
             # Format file context - handle both dict and PullRequestFile objects
@@ -329,9 +239,10 @@ Return your findings as a JSON array with:
 - code_snippet (optional)
 - recommendation"""
             
-            response = await self.llm.generate(
-                prompt=prompt,
-                system_prompt="You are a code review expert focused on software engineering best practices."
+            response = await self._generate(
+                Role.BEST_PRACTICES,
+                prompt,
+                "You are a code review expert focused on software engineering best practices.",
             )
             
             findings_data = self._extract_json_from_response(response)
@@ -346,18 +257,22 @@ Return your findings as a JSON array with:
             logger.info(f"Found {len(best_practice_issues)} best practice issues")
             return best_practice_issues
             
+        except LLMError as e:
+            # Keep the shared error type (rate limit, auth, timeout...) for the caller
+            logger.error(f"Best practices analysis error: {e}")
+            raise
         except Exception as e:
             logger.error(f"Best practices analysis error: {e}")
-            raise LLMError(f"Best practices analysis failed: {str(e)}")
+            raise LLMError(f"Best practices analysis failed: {str(e)}") from e
     
     async def generate_summary(
         self,
         pr_title: str,
         pr_author: str,
         pr_description: str,
-        security_issues: List[SecurityIssue],
-        performance_issues: List[PerformanceIssue],
-        best_practice_issues: List[BestPracticeIssue],
+        security_issues: list[SecurityIssue],
+        performance_issues: list[PerformanceIssue],
+        best_practice_issues: list[BestPracticeIssue],
         total_additions: int,
         total_deletions: int,
         changed_files: int
@@ -365,9 +280,9 @@ Return your findings as a JSON array with:
         """Generate executive summary for PR review"""
         try:
             # Format findings for context
-            critical_security = [s for s in security_issues if s.severity == "CRITICAL"]
-            high_security = [s for s in security_issues if s.severity == "HIGH"]
-            high_perf = [p for p in performance_issues if p.impact == "HIGH"]
+            critical_security = [s for s in security_issues if s.severity == Severity.CRITICAL]
+            high_security = [s for s in security_issues if s.severity == Severity.HIGH]
+            high_perf = [p for p in performance_issues if p.severity in (Severity.CRITICAL, Severity.HIGH)]
             
             prompt = f"""Generate an executive summary for this Pull Request review.
 
@@ -383,7 +298,7 @@ Code Changes:
 
 Findings Summary:
 - Security Issues: {len(security_issues)} total ({len(critical_security)} critical, {len(high_security)} high)
-- Performance Issues: {len(performance_issues)} total ({len(high_perf)} high impact)
+- Performance Issues: {len(performance_issues)} total ({len(high_perf)} high severity)
 - Best Practice Violations: {len(best_practice_issues)}
 
 Top Security Concerns:
@@ -394,16 +309,19 @@ Top Performance Concerns:
 
 Generate the executive summary following the specified format."""
             
-            response = await self.llm.generate(
-                prompt=prompt,
-                system_prompt=self.prompts.get('summary_generation', '')
+            response = await self._generate(
+                Role.SUMMARY, prompt, self.prompts.get('summary_generation', '')
             )
             
             logger.info("Generated executive summary")
             return response.strip()
             
+        except LLMError as e:
+            # Keep the shared error type (rate limit, auth, timeout...) for the caller
+            logger.error(f"Summary generation error: {e}")
+            raise
         except Exception as e:
             logger.error(f"Summary generation error: {e}")
-            raise LLMError(f"Summary generation failed: {str(e)}")
+            raise LLMError(f"Summary generation failed: {str(e)}") from e
 
 

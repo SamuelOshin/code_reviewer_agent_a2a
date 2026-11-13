@@ -1,27 +1,29 @@
 # app/models/jsonrpc.py
 
-from typing import Any, Optional, Union, Literal
-from pydantic import BaseModel, Field
+from typing import Any, Literal
+
+from pydantic import BaseModel
+
 
 class JSONRPCRequest(BaseModel):
     """JSON-RPC 2.0 Request"""
     jsonrpc: Literal["2.0"] = "2.0"
     method: str
-    params: Optional[dict[str, Any]] = None
-    id: Optional[Union[str, int]] = None
+    params: dict[str, Any] | None = None
+    id: str | int | None = None
 
 class JSONRPCError(BaseModel):
     """JSON-RPC 2.0 Error Object"""
     code: int
     message: str
-    data: Optional[Any] = None
+    data: Any | None = None
 
 class JSONRPCResponse(BaseModel):
     """JSON-RPC 2.0 Response"""
     jsonrpc: Literal["2.0"] = "2.0"
-    result: Optional[Any] = None
-    error: Optional[JSONRPCError] = None
-    id: Optional[Union[str, int]] = None
+    result: Any | None = None
+    error: JSONRPCError | None = None
+    id: str | int | None = None
 
 # Standard JSON-RPC Error Codes
 class JSONRPCErrorCode:
@@ -39,4 +41,3 @@ class JSONRPCErrorCode:
     GITHUB_ERROR = -32001
     ANALYSIS_ERROR = -32002
     LLM_ERROR = -32003
-    TELEX_ERROR = -32004

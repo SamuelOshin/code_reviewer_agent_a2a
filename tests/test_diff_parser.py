@@ -7,8 +7,8 @@ and tracking of additions/deletions.
 """
 
 import pytest
-from app.utils.diff_parser import DiffParser, FileDiff, DiffHunk
 
+from app.utils.diff_parser import DiffParser
 
 # Sample unified diffs for testing
 SAMPLE_DIFF_SIMPLE = r"""diff --git a/app/main.py b/app/main.py

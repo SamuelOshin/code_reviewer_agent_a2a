@@ -6,18 +6,31 @@ Handles incoming GitHub webhook events, specifically pull_request events.
 Includes HMAC signature verification for security.
 """
 
-from typing import Dict, Any
 import hashlib
 import hmac
 import logging
-from fastapi import APIRouter, Request, HTTPException, BackgroundTasks, Header
+from typing import Any
+
+from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from app.core.config import settings
 from app.services.code_analyzer import CodeAnalyzerService
-from app.services.telex_client import TelexClient
+from app.services.github_mcp import GitHubMCPService
+from app.utils.formatters import SummaryFormatter
 
 logger = logging.getLogger(__name__)
+
+# GitHub rejects comment bodies over 65,536 characters; stay safely below
+MAX_COMMENT_CHARS = 60000
+TRUNCATION_NOTE = " ...[comment truncated to fit GitHub's size limit]"
+_warned_unsigned = False
+
+
+def _truncate_comment(body: str) -> str:
+    if len(body) <= MAX_COMMENT_CHARS:
+        return body
+    return body[: MAX_COMMENT_CHARS - len(TRUNCATION_NOTE)] + TRUNCATION_NOTE
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
@@ -94,7 +107,7 @@ async def handle_github_webhook(
             payload = await request.json()
         except Exception as e:
             logger.error(f"Failed to parse webhook payload: {e}")
-            raise HTTPException(status_code=400, detail="Invalid JSON payload")
+            raise HTTPException(status_code=400, detail="Invalid JSON payload") from e
         
         # Handle different event types
         if x_github_event == "pull_request":
@@ -118,11 +131,11 @@ async def handle_github_webhook(
         raise
     except Exception as e:
         logger.error(f"Unexpected error in webhook handler: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
 async def handle_pull_request_event(
-    payload: Dict[str, Any],
+    payload: dict[str, Any],
     background_tasks: BackgroundTasks
 ) -> JSONResponse:
     """
@@ -158,10 +171,19 @@ async def handle_pull_request_event(
         raise HTTPException(status_code=400, detail="Missing PR URL in payload")
     
     # Queue analysis as background task
+    # Without a webhook secret the sender is unauthenticated, so review but never
+    # write to the PR (a forged event must not make the bot comment).
+    post_comment = bool(settings.GITHUB_WEBHOOK_SECRET)
+    global _warned_unsigned
+    if not post_comment and not _warned_unsigned:
+        _warned_unsigned = True
+        logger.warning("GITHUB_WEBHOOK_SECRET not set: reviews run but PR comments are not posted")
+
     background_tasks.add_task(
         analyze_pr_background,
         pr_url=pr_url,
-        pr_number=pr_number
+        pr_number=pr_number,
+        post_comment=post_comment,
     )
     
     return JSONResponse({
@@ -171,33 +193,44 @@ async def handle_pull_request_event(
     })
 
 
-async def analyze_pr_background(pr_url: str, pr_number: int):
+async def analyze_pr_background(pr_url: str, pr_number: int, post_comment: bool = True):
     """
-    Background task to analyze PR and send to Telex
-    
+    Background task to analyze a PR
+
+    The result is logged and posted back to the PR as one summary comment. A
+    failure to post is logged (without the token) and never raised.
+
     Args:
         pr_url: PR URL
         pr_number: PR number
+        post_comment: Post the summary back to the PR (False for unauthenticated webhooks)
     """
     try:
         logger.info(f"Starting background analysis for PR #{pr_number}")
-        
-        # Initialize services
+
         analyzer = CodeAnalyzerService()
-        telex_client = TelexClient()
-        
-        # Run analysis
         analysis_result = await analyzer.analyze_pr(pr_url)
-        
-        # Send to Telex
+
+        logger.info(
+            f"Background analysis completed for PR #{pr_number}: "
+            f"risk={analysis_result.risk_level.value}, "
+            f"recommendation={analysis_result.approval_recommendation.value}, "
+            f"security={len(analysis_result.security_findings)}, "
+            f"performance={len(analysis_result.performance_findings)}, "
+            f"best_practices={len(analysis_result.best_practice_findings)}"
+        )
+
+        if not post_comment:
+            return
+
+        comment = _truncate_comment(SummaryFormatter.format_for_github_comment(analysis_result))
         try:
-            await telex_client.send_review_summary(analysis_result)
-            logger.info(f"Successfully sent analysis for PR #{pr_number} to Telex")
+            async with GitHubMCPService() as github:
+                owner, repo, number = github.parse_pr_url(pr_url)
+                await github.post_pr_comment(owner, repo, number, comment)
         except Exception as e:
-            logger.error(f"Failed to send to Telex for PR #{pr_number}: {e}")
-            # Continue even if Telex fails
-        
-        logger.info(f"Background analysis completed for PR #{pr_number}")
-        
+            # Exception text can echo request details; log the type only
+            logger.error(f"Failed to post comment for PR #{pr_number}: {type(e).__name__}")
+
     except Exception as e:
         logger.error(f"Background analysis failed for PR #{pr_number}: {e}")

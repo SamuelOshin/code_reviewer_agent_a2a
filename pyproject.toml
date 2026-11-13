@@ -1,0 +1,53 @@
+[project]
+name = "prrover"
+version = "1.0.0"
+description = "AI code review agent for GitHub Pull Requests"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.120",
+    "httpx>=0.28",
+    "pydantic>=2.12",
+    "pydantic-ai-slim[anthropic,google,openai]>=2.68",
+    "pydantic-settings>=2.11",
+    "pygithub>=2.8",
+    "uvicorn>=0.38",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4",
+    "pytest-asyncio>=1.2",
+    "pytest-cov>=7.0",
+    "ruff>=0.14",
+    "mypy>=1.13",
+    "pip-audit>=2.9",
+    "httpx2>=2.16",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = [".claude"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "ASYNC"]
+# Line length is cosmetic and the formatter is not enforced yet, so skip E501
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests: asserts are the point, fixtures reuse names, imports follow env setup
+"tests/**" = ["B011", "E402"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["app"]
+ignore_missing_imports = true
+check_untyped_defs = false

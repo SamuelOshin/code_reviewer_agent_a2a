@@ -5,19 +5,20 @@
 Pydantic models for GitHub entities (PRs, Users, Repositories, etc.)
 """
 
-from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field, HttpUrl
 from datetime import datetime
+from typing import Any
+
+from pydantic import BaseModel
 
 
 class GitHubUser(BaseModel):
     """GitHub user model"""
     login: str
     id: int
-    avatar_url: Optional[str] = None
-    html_url: Optional[str] = None
-    type: Optional[str] = None
-    site_admin: Optional[bool] = False
+    avatar_url: str | None = None
+    html_url: str | None = None
+    type: str | None = None
+    site_admin: bool | None = False
 
 
 class GitHubRepository(BaseModel):
@@ -27,10 +28,10 @@ class GitHubRepository(BaseModel):
     full_name: str
     owner: GitHubUser
     private: bool = False
-    html_url: Optional[str] = None
-    description: Optional[str] = None
-    fork: Optional[bool] = False
-    default_branch: Optional[str] = "main"
+    html_url: str | None = None
+    description: str | None = None
+    fork: bool | None = False
+    default_branch: str | None = "main"
 
 
 class PullRequestFile(BaseModel):
@@ -40,10 +41,10 @@ class PullRequestFile(BaseModel):
     additions: int = 0
     deletions: int = 0
     changes: int = 0
-    blob_url: Optional[str] = None
-    raw_url: Optional[str] = None
-    contents_url: Optional[str] = None
-    patch: Optional[str] = None
+    blob_url: str | None = None
+    raw_url: str | None = None
+    contents_url: str | None = None
+    patch: str | None = None
 
 
 class PullRequestLabel(BaseModel):
@@ -51,7 +52,7 @@ class PullRequestLabel(BaseModel):
     id: int
     name: str
     color: str
-    description: Optional[str] = None
+    description: str | None = None
 
 
 class PullRequest(BaseModel):
@@ -60,21 +61,21 @@ class PullRequest(BaseModel):
     number: int
     state: str  # open, closed
     title: str
-    body: Optional[str] = None
+    body: str | None = None
     user: GitHubUser
     created_at: datetime
     updated_at: datetime
-    merged_at: Optional[datetime] = None
-    closed_at: Optional[datetime] = None
+    merged_at: datetime | None = None
+    closed_at: datetime | None = None
     
     # PR details
     html_url: str
-    diff_url: Optional[str] = None
-    patch_url: Optional[str] = None
+    diff_url: str | None = None
+    patch_url: str | None = None
     
     # Branch info
-    head: Dict[str, Any]
-    base: Dict[str, Any]
+    head: dict[str, Any]
+    base: dict[str, Any]
     
     # Stats
     additions: int = 0
@@ -83,13 +84,13 @@ class PullRequest(BaseModel):
     commits: int = 0
     
     # Status
-    mergeable: Optional[bool] = None
-    mergeable_state: Optional[str] = None
+    mergeable: bool | None = None
+    mergeable_state: str | None = None
     merged: bool = False
     
     # Metadata
-    labels: List[PullRequestLabel] = []
-    requested_reviewers: List[GitHubUser] = []
+    labels: list[PullRequestLabel] = []
+    requested_reviewers: list[GitHubUser] = []
     draft: bool = False
 
 
@@ -99,17 +100,17 @@ class PullRequestDiff(BaseModel):
     total_additions: int = 0
     total_deletions: int = 0
     total_changes: int = 0
-    files: List[PullRequestFile] = []
-    raw_diff: Optional[str] = None
+    files: list[PullRequestFile] = []
+    raw_diff: str | None = None
 
 
 class GitHubCommit(BaseModel):
     """GitHub commit model"""
     sha: str
     message: str
-    author: Optional[Dict[str, Any]] = None
-    committer: Optional[Dict[str, Any]] = None
-    url: Optional[str] = None
+    author: dict[str, Any] | None = None
+    committer: dict[str, Any] | None = None
+    url: str | None = None
 
 
 class GitHubComment(BaseModel):
@@ -119,6 +120,6 @@ class GitHubComment(BaseModel):
     body: str
     created_at: datetime
     updated_at: datetime
-    html_url: Optional[str] = None
-    path: Optional[str] = None  # For review comments
-    line: Optional[int] = None  # For review comments
+    html_url: str | None = None
+    path: str | None = None  # For review comments
+    line: int | None = None  # For review comments

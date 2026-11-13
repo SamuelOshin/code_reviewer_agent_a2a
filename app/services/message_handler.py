@@ -1,20 +1,22 @@
 # app/services/message_handler.py
 
-"""Message Handler for Telex A2A Integration
+"""Message Handler for A2A message/send
 
-Handles message/send JSON-RPC requests from Telex, extracting the interpreted
+Handles message/send JSON-RPC requests from A2A clients, extracting the interpreted
 parameters and conversation history from the parts array.
 """
 
+import asyncio
 import logging
-import uuid
 import re
-import json
-import httpx
-from typing import Dict, Any, List, Optional
-from datetime import datetime, timezone
+import uuid
+from datetime import UTC, datetime
+from typing import Any
 
-from app.models.a2a import A2AMessage, MessagePart, A2ATask, TaskStatus, A2AArtifact, ArtifactPart
+import httpx
+
+from app.core.errors import new_error_id, safe_webhook_target
+from app.models.a2a import A2AArtifact, A2AMessage, A2ATask, ArtifactPart, MessagePart, TaskStatus
 from app.services.code_analyzer import CodeAnalyzerService
 from app.utils.formatters import SummaryFormatter
 
@@ -22,15 +24,16 @@ logger = logging.getLogger(__name__)
 
 
 class MessageHandler:
-    """Handles incoming messages from Telex via message/send"""
+    """Handles incoming A2A messages via message/send"""
     
     def __init__(self):
         self.analyzer = CodeAnalyzerService()
         self.formatter = SummaryFormatter()
+        self._background_tasks: set[asyncio.Task] = set()
     
-    async def handle_message_send(self, message: Dict[str, Any], configuration: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    async def handle_message_send(self, message: dict[str, Any], configuration: dict[str, Any] | None = None) -> dict[str, Any]:
         """
-        Handle message/send JSON-RPC method from Telex
+        Handle message/send JSON-RPC method
         
         Expected message structure:
         {
@@ -39,7 +42,7 @@ class MessageHandler:
             "parts": [
                 {
                     "kind": "text",
-                    "text": "Lagos, Nigeria"  # Telex's interpretation/extracted params
+                    "text": "Lagos, Nigeria"  # interpreted request text / extracted params
                 },
                 {
                     "kind": "data",
@@ -51,15 +54,20 @@ class MessageHandler:
         }
         
         Args:
-            message: Message object from Telex
-            configuration: Optional configuration from Telex (workflow settings, etc.)
+            message: A2A message object
+            configuration: Optional message/send configuration (blocking, pushNotificationConfig)
             
         Returns:
             A2A Task response
         """
         logger.info(f"Handling message/send: {message.get('messageId')}")
         if configuration:
-            logger.info(f"Configuration: {configuration}")
+            # Never log the configuration itself: pushNotificationConfig carries a bearer token
+            logger.info(
+                "Configuration received: keys=%s, has_push_config=%s",
+                sorted(str(k) for k in configuration.keys()),
+                bool(configuration.get("pushNotificationConfig")),
+            )
         
         # Parse message
         message_id = message.get("messageId", str(uuid.uuid4()))
@@ -76,7 +84,7 @@ class MessageHandler:
         if len(parts) > 1 and parts[1].get("kind") == "data":
             conversation_history = parts[1].get("data", [])
         
-        logger.info(f"Interpreted text: {interpreted_text}")
+        logger.info(f"Interpreted text length: {len(interpreted_text or '')} chars")
         logger.info(f"Conversation history length: {len(conversation_history)}")
         
         # Determine intent and extract PR URL
@@ -90,46 +98,23 @@ class MessageHandler:
                 prompt="Please provide a GitHub Pull Request URL to analyze (e.g., https://github.com/owner/repo/pull/123)"
             )
         
-        # TEMPORARY: Force blocking mode to test artifact display in Telex
-        # Log what Telex actually sent
-        logger.info("=" * 80)
-        logger.info("CONFIGURATION FROM TELEX:")
-        if configuration:
-            logger.info(f"  blocking: {configuration.get('blocking')}")
-            logger.info(f"  has pushNotificationConfig: {bool(configuration.get('pushNotificationConfig'))}")
-            if configuration.get('pushNotificationConfig'):
-                logger.info(f"  webhook URL: {configuration.get('pushNotificationConfig', {}).get('url')}")
-        else:
-            logger.info("  No configuration provided by Telex")
-        logger.info("=" * 80)
-        
-        # USE TELEX'S BLOCKING SETTING (for webhook push test)
+        # Honor the client's blocking setting
         is_blocking = configuration.get("blocking", True) if configuration else True
         push_config = configuration.get("pushNotificationConfig") if configuration else None
         
-        logger.info("=" * 80)
         logger.info(f"Request mode: blocking={is_blocking}, has_webhook={push_config is not None}")
-        logger.info(f"Will create background task: {not is_blocking and push_config is not None}")
-        logger.info("=" * 80)
         
         # WEBHOOK MODE: Non-blocking mode with real PR analysis
         if not is_blocking and push_config:
-            print("🔥 ENTERING WEBHOOK MODE - CREATING BACKGROUND TASK")
-            logger.info("=" * 80)
-            logger.info("✅ NON-BLOCKING MODE - REAL PR ANALYSIS")
-            logger.info("Step 1: Return message immediately")
-            logger.info("Step 2: Analyze PR in background (30-40s)")
-            logger.info("Step 3: Push complete task to webhook")
-            logger.info(f"PR URL: {pr_url}")
-            logger.info("=" * 80)
+            logger.info(f"Non-blocking mode: analyzing {pr_url} in background, result will be pushed to webhook")
             
             # Create task ID upfront
-            context_id = message.get("contextId", str(uuid.uuid4()))
             message_id = message.get("messageId", str(uuid.uuid4()))
             
             # Start background task for real analysis
-            import asyncio
-            asyncio.create_task(
+            # Keep a strong reference: the event loop holds tasks weakly, so an
+            # unreferenced task can be garbage-collected before it finishes.
+            bg_task = asyncio.create_task(
                 self._process_and_push_safe(
                     pr_url=pr_url,
                     task_id=task_id,
@@ -138,6 +123,8 @@ class MessageHandler:
                     push_config=push_config
                 )
             )
+            self._background_tasks.add(bg_task)
+            bg_task.add_done_callback(self._background_tasks.discard)
             
             # Return MESSAGE (not Task) for immediate response
             accepting_msg = A2AMessage(
@@ -151,7 +138,7 @@ class MessageHandler:
                 ],
                 kind="message",
                 taskId=task_id,
-                timestamp=datetime.now(timezone.utc).isoformat()
+                timestamp=datetime.now(UTC).isoformat()
             )
             
             # Return message as result (NOT Task object)
@@ -162,34 +149,19 @@ class MessageHandler:
             logger.info("✅ Returned 'working' message - real analysis will happen in background")
             return result
         
-        # No webhook config - return error
-        error_msg = A2AMessage(
-            messageId=str(uuid.uuid4()),
-            role="agent",
-            parts=[
-                MessagePart(
-                    kind="text",
-                    text="❌ Unable to process PR review. Please ensure the agent is properly configured with webhook support."
-                )
-            ],
-            kind="message",
-            taskId=task_id,
-            timestamp=datetime.now(timezone.utc).isoformat()
-        )
-        
-        logger.error("No webhook configuration found - cannot process request")
-        return error_msg.model_dump(mode="json", exclude_none=True)
-    
+        # BLOCKING MODE: no push config, or blocking requested. Return the finished task.
+        logger.info(f"Blocking mode: analyzing {pr_url} and returning the completed task")
+        return await self._analyze_and_return(pr_url, task_id, message_id, message)
+
     async def _process_and_push_safe(
         self,
         pr_url: str,
         task_id: str,
         message_id: str,
-        message: Dict[str, Any],
-        push_config: Dict[str, Any]
+        message: dict[str, Any],
+        push_config: dict[str, Any]
     ):
         """Wrapper for _process_and_push with comprehensive error handling"""
-        print(f"🔥🔥 _process_and_push_safe CALLED for PR: {pr_url}")
         logger.info(f"🚀 _process_and_push_safe STARTED for PR: {pr_url}")
         try:
             logger.info(f"Background task started for PR: {pr_url}")
@@ -199,29 +171,35 @@ class MessageHandler:
             await self._process_and_push(pr_url, task_id, message_id, message, push_config)
             logger.info(f"Background task completed successfully for PR: {pr_url}")
         except Exception as e:
-            logger.error(f"💥 Fatal error in background task: {e}", exc_info=True)
-            logger.error(f"Error type: {type(e).__name__}")
-            logger.error(f"Error occurred at PR: {pr_url}")
-            # Try to send error to Telex webhook
-            logger.info("🔄 Attempting to push error from _process_and_push_safe...")
+            error_id = new_error_id()
+            logger.error(
+                f"Fatal error in background task [error_id={error_id}] for PR {pr_url}: "
+                f"{type(e).__name__}: {e}",
+                exc_info=True,
+            )
+            # Try to push the error to the client's webhook
             try:
-                await self._push_error_to_telex(task_id, message_id, message, push_config, str(e))
-                logger.info("✅ Error pushed from _process_and_push_safe")
+                await self._push_error(task_id, message_id, message, push_config, str(e), error_id)
             except Exception as push_error:
-                logger.error(f"❌ Failed to push error to Telex: {push_error}", exc_info=True)
+                logger.error(f"Failed to push error to webhook: {push_error}", exc_info=True)
     
-    async def _push_error_to_telex(
+    async def _push_error(
         self,
         task_id: str,
         message_id: str,
-        message: Dict[str, Any],
-        push_config: Dict[str, Any],
-        error_message: str
+        message: dict[str, Any],
+        push_config: dict[str, Any],
+        error_message: str,
+        error_id: str | None = None
     ):
-        """Push error result to Telex webhook"""
-        logger.info(f"🔧 _push_error_to_telex called with task_id: {task_id}")
-        logger.info(f"   Error message: {error_message[:100]}...")
-        
+        """Push error result to the client's push notification webhook
+
+        error_message is used only to pick a user-friendly category. It is never
+        sent to the client; the client gets error_id, and the detail is in the logs.
+        """
+        error_id = error_id or new_error_id()
+        logger.info(f"Pushing error for task {task_id} [error_id={error_id}]")
+
         # Determine error type and create user-friendly message
         if "429" in error_message or "Resource exhausted" in error_message:
             user_message = (
@@ -233,7 +211,7 @@ class MessageHandler:
                 "**What you can do:**\n"
                 "1. ⏰ Wait 5-10 minutes and try again\n"
                 "2. 🔄 Ask me to analyze the PR again later\n\n"
-                f"_Technical details: {error_message}_"
+                f"_Error id: {error_id}_"
             )
         elif "GitHub" in error_message or "404" in error_message:
             user_message = (
@@ -247,7 +225,7 @@ class MessageHandler:
                 "1. ✅ Verify the PR URL is correct\n"
                 "2. 🔑 Ensure I have access to private repositories (if applicable)\n"
                 "3. 🔄 Try again in a few moments\n\n"
-                f"_Technical details: {error_message}_"
+                f"_Error id: {error_id}_"
             )
         else:
             user_message = (
@@ -255,8 +233,8 @@ class MessageHandler:
                 "I encountered an unexpected error while analyzing this PR.\n\n"
                 "**What you can do:**\n"
                 "1. 🔄 Try again - it might be a temporary issue\n"
-                "2. 📝 If the problem persists, please report this error\n\n"
-                f"**Error details:**\n```\n{error_message[:500]}\n```"
+                "2. 📝 If the problem persists, please report this error id\n\n"
+                f"_Error id: {error_id}_"
             )
         
         error_msg = A2AMessage(
@@ -270,17 +248,17 @@ class MessageHandler:
             ],
             kind="message",
             taskId=task_id,
-            timestamp=datetime.now(timezone.utc)
+            timestamp=datetime.now(UTC)
         )
         
-        # Create error artifact (Telex won't display message if artifacts=[])
+        # Create error artifact (some A2A clients don't display the message if artifacts=[])
         error_artifact = A2AArtifact(
             artifactId=str(uuid.uuid4()),
             name="Error Report",
             parts=[
                 ArtifactPart(
                     kind="text",
-                    text=f"# ❌ PR Analysis Error\n\n{user_message}\n\n---\n\n## Technical Details\n\n```\n{error_message}\n```\n\n---\n*Error occurred at {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}*"
+                    text=f"# ❌ PR Analysis Error\n\n{user_message}\n\n---\n*Error occurred at {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S UTC')}*"
                 )
             ]
         )
@@ -290,7 +268,7 @@ class MessageHandler:
             contextId=message.get("contextId", str(uuid.uuid4())),
             status=TaskStatus(
                 state="failed",
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
                 message=error_msg
             ),
             artifacts=[error_artifact],  
@@ -306,11 +284,9 @@ class MessageHandler:
         auth_schemes = push_config.get("authentication", {}).get("schemes", [])
         if "Bearer" in auth_schemes and token:
             headers["Authorization"] = f"Bearer {token}"
-        elif "TelexApiKey" in auth_schemes and token:
-            headers["Authorization"] = f"Bearer {token}"
         
-        # Build JSON-RPC RESPONSE (not request!) for Telex webhook
-        # Telex expects: {"jsonrpc": "2.0", "result": {...task...}, "id": "..."}
+        # Build JSON-RPC RESPONSE (not request!) for the push webhook
+        # Expected shape: {"jsonrpc": "2.0", "result": {...task...}, "id": "..."}
         task_result = task_obj.model_dump(mode="json", exclude_none=True)
         
         webhook_payload = {
@@ -319,7 +295,7 @@ class MessageHandler:
             "id": str(uuid.uuid4())
         }
         
-        logger.info(f"Pushing error result to webhook: {webhook_url}")
+        logger.info(f"Pushing error result to webhook: {safe_webhook_target(webhook_url)}")
         logger.info(f"Error task state: {task_result.get('status', {}).get('state')}")
         
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -332,93 +308,93 @@ class MessageHandler:
         lines = []
         
         # Header
-        lines.append(f"# Pull Request Analysis Report")
-        lines.append(f"")
+        lines.append("# Pull Request Analysis Report")
+        lines.append("")
         lines.append(f"**PR #{analysis_result.pr_number}**: {analysis_result.pr_title}")
         lines.append(f"**Author**: {analysis_result.author}")
         lines.append(f"**Repository**: {analysis_result.repository}")
         lines.append(f"**URL**: {pr_url}")
-        lines.append(f"")
+        lines.append("")
         
         # Executive Summary
-        lines.append(f"## Executive Summary")
-        lines.append(f"")
+        lines.append("## Executive Summary")
+        lines.append("")
         lines.append(analysis_result.executive_summary)
-        lines.append(f"")
+        lines.append("")
         
         # Risk Assessment
-        lines.append(f"## Risk Assessment")
-        lines.append(f"")
+        lines.append("## Risk Assessment")
+        lines.append("")
         lines.append(f"**Risk Level**: {analysis_result.risk_level.value.upper()}")
         lines.append(f"**Recommendation**: {analysis_result.approval_recommendation.value.upper()}")
-        lines.append(f"")
+        lines.append("")
         
         # Key Concerns
         if analysis_result.key_concerns:
-            lines.append(f"## Key Concerns")
-            lines.append(f"")
+            lines.append("## Key Concerns")
+            lines.append("")
             for concern in analysis_result.key_concerns:
                 lines.append(f"- {concern}")
-            lines.append(f"")
+            lines.append("")
         
         # Statistics
-        lines.append(f"## Statistics")
-        lines.append(f"")
+        lines.append("## Statistics")
+        lines.append("")
         lines.append(f"- Files changed: {analysis_result.files_changed}")
         lines.append(f"- Lines added: +{analysis_result.lines_added}")
         lines.append(f"- Lines deleted: -{analysis_result.lines_deleted}")
-        lines.append(f"")
+        lines.append("")
         
         # Security Findings
         if analysis_result.security_findings:
             lines.append(f"## 🔒 Security Findings ({len(analysis_result.security_findings)})")
-            lines.append(f"")
+            lines.append("")
             for i, finding in enumerate(analysis_result.security_findings, 1):
                 lines.append(f"### {i}. {finding.title}")
                 lines.append(f"**Severity**: {finding.severity.upper()}")
                 lines.append(f"**File**: `{finding.file}` (Line {finding.line_number})")
-                lines.append(f"")
+                lines.append("")
                 lines.append(f"**Description**: {finding.description}")
-                lines.append(f"")
+                lines.append("")
                 lines.append(f"**Recommendation**: {finding.recommendation}")
                 if finding.cwe_id:
                     lines.append(f"**CWE ID**: {finding.cwe_id}")
-                lines.append(f"")
+                lines.append("")
         
         # Performance Findings
         if analysis_result.performance_findings:
             lines.append(f"## ⚡ Performance Findings ({len(analysis_result.performance_findings)})")
-            lines.append(f"")
+            lines.append("")
             for i, finding in enumerate(analysis_result.performance_findings, 1):
                 lines.append(f"### {i}. {finding.title}")
                 lines.append(f"**Severity**: {finding.severity.upper()}")
                 lines.append(f"**File**: `{finding.file}`")
-                lines.append(f"")
+                lines.append("")
                 lines.append(f"**Description**: {finding.description}")
-                lines.append(f"")
+                lines.append("")
                 lines.append(f"**Impact**: {finding.impact}")
-                lines.append(f"")
+                lines.append("")
                 lines.append(f"**Recommendation**: {finding.recommendation}")
-                lines.append(f"")
+                lines.append("")
         
         # Best Practice Findings
         if analysis_result.best_practice_findings:
             lines.append(f"## 📚 Best Practice Findings ({len(analysis_result.best_practice_findings)})")
-            lines.append(f"")
+            lines.append("")
             for i, finding in enumerate(analysis_result.best_practice_findings, 1):
                 lines.append(f"### {i}. {finding.title}")
                 lines.append(f"**Category**: {finding.category}")
                 lines.append(f"**Severity**: {finding.severity.upper()}")
                 if finding.file:
                     lines.append(f"**File**: `{finding.file}`")
-                lines.append(f"")
+                lines.append("")
                 lines.append(f"**Description**: {finding.description}")
-                lines.append(f"")
+                lines.append("")
                 lines.append(f"**Recommendation**: {finding.recommendation}")
-                lines.append(f"")
+                lines.append("")
         
         # Footer
-        lines.append(f"---")
+        lines.append("---")
         lines.append(f"*Analysis completed at {analysis_result.analyzed_at.strftime('%Y-%m-%d %H:%M:%S UTC')}*")
         lines.append(f"*Powered by {analysis_result.llm_provider} ({analysis_result.llm_model})*")
         
@@ -429,8 +405,8 @@ class MessageHandler:
         pr_url: str,
         task_id: str,
         message_id: str,
-        message: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        message: dict[str, Any]
+    ) -> dict[str, Any]:
         """Analyze PR and return result dict"""
         try:
             logger.info(f"Analyzing PR: {pr_url}")
@@ -440,8 +416,8 @@ class MessageHandler:
             logger.info(f"Analysis completed successfully, PR#{analysis_result.pr_number}")
             
             # Format summary
-            logger.info("Formatting summary for Telex...")
-            summary_text = self.formatter.format_for_telex(analysis_result)
+            logger.info("Formatting summary...")
+            summary_text = self.formatter.format_short(analysis_result)
             logger.info(f"Summary formatted, length: {len(summary_text)} chars")
             
             # Create response message
@@ -456,7 +432,7 @@ class MessageHandler:
                 ],
                 kind="message",
                 taskId=task_id,
-                timestamp=datetime.now(timezone.utc).isoformat()
+                timestamp=datetime.now(UTC).isoformat()
             )
             
             # Create artifact with full analysis data as TEXT (not JSON)
@@ -486,7 +462,7 @@ class MessageHandler:
                 contextId=message.get("contextId", str(uuid.uuid4())),
                 status=TaskStatus(
                     state="completed",
-                    timestamp=datetime.now(timezone.utc).isoformat(),
+                    timestamp=datetime.now(UTC).isoformat(),
                     message=response_msg,
                     progress=1.0
                 ),
@@ -503,32 +479,27 @@ class MessageHandler:
             if "kind" not in result:
                 result["kind"] = "task"
             
-            # Log the complete response for debugging
-            import json
             logger.info(f"Returning task result: {result.get('id')}, state: {result['status']['state']}, kind: {result.get('kind')}")
-            logger.info("=" * 80)
-            logger.info("FULL RESPONSE BODY:")
-            logger.info(json.dumps(result, indent=2))
-            logger.info("=" * 80)
             
             return result
             
         except Exception as e:
-            logger.error(f"Error analyzing PR {pr_url}: {e}", exc_info=True)
-            
-            # Create error response
+            error_id = new_error_id()
+            logger.error(f"Error analyzing PR {pr_url} [error_id={error_id}]: {e}", exc_info=True)
+
+            # Create error response (generic text; the detail stays in the logs)
             error_msg = A2AMessage(
                 messageId=str(uuid.uuid4()),
                 role="agent",
                 parts=[
                     MessagePart(
                         kind="text",
-                        text=f"Failed to analyze PR: {str(e)}"
+                        text=f"Failed to analyze PR. Please try again later. (error id: {error_id})"
                     )
                 ],
                 kind="message",
                 taskId=task_id,
-                timestamp=datetime.now(timezone.utc).isoformat()
+                timestamp=datetime.now(UTC).isoformat()
             )
             
             task = A2ATask(
@@ -536,7 +507,7 @@ class MessageHandler:
                 contextId=message.get("contextId", str(uuid.uuid4())),
                 status=TaskStatus(
                     state="failed",
-                    timestamp=datetime.now(timezone.utc).isoformat(),
+                    timestamp=datetime.now(UTC).isoformat(),
                     message=error_msg
                 ),
                 artifacts=[],
@@ -551,17 +522,16 @@ class MessageHandler:
         pr_url: str,
         task_id: str,
         message_id: str,
-        message: Dict[str, Any],
-        push_config: Dict[str, Any]
+        message: dict[str, Any],
+        push_config: dict[str, Any]
     ):
-        """Process PR analysis and push result to Telex webhook (non-blocking mode)"""
+        """Process PR analysis and push result to the push notification webhook (non-blocking mode)"""
         try:
             # Analyze PR
             result_dict = await self._analyze_and_return(pr_url, task_id, message_id, message)
             
             # Serialize properly using Pydantic's model serialization
             # This ensures datetime objects are converted to ISO strings
-            from pydantic import BaseModel
             
             # Convert any remaining datetime objects to ISO strings
             def serialize_datetime(obj):
@@ -580,7 +550,7 @@ class MessageHandler:
             # Only include summary stats, not all findings
             result_lightweight = self._create_lightweight_result(result_serialized)
             
-            # Push to Telex webhook
+            # Push to webhook
             webhook_url = push_config.get("url")
             token = push_config.get("token")
             
@@ -596,10 +566,8 @@ class MessageHandler:
             auth_schemes = push_config.get("authentication", {}).get("schemes", [])
             if "Bearer" in auth_schemes and token:
                 headers["Authorization"] = f"Bearer {token}"
-            elif "TelexApiKey" in auth_schemes and token:
-                headers["Authorization"] = f"Bearer {token}"
             
-            # Telex webhook expects JSON-RPC 2.0 RESPONSE (not request!)
+            # Webhook expects JSON-RPC 2.0 RESPONSE (not request!)
             # Format: {"jsonrpc": "2.0", "result": {...task...}, "id": "..."}
             # Use lightweight version to avoid HTTP 413 (payload too large)
             
@@ -610,27 +578,12 @@ class MessageHandler:
                 "id": str(uuid.uuid4())
             }
             
-            logger.info(f"Pushing full task result to webhook: {webhook_url}")
+            logger.info(f"Pushing full task result to webhook: {safe_webhook_target(webhook_url)}")
             logger.info(f"Task state: {result_lightweight.get('status', {}).get('state')}")
-            logger.info(f"Sending JSON-RPC response with complete task result")
+            logger.info("Sending JSON-RPC response with complete task result")
             
-            # Log the webhook payload being sent
-            import json
-            logger.info("=" * 80)
-            logger.info("WEBHOOK PAYLOAD START - COPY EVERYTHING BETWEEN THE MARKERS")
-            logger.info("=" * 80)
-            full_payload_str = json.dumps(webhook_payload, indent=2, ensure_ascii=False)
-            logger.info(f"Payload size: {len(full_payload_str)} characters")
-            logger.info("WEBHOOK_PAYLOAD_JSON_START")
-            # Log the complete JSON in one message for easy copying
-            logger.info(full_payload_str)
-            logger.info("WEBHOOK_PAYLOAD_JSON_END")
-            logger.info("=" * 80)
-            logger.info("WEBHOOK PAYLOAD END - Copy the JSON between START and END markers")
-            logger.info("=" * 80)
-            
-            # Use longer timeout for Telex webhook (they can be slow)
-            # Connect: 10s, Read: 60s (Telex processing time)
+            # Use a longer read timeout for push webhooks (they can be slow)
+            # Connect: 10s, Read: 60s
             timeout = httpx.Timeout(10.0, read=60.0)
             
             async with httpx.AsyncClient(timeout=timeout) as client:
@@ -641,33 +594,31 @@ class MessageHandler:
                         headers=headers
                     )
                     response.raise_for_status()
-                    logger.info(f"Successfully pushed result to Telex (status: {response.status_code})")
+                    logger.info(f"Successfully pushed result to webhook (status: {response.status_code})")
                 except httpx.TimeoutException as timeout_err:
                     logger.warning(f"Webhook push timed out after 60s: {timeout_err}")
-                    logger.info("Result was prepared successfully but Telex webhook didn't respond in time")
+                    logger.info("Result was prepared successfully but webhook didn't respond in time")
                     # Don't raise - analysis was successful, webhook timeout is not critical
                 except httpx.HTTPStatusError as http_err:
+                    # Status only: the response body is third-party content and may echo secrets
                     logger.error(f"Webhook returned error status: {http_err.response.status_code}")
-                    logger.error(f"Response body: {http_err.response.text}")
                     raise
                 
         except Exception as e:
-            logger.error(f"Error processing and pushing result: {e}", exc_info=True)
-            logger.info("🔄 Attempting to push error to Telex webhook...")
-            # Try to send error to Telex webhook
+            error_id = new_error_id()
+            logger.error(f"Error processing and pushing result [error_id={error_id}]: {e}", exc_info=True)
+            # Try to push the error to the client's webhook
             try:
-                logger.info("📞 Calling _push_error_to_telex...")
-                await self._push_error_to_telex(task_id, message_id, message, push_config, str(e))
-                logger.info("✅ Error result pushed to Telex webhook successfully")
+                await self._push_error(task_id, message_id, message, push_config, str(e), error_id)
             except Exception as push_error:
-                logger.error(f"❌ Failed to push error to Telex: {push_error}", exc_info=True)
+                logger.error(f"Failed to push error to webhook: {push_error}", exc_info=True)
     
-    def _extract_pr_url(self, interpreted_text: Optional[str], conversation_history: List[Dict[str, Any]]) -> Optional[str]:
+    def _extract_pr_url(self, interpreted_text: str | None, conversation_history: list[dict[str, Any]]) -> str | None:
         """
         Extract GitHub PR URL from interpreted text or conversation history
         
         Args:
-            interpreted_text: Telex's interpretation (from parts[0])
+            interpreted_text: Interpreted request text (from parts[0])
             conversation_history: Last 20 messages (from parts[1])
             
         Returns:
@@ -705,7 +656,7 @@ class MessageHandler:
         
         return None
     
-    def _create_lightweight_result(self, full_result: Dict[str, Any]) -> Dict[str, Any]:
+    def _create_lightweight_result(self, full_result: dict[str, Any]) -> dict[str, Any]:
         """
         Create a lightweight version of the result for webhook push
         to avoid HTTP 413 (payload too large) errors.
@@ -740,7 +691,7 @@ class MessageHandler:
         task_id: str,
         message_id: str,
         prompt: str
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Create an input-required response to ask user for more info
         
@@ -763,7 +714,7 @@ class MessageHandler:
             ],
             kind="message",
             taskId=task_id,
-            timestamp=datetime.now(timezone.utc).isoformat()
+            timestamp=datetime.now(UTC).isoformat()
         )
         
         task = A2ATask(
@@ -771,7 +722,7 @@ class MessageHandler:
             contextId=str(uuid.uuid4()),
             status=TaskStatus(
                 state="input-required",
-                timestamp=datetime.now(timezone.utc).isoformat(),
+                timestamp=datetime.now(UTC).isoformat(),
                 message=response_msg
             ),
             artifacts=[],

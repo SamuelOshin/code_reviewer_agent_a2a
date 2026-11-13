@@ -6,9 +6,8 @@ Pattern-based security scanning for common vulnerabilities
 including SQL injection, XSS, secrets, command injection, etc.
 """
 
-from typing import List, Dict, Any
-import re
 import logging
+import re
 
 from app.models.analysis import SecurityIssue, Severity
 
@@ -23,7 +22,9 @@ class SecurityChecker:
         'sql_injection': {
             'patterns': [
                 r'execute\s*\(\s*.*\+.*\)',  # SQL string concatenation
-                r'query\s*=\s*.*\+.*',  # Query variable with concatenation
+                # Query variable built by concatenation. Requires SQL statement shape on the
+                # line so `query = base_url + "/search"` is not flagged (F-08).
+                r'(?=.*(?:SELECT\s.+\sFROM|INSERT\s+INTO|UPDATE\s+\w+\s+SET|DELETE\s+FROM|DROP\s+(?:TABLE|DATABASE)))query\s*=\s*.*\+.*',
                 r'f["\']SELECT.*\{.*\}',  # f-strings in SQL
                 r'f"SELECT.*\{',  # f-strings in SQL (double quotes)
                 r"f'SELECT.*\{",  # f-strings in SQL (single quotes)
@@ -60,9 +61,12 @@ class SecurityChecker:
             'patterns': [
                 r'os\.system\s*\(',  # os.system
                 r'subprocess\.(call|run|Popen)\s*\([^)]*shell\s*=\s*True',  # subprocess with shell=True
-                r'\beval\s*\(',  # eval() function
-                r'\bexec\s*\(',  # exec() function
-                r'open\s*\(\s*[a-zA-Z_][a-zA-Z0-9_]*\s*[,\)]',  # open() with variable
+                # Builtin eval/exec only: skip method calls (model.eval(), regex.exec())
+                # and longer names (F-08).
+                r'(?<![.\w])eval\s*\(',  # eval() function
+                r'(?<![.\w])exec\s*\(',  # exec() function
+                # open(variable) rule removed (F-08): `with open(config_path)` is not command
+                # injection and CRITICAL forces REJECT. Path traversal covers open(path).
             ],
             'severity': Severity.CRITICAL,
             'title': 'Potential Command Injection / Code Execution',
@@ -142,7 +146,7 @@ class SecurityChecker:
     }
     
     @classmethod
-    def check(cls, code_or_file_changes, language=None, filename=None) -> List[SecurityIssue]:
+    def check(cls, code_or_file_changes, language=None, filename=None) -> list[SecurityIssue]:
         """
         Run security checks on code changes
         
@@ -203,7 +207,7 @@ class SecurityChecker:
         return findings
     
     @classmethod
-    def check_file_content(cls, filename: str, content: str) -> List[SecurityIssue]:
+    def check_file_content(cls, filename: str, content: str) -> list[SecurityIssue]:
         """
         Check entire file content for security issues
         

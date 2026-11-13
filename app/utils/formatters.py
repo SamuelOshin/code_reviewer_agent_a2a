@@ -3,21 +3,19 @@
 """Output Formatters
 
 Format code analysis results for different outputs including
-Telex messages, GitHub comments, and terminal display.
+A2A messages, GitHub comments, and terminal display.
 """
 
-from typing import List, Dict, Any
-from datetime import datetime
 import logging
 
 from app.models.analysis import (
-    CodeAnalysisResult,
-    SecurityIssue,
-    PerformanceIssue,
+    ApprovalRecommendation,
     BestPracticeIssue,
-    Severity,
+    CodeAnalysisResult,
+    PerformanceIssue,
     RiskLevel,
-    ApprovalRecommendation
+    SecurityIssue,
+    Severity,
 )
 
 logger = logging.getLogger(__name__)
@@ -51,10 +49,10 @@ class SummaryFormatter:
     }
     
     @classmethod
-    def format_for_telex(cls, analysis: CodeAnalysisResult) -> str:
+    def format_short(cls, analysis: CodeAnalysisResult) -> str:
         """
-        Format analysis result as SHORT markdown for Telex A2A messages
-        MUST be concise - Telex has display limits!
+        Format analysis result as SHORT markdown for A2A messages
+        Keep it concise: A2A clients may truncate long messages.
         
         Args:
             analysis: Complete code analysis result
@@ -100,12 +98,12 @@ class SummaryFormatter:
             sections.append("")
         
         # Footer - keep it minimal
-        sections.append(f"*Full details in artifacts • Analysis: {analysis.analysis_duration_seconds:.1f}s*")
+        sections.append(f"*Analysis: {analysis.analysis_duration_seconds:.1f}s*")
         
         return "\n".join(sections)
     
     @classmethod
-    def _format_security_issues(cls, issues: List[SecurityIssue]) -> str:
+    def _format_security_issues(cls, issues: list[SecurityIssue]) -> str:
         """Format security issues as markdown list"""
         lines = []
         
@@ -139,7 +137,7 @@ class SummaryFormatter:
         return "\n".join(lines)
     
     @classmethod
-    def _format_performance_issues(cls, issues: List[PerformanceIssue]) -> str:
+    def _format_performance_issues(cls, issues: list[PerformanceIssue]) -> str:
         """Format performance issues as markdown list"""
         lines = []
         
@@ -172,7 +170,7 @@ class SummaryFormatter:
         return "\n".join(lines)
     
     @classmethod
-    def _format_best_practice_issues(cls, issues: List[BestPracticeIssue]) -> str:
+    def _format_best_practice_issues(cls, issues: list[BestPracticeIssue]) -> str:
         """Format best practice issues as markdown list"""
         lines = []
         
@@ -213,8 +211,8 @@ class SummaryFormatter:
         Returns:
             Formatted markdown for GitHub
         """
-        # Similar to Telex format but with GitHub-specific adjustments
-        return cls.format_for_telex(analysis)
+        # Similar to the short format but with GitHub-specific adjustments
+        return cls.format_short(analysis)
     
     @classmethod
     def format_summary_table(cls, analysis: CodeAnalysisResult) -> str:

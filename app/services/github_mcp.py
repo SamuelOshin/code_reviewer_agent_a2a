@@ -6,17 +6,18 @@ Direct GitHub API integration using PyGithub for fetching PR data, diffs, and fi
 Uses async context manager pattern for proper resource management.
 """
 
-from typing import Optional, List, Dict, Any
-import re
-import base64
 import asyncio
+import logging
 import os
+import re
 from functools import partial
-from github import Github, GithubException
+from typing import Any
+
+from github import Auth, Github, GithubException
+
 from app.core.config import settings
 from app.core.exceptions import GitHubMCPError
-from app.models.github import PullRequest, PullRequestFile, PullRequestDiff
-import logging
+from app.models.github import PullRequest, PullRequestDiff, PullRequestFile
 
 logger = logging.getLogger(__name__)
 
@@ -26,15 +27,16 @@ class GitHubMCPService:
     
     def __init__(self):
         self.token = settings.GITHUB_TOKEN
-        self._client: Optional[Github] = None
+        self._client: Github | None = None
     
     async def __aenter__(self):
         """Context manager entry - initializes GitHub client"""
         try:
             logger.info("Creating GitHub client with token...")
-            logger.info(f"Token present: {bool(self.token)}, Length: {len(self.token) if self.token else 0}")
+            # Presence only: the token length narrows a brute-force search
+            logger.info(f"Token present: {bool(self.token)}")
             
-            self._client = Github(self.token)
+            self._client = Github(auth=Auth.Token(self.token))
             logger.info("GitHub client object created, testing connection...")
             
             # Test the connection - run blocking call in thread pool WITH TIMEOUT
@@ -60,20 +62,20 @@ class GitHubMCPService:
                 )
                 
                 logger.info(f"✅ GitHub API client initialized successfully (user: {login})")
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.error("⏱️ GitHub connection test timed out after 15s")
                 logger.warning("💡 Tip: Set SKIP_GITHUB_CONNECTION_TEST=true to skip this check on slow networks")
-                raise GitHubMCPError("GitHub API connection timed out - network may be slow or blocked")
+                raise GitHubMCPError("GitHub API connection timed out - network may be slow or blocked") from None
             
             return self
         except GithubException as e:
-            logger.error(f"GitHub API error: {e.status}, {e.data}")
-            raise GitHubMCPError(f"GitHub API initialization failed: {str(e)}")
+            logger.error(f"GitHub API error: status={e.status}")
+            raise GitHubMCPError(f"GitHub API initialization failed: {str(e)}") from e
         except GitHubMCPError:
             raise  # Re-raise our custom errors
         except Exception as e:
             logger.error(f"Failed to initialize GitHub client: {type(e).__name__}: {e}", exc_info=True)
-            raise GitHubMCPError(f"GitHub API initialization failed: {str(e)}")
+            raise GitHubMCPError(f"GitHub API initialization failed: {str(e)}") from e
     
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit - cleanup"""
@@ -122,6 +124,28 @@ class GitHubMCPService:
             return await loop.run_in_executor(None, partial(func, *args, **kwargs))
         return await loop.run_in_executor(None, func)
     
+    async def post_pr_comment(self, owner: str, repo: str, pr_number: int, body: str) -> None:
+        """
+        Post one comment on a pull request (PR comments are issue comments)
+
+        Raises:
+            GitHubMCPError: If posting fails. The message never includes the token.
+        """
+        if not self._client:
+            raise GitHubMCPError("GitHub client not initialized. Use context manager.")
+
+        try:
+            repository = await self._run_sync(self._client.get_repo, f"{owner}/{repo}")
+            issue = await self._run_sync(repository.get_issue, pr_number)
+            await self._run_sync(issue.create_comment, body)
+            logger.info(f"Posted comment on {owner}/{repo}#{pr_number}")
+        except GithubException as e:
+            logger.error(f"Failed to post comment on {owner}/{repo}#{pr_number}: status={e.status}")
+            raise GitHubMCPError(f"Failed to post PR comment (status {e.status})") from e
+        except Exception as e:
+            logger.error(f"Failed to post comment on {owner}/{repo}#{pr_number}: {type(e).__name__}")
+            raise GitHubMCPError(f"Failed to post PR comment: {type(e).__name__}") from e
+
     async def get_pull_request(
         self, 
         owner: str, 
@@ -204,10 +228,10 @@ class GitHubMCPService:
             return PullRequest(**pr_data)
         except GithubException as e:
             logger.error(f"Failed to fetch PR {owner}/{repo}#{pr_number}: {e}")
-            raise GitHubMCPError(f"Failed to fetch PR: {str(e)}")
+            raise GitHubMCPError(f"Failed to fetch PR: {str(e)}") from e
         except Exception as e:
             logger.error(f"Failed to fetch PR {owner}/{repo}#{pr_number}: {e}")
-            raise GitHubMCPError(f"Failed to fetch PR: {str(e)}")
+            raise GitHubMCPError(f"Failed to fetch PR: {str(e)}") from e
     
     async def get_pr_diff(
         self, 
@@ -253,17 +277,17 @@ class GitHubMCPService:
             return diff
         except GithubException as e:
             logger.error(f"Failed to fetch PR diff: {e}")
-            raise GitHubMCPError(f"Failed to fetch PR diff: {str(e)}")
+            raise GitHubMCPError(f"Failed to fetch PR diff: {str(e)}") from e
         except Exception as e:
             logger.error(f"Failed to fetch PR diff: {e}")
-            raise GitHubMCPError(f"Failed to fetch PR diff: {str(e)}")
+            raise GitHubMCPError(f"Failed to fetch PR diff: {str(e)}") from e
     
     async def list_pr_files(
         self, 
         owner: str, 
         repo: str, 
         pr_number: int
-    ) -> List[PullRequestFile]:
+    ) -> list[PullRequestFile]:
         """
         List changed files in PR using GitHub API
         
@@ -302,17 +326,17 @@ class GitHubMCPService:
             return pr_files
         except GithubException as e:
             logger.error(f"Failed to fetch PR files: {e}")
-            raise GitHubMCPError(f"Failed to fetch PR files: {str(e)}")
+            raise GitHubMCPError(f"Failed to fetch PR files: {str(e)}") from e
         except Exception as e:
             logger.error(f"Failed to fetch PR files: {e}")
-            raise GitHubMCPError(f"Failed to fetch PR files: {str(e)}")
+            raise GitHubMCPError(f"Failed to fetch PR files: {str(e)}") from e
     
     async def get_pr_reviews(
         self, 
         owner: str, 
         repo: str, 
         pr_number: int
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Get PR reviews using GitHub API
         
@@ -356,7 +380,7 @@ class GitHubMCPService:
         owner: str, 
         repo: str, 
         path: str, 
-        ref: Optional[str] = None
+        ref: str | None = None
     ) -> str:
         """
         Get file content using GitHub API
@@ -387,10 +411,10 @@ class GitHubMCPService:
                 return ""
         except GithubException as e:
             logger.error(f"Failed to fetch file content: {e}")
-            raise GitHubMCPError(f"Failed to fetch file content: {str(e)}")
+            raise GitHubMCPError(f"Failed to fetch file content: {str(e)}") from e
         except Exception as e:
             logger.error(f"Failed to fetch file content: {e}")
-            raise GitHubMCPError(f"Failed to fetch file content: {str(e)}")
+            raise GitHubMCPError(f"Failed to fetch file content: {str(e)}") from e
     
     async def get_pr_with_diff(
         self,

@@ -1,59 +1,49 @@
 # app/core/config.py
 
+from pydantic import Field
 from pydantic_settings import BaseSettings
-from typing import List
+
 
 class Settings(BaseSettings):
     """Application Settings"""
     
     # Application
-    APP_NAME: str = "Code Review Summarizer Agent"
     ENVIRONMENT: str = "development"  # development, staging, production
-    DEBUG: bool = False
-    VERSION: str = "1.0.0"
     
     # Server
-    HOST: str = "0.0.0.0"
     PORT: int = 8000
-    ALLOWED_ORIGINS: List[str] = ["*"]
     
     # GitHub
     GITHUB_TOKEN: str
     GITHUB_WEBHOOK_SECRET: str
     
-    # LLM Configuration
-    LLM_PROVIDER: str = "google"  # openai, anthropic, or google (gemini)
+    # LLM configuration (tracker section 4, D-06). Provider and model are settings only.
+    # Format: "<provider>:<model-id>", provider one of google, openai, anthropic,
+    # openai-compatible. No default: pick a model in .env (see .env.example).
+    LLM_MODEL: str = ""
+    # Optional per-role models; empty means use LLM_MODEL
+    LLM_MODEL_SECURITY: str = ""
+    LLM_MODEL_PERFORMANCE: str = ""
+    LLM_MODEL_BEST_PRACTICES: str = ""
+    LLM_MODEL_SUMMARY: str = ""
+    # Optional comma-separated fallback models, tried in order when a call fails
+    LLM_FALLBACK_MODELS: str = ""
+    # auto, native, tool or prompted. auto uses native schema output where supported
+    LLM_STRUCTURED_OUTPUT_MODE: str = "auto"
+    LLM_TEMPERATURE: float = 0.3
+    LLM_MAX_TOKENS: int = Field(4000, gt=0)
+    # Retries for transient provider errors, applied the same way for every provider
+    LLM_MAX_RETRIES: int = Field(2, ge=0)
+    LLM_TIMEOUT_SECONDS: float = Field(120.0, gt=0)
+
+    # Provider credentials (only the ones your models use are needed)
     OPENAI_API_KEY: str = ""
     ANTHROPIC_API_KEY: str = ""
     GOOGLE_API_KEY: str = ""
-    
-    # LLM Model Settings
-    # Default models per provider:
-    # - google: gemini-1.5-pro, gemini-1.5-flash
-    # - openai: gpt-4-turbo-preview, gpt-4o
-    # - anthropic: claude-3-5-sonnet-20241022, claude-3-opus-20240229
-    LLM_MODEL: str = "gemini-1.5-flash"
-    LLM_TEMPERATURE: float = 0.3
-    LLM_MAX_TOKENS: int = 4000
-    
-    # Telex Integration
-    TELEX_WEBHOOK_URL: str = ""  # Telex webhook endpoint for sending notifications
-    TELEX_WEBHOOK_HOOK_ID: str = ""  # Your hook ID from Telex (used if TELEX_WEBHOOK_URL not set)
-    TELEX_CHANNEL: str = "#code-reviews"
-    
-    # A2A Configuration
-    A2A_AGENT_URL: str = ""
-    A2A_AGENT_NAME: str = "Code Review Summarizer"
-    
-    # Security
-    SECRET_KEY: str
-    
-    
-    DATABASE_URL: str = "sqlite:///./code_review_agent.db"
-    
-    # Redis (Optional - for caching)
-    REDIS_URL: str = "redis://localhost:6379/0"
-    
+    # Any OpenAI Chat Completions compatible server: local models or gateways
+    OPENAI_COMPATIBLE_BASE_URL: str = ""
+    OPENAI_COMPATIBLE_API_KEY: str = ""
+
     # Logging
     LOG_LEVEL: str = "INFO"
     LOG_FORMAT: str = "json"
@@ -63,5 +53,11 @@ class Settings(BaseSettings):
         "case_sensitive": True,
         "extra": "allow"
     }
+
+    @property
+    def LLM_PROVIDER(self) -> str:  # noqa: N802 - kept for existing callers
+        """Provider of the default model, derived from LLM_MODEL."""
+        provider, sep, _ = self.LLM_MODEL.partition(":")
+        return provider.strip().lower() if sep else ""
 
 settings = Settings()
