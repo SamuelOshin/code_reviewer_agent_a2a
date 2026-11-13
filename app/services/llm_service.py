@@ -8,15 +8,86 @@ never touches a provider SDK. Provider and model per role are configuration.
 
 import json
 import logging
+import re
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
+
+from pydantic import BaseModel
 
 from app.core.config import settings
 from app.core.exceptions import LLMError
 from app.llm import LLMClient, LLMResult, Role, build_client
+from app.llm.errors import LLMOutputError
 from app.models.analysis import BestPracticeIssue, PerformanceIssue, SecurityIssue, Severity
 
 logger = logging.getLogger(__name__)
+
+# How much of the diff each findings prompt includes. A longer diff is cut here, so
+# the LLM reviews only part of the PR. The analyzer reports that in the result and
+# never approves it (P1-06).
+MAX_DIFF_CHARS = 8000
+
+IssueT = TypeVar("IssueT", bound=BaseModel)
+
+
+class PartialFindingsError(LLMOutputError):
+    """Some findings in the model output were invalid and had to be dropped.
+
+    `findings` holds the ones that validated, so the caller can still report them
+    while marking the review incomplete. The message never contains model output.
+    """
+
+    def __init__(self, message: str, findings: list[Any]):
+        super().__init__(message)
+        self.findings = findings
+
+
+def _is_findings_array(value: Any) -> bool:
+    return isinstance(value, list) and all(isinstance(item, dict) for item in value)
+
+
+def extract_findings_array(response: str, role: Role) -> list[dict[str, Any]]:
+    """Parse a JSON array of finding objects out of a model response.
+
+    Accepts a bare array, an array in a markdown code fence, or an array inside
+    prose. Anything else (no array, a truncated array, an array of arrays, an
+    object) raises `LLMOutputError`. It never returns `[]` for output it could not
+    read, because an empty list means "no issues" and could approve the PR (F-03).
+    Error messages describe the output's shape only, never its content.
+    """
+    text = (response or "").strip()
+    candidates = [text]
+    fence = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
+    if fence:
+        candidates.append(fence.group(1).strip())
+
+    for candidate in candidates:
+        try:
+            data = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if _is_findings_array(data):
+            return data
+        raise LLMOutputError(
+            f"{role} output is JSON but not an array of finding objects "
+            f"(got {type(data).__name__})"
+        )
+
+    # Prose around the array: take the first '[' that decodes to an array of objects
+    decoder = json.JSONDecoder()
+    for match in re.finditer(r"\[", text):
+        try:
+            data, _ = decoder.raw_decode(text, match.start())
+        except json.JSONDecodeError:
+            continue
+        if _is_findings_array(data):
+            return data
+
+    raise LLMOutputError(
+        f"{role} output could not be parsed as a JSON array of findings "
+        f"({len(text)} characters)"
+    )
 
 
 class LLMService:
@@ -65,31 +136,49 @@ class LLMService:
         
         return prompts
     
-    def _extract_json_from_response(self, response: str) -> list[dict[str, Any]]:
-        """Extract JSON array from LLM response (handles markdown code blocks)"""
-        try:
-            # Try direct JSON parse first
-            return json.loads(response)
-        except json.JSONDecodeError:
-            # Try to extract JSON from markdown code block
-            import re
-            json_match = re.search(r'```(?:json)?\s*(\[.*?\])\s*```', response, re.DOTALL)
-            if json_match:
-                try:
-                    return json.loads(json_match.group(1))
-                except json.JSONDecodeError:
-                    pass
-            
-            # Try to find array in response
-            array_match = re.search(r'\[.*?\]', response, re.DOTALL)
-            if array_match:
-                try:
-                    return json.loads(array_match.group(0))
-                except json.JSONDecodeError:
-                    pass
-            
-            logger.warning(f"Could not extract JSON from LLM response: {response[:200]}")
-            return []
+    def _parse_findings(
+        self,
+        role: Role,
+        response: str,
+        model: type[IssueT],
+        prepare: Callable[[dict[str, Any]], None] | None = None,
+    ) -> list[IssueT]:
+        """Validate model output into findings, failing closed.
+
+        Unparseable output raises `LLMOutputError`. If only some findings are
+        invalid, the valid ones are kept and `PartialFindingsError` is raised so the
+        review is marked incomplete. Nothing from the output itself is logged:
+        validation errors echo their input, which is PR code.
+        """
+        findings: list[IssueT] = []
+        dropped = 0
+        for raw in extract_findings_array(response, role):
+            try:
+                if prepare is not None:
+                    prepare(raw)
+                findings.append(model(**raw))
+            except Exception:
+                dropped += 1
+        if dropped:
+            logger.warning(f"Dropped {dropped} invalid {role} finding(s) from model output")
+            raise PartialFindingsError(
+                f"{dropped} {role} finding(s) in the model output were invalid", findings
+            )
+        logger.info(f"Found {len(findings)} {role} issues")
+        return findings
+
+    @staticmethod
+    def _wrap_error(task: str, error: Exception) -> LLMError:
+        """Log and return an error for the caller, without upstream or PR content.
+
+        Shared `LLMError` types already carry safe messages. Anything else is
+        reported by type only, since its text can echo the prompt or the output.
+        """
+        if isinstance(error, LLMError):
+            logger.error(f"{task} error: {error}")
+            return error
+        logger.error(f"{task} error: {type(error).__name__}")
+        return LLMError(f"{task} failed: {type(error).__name__}")
     
     async def analyze_security(
         self, 
@@ -111,7 +200,7 @@ Changed Files ({len(files)}):
 
 Code Diff:
 ```diff
-{diff_content[:8000]}
+{diff_content[:MAX_DIFF_CHARS]}
 ```
 
 Return your findings as a JSON array following the specified format."""
@@ -120,27 +209,11 @@ Return your findings as a JSON array following the specified format."""
                 Role.SECURITY, prompt, self.prompts.get('security_analysis', '')
             )
             
-            # Parse JSON response
-            findings_data = self._extract_json_from_response(response)
-            
-            # Convert to SecurityIssue objects
-            security_issues = []
-            for finding in findings_data:
-                try:
-                    security_issues.append(SecurityIssue(**finding))
-                except Exception as e:
-                    logger.warning(f"Failed to parse security finding: {e}")
-            
-            logger.info(f"Found {len(security_issues)} security issues")
-            return security_issues
-            
-        except LLMError as e:
-            # Keep the shared error type (rate limit, auth, timeout...) for the caller
-            logger.error(f"Security analysis error: {e}")
-            raise
+            return self._parse_findings(Role.SECURITY, response, SecurityIssue)
+
         except Exception as e:
-            logger.error(f"Security analysis error: {e}")
-            raise LLMError(f"Security analysis failed: {str(e)}") from e
+            # Shared error types (rate limit, auth, timeout, output) reach the caller
+            raise self._wrap_error("Security analysis", e) from e
     
     async def analyze_performance(
         self, 
@@ -162,7 +235,7 @@ Changed Files ({len(files)}):
 
 Code Diff:
 ```diff
-{diff_content[:8000]}
+{diff_content[:MAX_DIFF_CHARS]}
 ```
 
 Return your findings as a JSON array following the specified format."""
@@ -171,38 +244,13 @@ Return your findings as a JSON array following the specified format."""
                 Role.PERFORMANCE, prompt, self.prompts.get('performance_analysis', '')
             )
             
-            findings_data = self._extract_json_from_response(response)
-            
-            performance_issues = []
-            for finding in findings_data:
-                try:
-                    # Ensure severity is present (convert impact to severity if needed)
-                    if 'severity' not in finding and 'impact' in finding:
-                        # Map impact levels to severity
-                        impact_upper = str(finding.get('impact', '')).upper()
-                        if any(word in impact_upper for word in ['CRITICAL', 'SEVERE', '10X', '100X']):
-                            finding['severity'] = 'critical'
-                        elif any(word in impact_upper for word in ['HIGH', 'SIGNIFICANT', '2X', '3X']):
-                            finding['severity'] = 'high'
-                        elif any(word in impact_upper for word in ['MEDIUM', 'MODERATE']):
-                            finding['severity'] = 'medium'
-                        else:
-                            finding['severity'] = 'low'
-                    
-                    performance_issues.append(PerformanceIssue(**finding))
-                except Exception as e:
-                    logger.warning(f"Failed to parse performance finding: {e}, data: {finding}")
-            
-            logger.info(f"Found {len(performance_issues)} performance issues")
-            return performance_issues
-            
-        except LLMError as e:
-            # Keep the shared error type (rate limit, auth, timeout...) for the caller
-            logger.error(f"Performance analysis error: {e}")
-            raise
+            return self._parse_findings(
+                Role.PERFORMANCE, response, PerformanceIssue, _severity_from_impact
+            )
+
         except Exception as e:
-            logger.error(f"Performance analysis error: {e}")
-            raise LLMError(f"Performance analysis failed: {str(e)}") from e
+            # Shared error types (rate limit, auth, timeout, output) reach the caller
+            raise self._wrap_error("Performance analysis", e) from e
     
     async def analyze_best_practices(
         self, 
@@ -224,7 +272,7 @@ Changed Files ({len(files)}):
 
 Code Diff:
 ```diff
-{diff_content[:8000]}
+{diff_content[:MAX_DIFF_CHARS]}
 ```
 
 Focus on: code organization, naming conventions, documentation, error handling, testing, maintainability.
@@ -245,25 +293,11 @@ Return your findings as a JSON array with:
                 "You are a code review expert focused on software engineering best practices.",
             )
             
-            findings_data = self._extract_json_from_response(response)
-            
-            best_practice_issues = []
-            for finding in findings_data:
-                try:
-                    best_practice_issues.append(BestPracticeIssue(**finding))
-                except Exception as e:
-                    logger.warning(f"Failed to parse best practice finding: {e}")
-            
-            logger.info(f"Found {len(best_practice_issues)} best practice issues")
-            return best_practice_issues
-            
-        except LLMError as e:
-            # Keep the shared error type (rate limit, auth, timeout...) for the caller
-            logger.error(f"Best practices analysis error: {e}")
-            raise
+            return self._parse_findings(Role.BEST_PRACTICES, response, BestPracticeIssue)
+
         except Exception as e:
-            logger.error(f"Best practices analysis error: {e}")
-            raise LLMError(f"Best practices analysis failed: {str(e)}") from e
+            # Shared error types (rate limit, auth, timeout, output) reach the caller
+            raise self._wrap_error("Best practices analysis", e) from e
     
     async def generate_summary(
         self,
@@ -316,12 +350,21 @@ Generate the executive summary following the specified format."""
             logger.info("Generated executive summary")
             return response.strip()
             
-        except LLMError as e:
-            # Keep the shared error type (rate limit, auth, timeout...) for the caller
-            logger.error(f"Summary generation error: {e}")
-            raise
         except Exception as e:
-            logger.error(f"Summary generation error: {e}")
-            raise LLMError(f"Summary generation failed: {str(e)}") from e
+            # Shared error types (rate limit, auth, timeout, output) reach the caller
+            raise self._wrap_error("Summary generation", e) from e
 
 
+def _severity_from_impact(finding: dict[str, Any]) -> None:
+    """Fill in `severity` from free-text `impact` when the model left it out."""
+    if 'severity' in finding or 'impact' not in finding:
+        return
+    impact_upper = str(finding.get('impact', '')).upper()
+    if any(word in impact_upper for word in ['CRITICAL', 'SEVERE', '10X', '100X']):
+        finding['severity'] = 'critical'
+    elif any(word in impact_upper for word in ['HIGH', 'SIGNIFICANT', '2X', '3X']):
+        finding['severity'] = 'high'
+    elif any(word in impact_upper for word in ['MEDIUM', 'MODERATE']):
+        finding['severity'] = 'medium'
+    else:
+        finding['severity'] = 'low'

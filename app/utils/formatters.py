@@ -9,6 +9,7 @@ A2A messages, GitHub comments, and terminal display.
 import logging
 
 from app.models.analysis import (
+    AnalysisStatus,
     ApprovalRecommendation,
     BestPracticeIssue,
     CodeAnalysisResult,
@@ -45,7 +46,8 @@ class SummaryFormatter:
         ApprovalRecommendation.APPROVE: "✅",
         ApprovalRecommendation.APPROVE_WITH_SUGGESTIONS: "👍",
         ApprovalRecommendation.REQUEST_CHANGES: "🔄",
-        ApprovalRecommendation.REJECT: "❌"
+        ApprovalRecommendation.REJECT: "❌",
+        ApprovalRecommendation.INCOMPLETE: "⏸️",
     }
     
     @classmethod
@@ -63,16 +65,33 @@ class SummaryFormatter:
         sections = []
         
         # Header with PR info
-        sections.append(f"# ✅ Code Review Complete - PR #{analysis.pr_number}")
+        complete = analysis.status == AnalysisStatus.COMPLETE
+        if complete:
+            sections.append(f"# ✅ Code Review Complete - PR #{analysis.pr_number}")
+        else:
+            sections.append(
+                f"# ⏸️ Code Review {analysis.status.value.title()} - PR #{analysis.pr_number}"
+            )
         sections.append("")
         sections.append(f"**{analysis.pr_title}** by @{analysis.author}")
         sections.append("")
-        
+
         # Risk & Recommendation - THE MOST IMPORTANT PART
         risk_emoji = cls.RISK_EMOJI.get(analysis.risk_level, "❔")
         approval_emoji = cls.APPROVAL_EMOJI.get(analysis.approval_recommendation, "❔")
         sections.append(f"## {risk_emoji} Risk: **{analysis.risk_level.value.upper()}** | {approval_emoji} {analysis.approval_recommendation.value.replace('_', ' ').title()}")
         sections.append("")
+
+        # Fail closed (P1-06): say plainly what did not run. The reasons hold no
+        # model output or PR code, so they are safe to post.
+        if not complete:
+            sections.append(
+                "> **This review is not complete and is not an approval.** "
+                "A human must review this PR."
+            )
+            for reason in analysis.incomplete_reasons:
+                sections.append(f"> - {reason}")
+            sections.append("")
         
         # Quick Stats
         total_issues = len(analysis.security_findings) + len(analysis.performance_findings) + len(analysis.best_practice_findings)
@@ -255,6 +274,9 @@ class SummaryFormatter:
         lines.append(f"Performance Issues: {len(analysis.performance_findings)}")
         lines.append(f"Best Practice Issues: {len(analysis.best_practice_findings)}")
         lines.append(f"Recommendation: {analysis.approval_recommendation.value.replace('_', ' ').upper()}")
+        lines.append(f"Status: {analysis.status.value.upper()}")
+        for reason in analysis.incomplete_reasons:
+            lines.append(f"  - {reason}")
         lines.append("")
         
         if analysis.executive_summary:

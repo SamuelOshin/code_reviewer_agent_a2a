@@ -36,6 +36,18 @@ class ApprovalRecommendation(StrEnum):
     APPROVE_WITH_SUGGESTIONS = "approve_with_suggestions"
     REQUEST_CHANGES = "request_changes"
     REJECT = "reject"
+    # The review did not finish (an LLM step failed or saw only part of the diff),
+    # so it cannot vouch for the PR. Never shown as an approval (P1-06).
+    INCOMPLETE = "incomplete"
+
+
+class AnalysisStatus(StrEnum):
+    """Whether every part of the review ran on the whole diff (P1-06)"""
+    COMPLETE = "complete"
+    # Some LLM steps failed or saw a truncated diff; rule findings are still reported
+    INCOMPLETE = "incomplete"
+    # No LLM findings step succeeded; only rule-based findings are reported
+    FAILED = "failed"
 
 
 class SecurityIssue(BaseModel):
@@ -102,6 +114,13 @@ class CodeAnalysisResult(BaseModel):
     
     # Recommendations
     approval_recommendation: ApprovalRecommendation
+    # Fail-closed reporting (P1-06). `incomplete_reasons` says what did not run, in
+    # words safe to post publicly (no model output, no PR code).
+    status: AnalysisStatus = AnalysisStatus.COMPLETE
+    incomplete_reasons: list[str] = []
+    diff_truncated: bool = False
+    diff_chars_total: int | None = None
+    diff_chars_reviewed_by_llm: int | None = None
     key_concerns: list[str] = []
     positive_aspects: list[str] = []
     suggested_reviewers: list[str] = []
