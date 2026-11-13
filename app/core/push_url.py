@@ -27,12 +27,21 @@ class PushUrlRejected(ClientInputError):
 
 _NAT64 = ipaddress.IPv6Network("64:ff9b::/96")
 _IPV4_COMPATIBLE = ipaddress.IPv6Network("::/96")
+_SIX_TO_FOUR = ipaddress.IPv6Network("2002::/16")
+# ipaddress treats these as global, but they are not routable public hosts (P1-18):
+# deprecated site-local (RFC 3879) and Teredo tunnelling (RFC 4380, can embed any IPv4)
+_NEVER_PUBLIC_V6 = (
+    ipaddress.IPv6Network("fec0::/10"),
+    ipaddress.IPv6Network("2001::/32"),
+)
 
 
 def _embedded_ipv4(ip: ipaddress.IPv6Address) -> ipaddress.IPv4Address | None:
-    """The IPv4 address inside an IPv4-mapped, IPv4-compatible or NAT64 address."""
+    """The IPv4 address inside an IPv4-mapped, IPv4-compatible, NAT64 or 6to4 address."""
     if ip.ipv4_mapped is not None:  # ::ffff:a.b.c.d
         return ip.ipv4_mapped
+    if ip in _SIX_TO_FOUR:  # 2002:aabb:ccdd::/48 carries aa.bb.cc.dd in bits 16-47
+        return ipaddress.IPv4Address((int(ip) >> 80) & 0xFFFFFFFF)
     if ip in _NAT64 or ip in _IPV4_COMPATIBLE:  # 64:ff9b::a.b.c.d, ::a.b.c.d
         return ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
     return None
@@ -44,6 +53,8 @@ def _is_public(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
         embedded = _embedded_ipv4(ip)
         if embedded is not None:
             ip = embedded
+        elif any(ip in net for net in _NEVER_PUBLIC_V6):
+            return False
     return ip.is_global and not ip.is_multicast
 
 
