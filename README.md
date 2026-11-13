@@ -140,8 +140,9 @@ once and pushes the result to that URL. The URL must be `https`, its host must b
 `PUSH_URL_ALLOWED_HOSTS`, its port 443 or one in `PUSH_URL_ALLOWED_PORTS`, and it must
 resolve to public addresses only. A blocking call that runs longer than
 `A2A_BLOCKING_TIMEOUT_SECONDS` returns error `-32004`. A JSON-RPC batch runs its calls
-concurrently, at most 5 at a time per batch, so a batch of n blocking calls can take up
-to ceil(n/5) times that timeout. On timeout, a GitHub request that has already started
+concurrently, at most 5 at a time across the whole process (all batches share one
+limit), so a batch of n blocking calls can take up to ceil(n/5) times that timeout, and
+longer while other batches are running. On timeout, a GitHub request that has already started
 cannot be stopped: it finishes in a worker thread (bounded by a 15 s socket timeout, at
 most 3 retries and a 30 s cap on rate-limit waits) and its result is discarded; queued
 GitHub calls are skipped.
