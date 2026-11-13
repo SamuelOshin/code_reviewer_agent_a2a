@@ -20,6 +20,7 @@ from typing import Any, TypeVar
 from app.core.config import settings
 from app.core.errors import new_error_id
 from app.core.exceptions import AnalysisError, GitHubMCPError, LLMError
+from app.llm.errors import LLMRateLimitError
 from app.models.analysis import (
     AnalysisStatus,
     ApprovalRecommendation,
@@ -40,6 +41,10 @@ from app.utils.security_rules import SecurityChecker
 logger = logging.getLogger(__name__)
 
 IssueT = TypeVar("IssueT")
+
+# Fixed texts for a throttled model (P1-22). No exception text, no provider name.
+RETRY_LATER_TEXT = "wait a few minutes and run the review again."
+RATE_LIMITED_TEXT = f"the model was rate-limited; {RETRY_LATER_TEXT}"
 
 
 class CodeAnalyzerService:
@@ -144,12 +149,19 @@ class CodeAnalyzerService:
                 )
             except LLMError as e:
                 logger.error(f"Summary generation failed, using fallback: {type(e).__name__}")
-                incomplete_reasons.append(f"Summary generation failed ({type(e).__name__}).")
+                if isinstance(e, LLMRateLimitError):
+                    incomplete_reasons.append(f"Summary generation failed: {RATE_LIMITED_TEXT}")
+                else:
+                    incomplete_reasons.append(f"Summary generation failed ({type(e).__name__}).")
                 executive_summary = (
                     f"Automated summary unavailable. Found {len(all_security_issues)} security, "
                     f"{len(all_performance_issues)} performance and "
                     f"{len(all_best_practice_issues)} best practice issue(s)."
                 )
+                if not (security_ran or performance_ran or best_practices_ran) and isinstance(
+                    e, LLMRateLimitError
+                ):
+                    executive_summary += f" The model was rate-limited; {RETRY_LATER_TEXT}"
             
             # Step 9: Generate recommendations
             recommendations = self._generate_recommendations(
@@ -259,6 +271,12 @@ class CodeAnalyzerService:
             logger.error(f"{name} returned some invalid findings: {type(e).__name__}")
             incomplete_reasons.append(f"{name} returned some invalid findings, which were dropped.")
             return list(e.findings), True
+        except LLMRateLimitError as e:
+            # P1-22: fixed text, no exception text, so a throttled model reads as
+            # "retry later" and not as a bug
+            logger.error(f"{name} failed: {type(e).__name__}")
+            incomplete_reasons.append(f"{name} failed: {RATE_LIMITED_TEXT}")
+            return [], False
         except Exception as e:
             logger.error(f"{name} failed: {type(e).__name__}")
             incomplete_reasons.append(f"{name} failed ({type(e).__name__}).")

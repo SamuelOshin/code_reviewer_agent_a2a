@@ -175,7 +175,7 @@ class TestNeverApproves:
         assert result.status == AnalysisStatus.FAILED
         assert result.approval_recommendation == ApprovalRecommendation.INCOMPLETE
         assert len(result.incomplete_reasons) == 3
-        assert all("LLMRateLimitError" in r for r in result.incomplete_reasons)
+        assert all("rate-limited" in r for r in result.incomplete_reasons)
 
     @pytest.mark.asyncio
     async def test_llm_failure_keeps_rule_findings_and_their_reject(self):
