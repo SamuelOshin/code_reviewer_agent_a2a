@@ -124,6 +124,11 @@ class Settings(BaseSettings):
             "GITHUB_WEBHOOK_SECRET", value,
             "python -c \"import secrets; print(secrets.token_hex(32))\"",
         )
+        # Strip first so padding cannot count towards the length, and return the
+        # stripped value so the HMAC key is exactly the string that was length-checked.
+        # A stray newline from a pasted .env or a platform UI would otherwise silently
+        # become part of the key (or fail every delivery with a 401).
+        value = value.strip()
         if len(value) < MIN_WEBHOOK_SECRET_LENGTH:
             raise ValueError(
                 f"GITHUB_WEBHOOK_SECRET must be at least {MIN_WEBHOOK_SECRET_LENGTH} "
