@@ -44,9 +44,10 @@ and reports how many characters were reviewed (the rules still cover the whole d
 Malformed or truncated model output is never read as "no issues". Raw model output is
 never logged. Tests: `tests/test_fail_closed.py`.
 
-The status and reasons appear in the PR comment (`app/utils/formatters.py`). They are not
-yet in the A2A report or the `analyze_pr` RPC result (tracked as `P1-15`), so RPC callers
-should treat `approval_recommendation` as the signal for now.
+The status and reasons appear in the PR comment (`app/utils/formatters.py`) and in the
+A2A report text. The `analyze_pr` RPC result carries them as `analysis_status` and
+`incomplete_reasons`, plus `llm_models_by_role` (the model configured for each role).
+Tests: `tests/test_p115_followups.py`.
 
 ## Quick start
 
@@ -87,7 +88,7 @@ All settings are environment variables (or `.env`). [`.env.example`](.env.exampl
 | Variable | Required | Meaning |
 |---|---|---|
 | `GITHUB_TOKEN` | yes | Token used to read PRs and post comments |
-| `GITHUB_WEBHOOK_SECRET` | yes | HMAC secret for `/webhooks/github`. Startup fails if empty or still the `.env.example` placeholder |
+| `GITHUB_WEBHOOK_SECRET` | yes | HMAC secret for `/webhooks/github`. At least 32 characters; startup fails if shorter, empty or still the `.env.example` placeholder |
 | `API_KEY` | yes | Bearer key for `/rpc` and `/a2a/*`. At least 32 characters; startup fails if shorter or still the placeholder |
 | `LLM_MODEL` | yes in practice | `<provider>:<model-id>`; providers `google`, `openai`, `anthropic`, `openai-compatible`. A value without a provider prefix is rejected with an explanatory error |
 | `LLM_MODEL_SECURITY`, `_PERFORMANCE`, `_BEST_PRACTICES`, `_SUMMARY` | no | Per-role model; empty uses `LLM_MODEL` |
@@ -97,7 +98,9 @@ All settings are environment variables (or `.env`). [`.env.example`](.env.exampl
 | `GOOGLE_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` | per provider | Only for the providers your models use |
 | `OPENAI_COMPATIBLE_BASE_URL`, `OPENAI_COMPATIBLE_API_KEY` | for `openai-compatible` | Local models or gateways |
 | `PUSH_URL_ALLOWED_HOSTS` | no | Comma-separated bare hostnames allowed to receive push notifications. Empty (default) disables them |
-| `CORS_ALLOWED_ORIGINS` | no | Comma-separated `scheme://host[:port]`. Empty sends no CORS headers; `*` is refused |
+| `PUSH_URL_ALLOWED_PORTS` | no | Extra ports push URLs may use, comma-separated. Empty (default) allows only 443 |
+| `A2A_BLOCKING_TIMEOUT_SECONDS` | no | Longest a blocking `message/send` may run, default 300, max 3600. On timeout it returns JSON-RPC error `-32004` |
+| `CORS_ALLOWED_ORIGINS` | no | Comma-separated `scheme://host[:port]`, lowercased. Empty sends no CORS headers; `*` is refused |
 | `JSONRPC_MAX_BATCH_SIZE` | no | Most calls per JSON-RPC batch, 1-100, default 10 |
 | `ENVIRONMENT`, `PORT`, `LOG_LEVEL`, `LOG_FORMAT`, `HOST_PORT` | no | See `.env.example` |
 
@@ -117,7 +120,7 @@ Switching provider is a configuration change only, for example
 | `/docs` | GET | none | Interactive docs, `ENVIRONMENT=development` only |
 
 Without `Authorization: Bearer $API_KEY`, `/rpc` and `/a2a/*` return 401. A batch larger
-than `JSONRPC_MAX_BATCH_SIZE` is rejected.
+than `JSONRPC_MAX_BATCH_SIZE`, or an empty batch, is rejected with "Invalid Request".
 
 ```bash
 export API_KEY=...   # the value from your .env
@@ -134,21 +137,28 @@ curl -X POST http://localhost:8000/a2a/tasks \
 `message/send` without a push configuration returns a finished task (blocking is the
 default). With `"blocking": false` and a `pushNotificationConfig.url`, it returns at
 once and pushes the result to that URL. The URL must be `https`, its host must be in
-`PUSH_URL_ALLOWED_HOSTS`, and it must resolve to public addresses only.
+`PUSH_URL_ALLOWED_HOSTS`, its port 443 or one in `PUSH_URL_ALLOWED_PORTS`, and it must
+resolve to public addresses only. A blocking call that runs longer than
+`A2A_BLOCKING_TIMEOUT_SECONDS` returns error `-32004`.
 
 ### GitHub webhook
 
 In the repository's Settings, Webhooks: payload URL `https://<your-host>/webhooks/github`,
 content type `application/json`, the secret equal to `GITHUB_WEBHOOK_SECRET`, event
-"Pull requests". Requests without a valid `X-Hub-Signature-256` are rejected.
+"Pull requests". Requests without a valid `X-Hub-Signature-256` are rejected. A delivery
+whose `X-GitHub-Delivery` id was seen in the last hour is ignored (in memory, per process),
+so GitHub redeliveries do not post twice.
 
 ## Security notes
 
 - `/rpc` and `/a2a/*` use a constant-time Bearer check (`app/core/auth.py`).
 - The webhook secret is mandatory; unsigned events cannot make the bot comment.
-- Push URLs are allowlisted and checked against private addresses (SSRF guard). A known
+- Push URLs are allowlisted and checked against private addresses, including IPv4
+  addresses embedded in IPv6 (mapped, compatible and NAT64) forms (SSRF guard). A known
   limit: DNS can change between the check and the connection; the allowlist is the main
   control.
+- Webhook replay protection keys on the delivery id, which the signature does not cover,
+  so it stops GitHub redeliveries but not a captured body resent with a new id.
 - This repo is public. Put secrets only in `.env`, which is not committed.
 
 ## Development
