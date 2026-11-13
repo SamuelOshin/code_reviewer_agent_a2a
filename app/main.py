@@ -82,14 +82,17 @@ app = FastAPI(
     redoc_url="/redoc" if settings.ENVIRONMENT == "development" else None
 )
 
-# CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Configure based on your needs
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# CORS (P1-07): only configured browser origins, never "*". With no origins set,
+# no CORS headers are sent; server-to-server A2A clients do not need them. Auth is
+# a bearer header, not cookies, so credentials stay off.
+if settings.cors_allowed_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_allowed_origins,
+        allow_credentials=False,
+        allow_methods=["GET", "POST"],
+        allow_headers=["Authorization", "Content-Type"],
+    )
 
 
 # ============================================================================
