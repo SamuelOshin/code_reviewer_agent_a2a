@@ -131,6 +131,7 @@ class JSONRPCHandler:
                 
             except ClientInputError as e:
                 # The message was written for the caller (e.g. a rejected push URL)
+                # ClientInputError messages are written for the caller and safe to log
                 logger.warning(f"Rejected params for {request.method}: {e}")
                 return self._error_response(
                     request_id=request.id,
@@ -150,8 +151,8 @@ class JSONRPCHandler:
                 # Invalid params (wrong arguments)
                 error_id = new_error_id()
                 logger.error(
-                    f"Invalid params for {request.method} [error_id={error_id}]: {e}",
-                    exc_info=True,
+                    f"Invalid params for {request.method} [error_id={error_id}]: "
+                    f"{type(e).__name__}",
                 )
                 return self._error_response(
                     request_id=request.id,
@@ -165,8 +166,7 @@ class JSONRPCHandler:
                 error_id = new_error_id()
                 logger.error(
                     f"Error executing {request.method} [error_id={error_id}]: "
-                    f"{type(e).__name__}: {e}",
-                    exc_info=True,
+                    f"{type(e).__name__}",
                 )
                 return self._error_response(
                     request_id=request.id,
@@ -179,8 +179,8 @@ class JSONRPCHandler:
             # Unexpected error in handler itself
             error_id = new_error_id()
             logger.error(
-                f"Unexpected error in JSON-RPC handler [error_id={error_id}]: {e}",
-                exc_info=True,
+                f"Unexpected error in JSON-RPC handler [error_id={error_id}]: "
+                f"{type(e).__name__}",
             )
             return self._error_response(
                 request_id=None,

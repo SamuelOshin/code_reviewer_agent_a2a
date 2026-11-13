@@ -27,7 +27,7 @@ configuration, not code.
 | `POST /a2a/tasks`: JSON-RPC `message/send`, or `{"message": "<text containing a PR URL>"}` | `app/routes/a2a_tasks.py`, `tests/test_a2a_protocol.py` |
 | GitHub webhook: HMAC-verified `pull_request` events (opened, synchronize, reopened) get one summary comment on the PR, capped at 60,000 characters | `app/routes/webhooks.py`, `tests/test_webhooks.py` |
 | Optional push of the result to a caller-supplied URL (allowlisted, https, public addresses only) | `app/core/push_url.py`, `tests/test_security_p107.py` |
-| Safe errors: clients get a generic message plus an error id; raw model output is never logged. Some log lines still include raw exception text, such as GitHub error details (`P1-17`) | `app/core/errors.py`, `tests/test_safe_logging.py` |
+| Safe errors: clients get a generic message plus an error id; raw model output is never logged. Outside the webhook route, logs and raised errors carry only the exception type (or the HTTP status for GitHub errors) and an error id, never exception text or tracebacks. The webhook route still logs raw exception text until `P1-16` lands | `app/core/errors.py`, `tests/test_safe_logging.py`, `tests/test_safe_logging_p117.py` |
 
 ## Fail-closed reviews
 

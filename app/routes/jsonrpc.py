@@ -48,7 +48,9 @@ async def jsonrpc_endpoint(request: Request):
             body = await request.json()
         except Exception as e:
             error_id = new_error_id()
-            logger.error(f"Failed to parse JSON-RPC request body [error_id={error_id}]: {e}")
+            logger.error(
+                f"Failed to parse JSON-RPC request body [error_id={error_id}]: {type(e).__name__}"
+            )
             return JSONResponse(
                 content={
                     "jsonrpc": "2.0",
@@ -103,7 +105,9 @@ async def jsonrpc_endpoint(request: Request):
         raise
     except Exception as e:
         error_id = new_error_id()
-        logger.error(f"Unexpected error in JSON-RPC endpoint [error_id={error_id}]: {e}", exc_info=True)
+        logger.error(
+            f"Unexpected error in JSON-RPC endpoint [error_id={error_id}]: {type(e).__name__}"
+        )
         return JSONResponse(
             content={
                 "jsonrpc": "2.0",

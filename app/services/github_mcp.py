@@ -93,7 +93,7 @@ class GitHubMCPService:
                 self._client.close()
                 logger.info("GitHub client closed successfully")
             except Exception as e:
-                logger.warning(f"Error closing GitHub client: {e}")
+                logger.warning(f"Error closing GitHub client: {type(e).__name__}")
     
     def parse_pr_url(self, pr_url: str) -> tuple[str, str, int]:
         """
@@ -151,10 +151,10 @@ class GitHubMCPService:
             logger.info(f"Posted comment on {owner}/{repo}#{pr_number}")
         except GithubException as e:
             logger.error(f"Failed to post comment on {owner}/{repo}#{pr_number}: status={e.status}")
-            raise GitHubMCPError(f"Failed to post PR comment (status {e.status})") from e
+            raise GitHubMCPError(f"Failed to post PR comment (status {e.status})") from None
         except Exception as e:
             logger.error(f"Failed to post comment on {owner}/{repo}#{pr_number}: {type(e).__name__}")
-            raise GitHubMCPError(f"Failed to post PR comment: {type(e).__name__}") from e
+            raise GitHubMCPError(f"Failed to post PR comment: {type(e).__name__}") from None
 
     async def get_pull_request(
         self, 
@@ -237,11 +237,13 @@ class GitHubMCPService:
             # Convert PyGithub PR to our PullRequest model
             return PullRequest(**pr_data)
         except GithubException as e:
-            logger.error(f"Failed to fetch PR {owner}/{repo}#{pr_number}: {e}")
-            raise GitHubMCPError(f"Failed to fetch PR: {str(e)}") from e
+            # Status only: str(e) carries the GitHub response body (P1-17)
+            logger.error(f"Failed to fetch PR {owner}/{repo}#{pr_number}: status={e.status}")
+            raise GitHubMCPError(f"Failed to fetch PR (status {e.status})") from None
         except Exception as e:
-            logger.error(f"Failed to fetch PR {owner}/{repo}#{pr_number}: {e}")
-            raise GitHubMCPError(f"Failed to fetch PR: {str(e)}") from e
+            error_id = new_error_id()
+            logger.error(f"Failed to fetch PR {owner}/{repo}#{pr_number} [error_id={error_id}]: {type(e).__name__}")
+            raise GitHubMCPError(f"Failed to fetch PR (error id: {error_id})") from None
     
     async def get_pr_diff(
         self, 
@@ -286,11 +288,13 @@ class GitHubMCPService:
             logger.info(f"Fetched diff ({len(diff)} chars) for PR {owner}/{repo}#{pr_number}")
             return diff
         except GithubException as e:
-            logger.error(f"Failed to fetch PR diff: {e}")
-            raise GitHubMCPError(f"Failed to fetch PR diff: {str(e)}") from e
+            # Status only: str(e) carries the GitHub response body (P1-17)
+            logger.error(f"Failed to fetch PR diff: status={e.status}")
+            raise GitHubMCPError(f"Failed to fetch PR diff (status {e.status})") from None
         except Exception as e:
-            logger.error(f"Failed to fetch PR diff: {e}")
-            raise GitHubMCPError(f"Failed to fetch PR diff: {str(e)}") from e
+            error_id = new_error_id()
+            logger.error(f"Failed to fetch PR diff [error_id={error_id}]: {type(e).__name__}")
+            raise GitHubMCPError(f"Failed to fetch PR diff (error id: {error_id})") from None
     
     async def list_pr_files(
         self, 
@@ -335,11 +339,13 @@ class GitHubMCPService:
             logger.info(f"Fetched {len(pr_files)} files for PR {owner}/{repo}#{pr_number}")
             return pr_files
         except GithubException as e:
-            logger.error(f"Failed to fetch PR files: {e}")
-            raise GitHubMCPError(f"Failed to fetch PR files: {str(e)}") from e
+            # Status only: str(e) carries the GitHub response body (P1-17)
+            logger.error(f"Failed to fetch PR files: status={e.status}")
+            raise GitHubMCPError(f"Failed to fetch PR files (status {e.status})") from None
         except Exception as e:
-            logger.error(f"Failed to fetch PR files: {e}")
-            raise GitHubMCPError(f"Failed to fetch PR files: {str(e)}") from e
+            error_id = new_error_id()
+            logger.error(f"Failed to fetch PR files [error_id={error_id}]: {type(e).__name__}")
+            raise GitHubMCPError(f"Failed to fetch PR files (error id: {error_id})") from None
     
     async def get_pr_reviews(
         self, 
@@ -379,10 +385,10 @@ class GitHubMCPService:
             logger.info(f"Fetched {len(reviews)} reviews for PR {owner}/{repo}#{pr_number}")
             return reviews
         except GithubException as e:
-            logger.warning(f"Failed to fetch PR reviews: {e}")
+            logger.warning(f"Failed to fetch PR reviews: status={e.status}")
             return []  # Reviews are optional
         except Exception as e:
-            logger.warning(f"Failed to fetch PR reviews: {e}")
+            logger.warning(f"Failed to fetch PR reviews: {type(e).__name__}")
             return []  # Reviews are optional
     
     async def get_file_content(
@@ -420,11 +426,13 @@ class GitHubMCPService:
             else:
                 return ""
         except GithubException as e:
-            logger.error(f"Failed to fetch file content: {e}")
-            raise GitHubMCPError(f"Failed to fetch file content: {str(e)}") from e
+            # Status only: str(e) carries the GitHub response body (P1-17)
+            logger.error(f"Failed to fetch file content: status={e.status}")
+            raise GitHubMCPError(f"Failed to fetch file content (status {e.status})") from None
         except Exception as e:
-            logger.error(f"Failed to fetch file content: {e}")
-            raise GitHubMCPError(f"Failed to fetch file content: {str(e)}") from e
+            error_id = new_error_id()
+            logger.error(f"Failed to fetch file content [error_id={error_id}]: {type(e).__name__}")
+            raise GitHubMCPError(f"Failed to fetch file content (error id: {error_id})") from None
     
     async def get_pr_with_diff(
         self,

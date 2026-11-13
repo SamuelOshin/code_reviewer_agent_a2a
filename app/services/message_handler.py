@@ -193,14 +193,13 @@ class MessageHandler:
             error_id = new_error_id()
             logger.error(
                 f"Fatal error in background task [error_id={error_id}] for PR {pr_url}: "
-                f"{type(e).__name__}: {e}",
-                exc_info=True,
+                f"{type(e).__name__}",
             )
             # Try to push the error to the client's webhook
             try:
                 await self._push_error(task_id, message_id, message, push_config, str(e), error_id)
             except Exception as push_error:
-                logger.error(f"Failed to push error to webhook: {push_error}", exc_info=True)
+                logger.error(f"Failed to push error to webhook: {type(push_error).__name__}")
     
     async def _push_error(
         self,
@@ -516,7 +515,7 @@ class MessageHandler:
             
         except Exception as e:
             error_id = new_error_id()
-            logger.error(f"Error analyzing PR {pr_url} [error_id={error_id}]: {e}", exc_info=True)
+            logger.error(f"Error analyzing PR {pr_url} [error_id={error_id}]: {type(e).__name__}")
 
             # Create error response (generic text; the detail stays in the logs)
             error_msg = A2AMessage(
@@ -630,7 +629,7 @@ class MessageHandler:
                     response.raise_for_status()
                     logger.info(f"Successfully pushed result to webhook (status: {response.status_code})")
                 except httpx.TimeoutException as timeout_err:
-                    logger.warning(f"Webhook push timed out after 60s: {timeout_err}")
+                    logger.warning(f"Webhook push timed out after 60s: {type(timeout_err).__name__}")
                     logger.info("Result was prepared successfully but webhook didn't respond in time")
                     # Don't raise - analysis was successful, webhook timeout is not critical
                 except httpx.HTTPStatusError as http_err:
@@ -640,12 +639,14 @@ class MessageHandler:
                 
         except Exception as e:
             error_id = new_error_id()
-            logger.error(f"Error processing and pushing result [error_id={error_id}]: {e}", exc_info=True)
+            logger.error(
+                f"Error processing and pushing result [error_id={error_id}]: {type(e).__name__}"
+            )
             # Try to push the error to the client's webhook
             try:
                 await self._push_error(task_id, message_id, message, push_config, str(e), error_id)
             except Exception as push_error:
-                logger.error(f"Failed to push error to webhook: {push_error}", exc_info=True)
+                logger.error(f"Failed to push error to webhook: {type(push_error).__name__}")
     
     def _extract_pr_url(self, interpreted_text: str | None, conversation_history: list[dict[str, Any]]) -> str | None:
         """
