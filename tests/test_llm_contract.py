@@ -403,9 +403,9 @@ def test_model_spec_parsing():
 def test_settings_derive_provider_from_model():
     from app.core.config import Settings
 
-    s = Settings(GITHUB_TOKEN="x", GITHUB_WEBHOOK_SECRET="x", LLM_MODEL="anthropic:m")
+    s = Settings(GITHUB_TOKEN="x", GITHUB_WEBHOOK_SECRET="test-webhook-secret-not-a-secret-0123456789", LLM_MODEL="anthropic:m")
     assert s.LLM_PROVIDER == "anthropic"
-    assert Settings(GITHUB_TOKEN="x", GITHUB_WEBHOOK_SECRET="x", LLM_MODEL="bad").LLM_PROVIDER == ""
+    assert Settings(GITHUB_TOKEN="x", GITHUB_WEBHOOK_SECRET="test-webhook-secret-not-a-secret-0123456789", LLM_MODEL="bad").LLM_PROVIDER == ""
 
 
 # --- review fixes: safe errors, clear config errors, validated settings ----------
@@ -483,12 +483,12 @@ def test_numeric_llm_settings_are_validated(name, value):
     from app.core.config import Settings
 
     with pytest.raises(ValidationError, match=name):
-        Settings(GITHUB_TOKEN="x", GITHUB_WEBHOOK_SECRET="x", **{name: value})
+        Settings(GITHUB_TOKEN="x", GITHUB_WEBHOOK_SECRET="test-webhook-secret-not-a-secret-0123456789", **{name: value})
 
 
 def test_numeric_llm_settings_accept_valid_values():
     from app.core.config import Settings
 
-    s = Settings(GITHUB_TOKEN="x", GITHUB_WEBHOOK_SECRET="x", LLM_MAX_RETRIES=0,
+    s = Settings(GITHUB_TOKEN="x", GITHUB_WEBHOOK_SECRET="test-webhook-secret-not-a-secret-0123456789", LLM_MAX_RETRIES=0,
                  LLM_TIMEOUT_SECONDS=0.5, LLM_MAX_TOKENS=1)
     assert (s.LLM_MAX_RETRIES, s.LLM_TIMEOUT_SECONDS, s.LLM_MAX_TOKENS) == (0, 0.5, 1)

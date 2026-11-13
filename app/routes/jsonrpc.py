@@ -64,6 +64,16 @@ async def jsonrpc_endpoint(request: Request):
         
         # Handle batch requests
         if isinstance(body, list):
+            # JSON-RPC 2.0: an empty array is an Invalid Request, not an empty batch
+            if not body:
+                return JSONResponse(
+                    content={
+                        "jsonrpc": "2.0",
+                        "error": {"code": -32600, "message": "Invalid Request"},
+                        "id": None
+                    },
+                    status_code=200
+                )
             # Each call can start a full review, so cap the batch (P1-07)
             if len(body) > settings.JSONRPC_MAX_BATCH_SIZE:
                 logger.warning(f"Rejected JSON-RPC batch of {len(body)} calls")

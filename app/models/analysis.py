@@ -130,7 +130,9 @@ class CodeAnalysisResult(BaseModel):
     analysis_duration_seconds: float
     llm_provider: str | None = None
     llm_model: str | None = None
-    
+    # Configured model (with any fallbacks) per role, e.g. {"security": "..."} (P1-15)
+    llm_models_by_role: dict[str, str] = {}
+
     model_config = ConfigDict(json_schema_extra={
             "example": {
                 "pr_number": 123,

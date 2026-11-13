@@ -25,10 +25,25 @@ class PushUrlRejected(ClientInputError):
     """The push URL is not allowed. The message is safe to show the caller."""
 
 
+_NAT64 = ipaddress.IPv6Network("64:ff9b::/96")
+_IPV4_COMPATIBLE = ipaddress.IPv6Network("::/96")
+
+
+def _embedded_ipv4(ip: ipaddress.IPv6Address) -> ipaddress.IPv4Address | None:
+    """The IPv4 address inside an IPv4-mapped, IPv4-compatible or NAT64 address."""
+    if ip.ipv4_mapped is not None:  # ::ffff:a.b.c.d
+        return ip.ipv4_mapped
+    if ip in _NAT64 or ip in _IPV4_COMPATIBLE:  # 64:ff9b::a.b.c.d, ::a.b.c.d
+        return ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+    return None
+
+
 def _is_public(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
-    # An IPv4-mapped IPv6 address (::ffff:127.0.0.1) is judged by its IPv4 form
-    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
-        ip = ip.ipv4_mapped
+    # IPv6 forms that carry an IPv4 address are judged by that IPv4 address
+    if isinstance(ip, ipaddress.IPv6Address):
+        embedded = _embedded_ipv4(ip)
+        if embedded is not None:
+            ip = embedded
     return ip.is_global and not ip.is_multicast
 
 
@@ -52,6 +67,7 @@ async def validate_push_url(url: object) -> str:
         parts = urlsplit(url)
         host = (parts.hostname or "").lower()
         port = parts.port or 443
+        explicit_port = parts.port
     except ValueError as e:
         raise PushUrlRejected("pushNotificationConfig.url is not a valid URL") from e
 
@@ -59,6 +75,10 @@ async def validate_push_url(url: object) -> str:
         raise PushUrlRejected("pushNotificationConfig.url must use https")
     if not host or host not in allowed:
         raise PushUrlRejected("pushNotificationConfig.url host is not on the allowlist")
+    # Only 443 (the default) unless the operator added ports (P1-15): a custom port on
+    # an allowlisted host could reach a different service than the one that was vetted
+    if explicit_port is not None and explicit_port not in settings.push_url_allowed_ports:
+        raise PushUrlRejected("pushNotificationConfig.url port is not allowed")
 
     try:
         literal = ipaddress.ip_address(host)

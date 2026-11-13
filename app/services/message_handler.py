@@ -15,7 +15,8 @@ from typing import Any
 
 import httpx
 
-from app.core.errors import new_error_id, safe_webhook_target
+from app.core.config import settings
+from app.core.errors import RequestTimeoutError, new_error_id, safe_webhook_target
 from app.core.push_url import validate_push_url
 from app.models.a2a import A2AArtifact, A2AMessage, A2ATask, ArtifactPart, MessagePart, TaskStatus
 from app.services.code_analyzer import CodeAnalyzerService
@@ -156,7 +157,20 @@ class MessageHandler:
         
         # BLOCKING MODE: no push config, or blocking requested. Return the finished task.
         logger.info(f"Blocking mode: analyzing {pr_url} and returning the completed task")
-        return await self._analyze_and_return(pr_url, task_id, message_id, message)
+        # Bounded (P1-15): a hung model or GitHub call must not hold the request open
+        # forever. Cancelling stops the review; the caller can retry or use non-blocking.
+        limit = settings.A2A_BLOCKING_TIMEOUT_SECONDS
+        try:
+            return await asyncio.wait_for(
+                self._analyze_and_return(pr_url, task_id, message_id, message), timeout=limit
+            )
+        except TimeoutError:
+            logger.warning(f"Blocking review timed out after {limit:g}s")
+            raise RequestTimeoutError(
+                f"The review did not finish within {limit:g} seconds. Retry, or send the "
+                "request with blocking=false and a pushNotificationConfig to get the "
+                "result when it is ready."
+            ) from None
 
     async def _process_and_push_safe(
         self,
@@ -335,6 +349,12 @@ class MessageHandler:
         lines.append("")
         lines.append(f"**Risk Level**: {analysis_result.risk_level.value.upper()}")
         lines.append(f"**Recommendation**: {analysis_result.approval_recommendation.value.upper()}")
+        lines.append(f"**Status**: {analysis_result.status.value.upper()}")
+        if analysis_result.incomplete_reasons:
+            lines.append("")
+            lines.append("**Why the review is not complete**:")
+            for reason in analysis_result.incomplete_reasons:
+                lines.append(f"- {reason}")
         lines.append("")
         
         # Key Concerns
@@ -405,6 +425,9 @@ class MessageHandler:
         lines.append("---")
         lines.append(f"*Analysis completed at {analysis_result.analyzed_at.strftime('%Y-%m-%d %H:%M:%S UTC')}*")
         lines.append(f"*Powered by {analysis_result.llm_provider} ({analysis_result.llm_model})*")
+        if analysis_result.llm_models_by_role:
+            by_role = ", ".join(f"{r}={m}" for r, m in analysis_result.llm_models_by_role.items())
+            lines.append(f"*Models by role: {by_role}*")
         
         return "\n".join(lines)
     
@@ -637,8 +660,8 @@ class MessageHandler:
         """
         # GitHub PR URL patterns
         url_patterns = [
-            r'https?://github\.com/[^/]+/[^/]+/pull/\d+',
-            r'github\.com/[^/]+/[^/]+/pull/\d+',
+            r'https?://github\.com/[^/]+/[^/]+/pull/[0-9]+',
+            r'github\.com/[^/]+/[^/]+/pull/[0-9]+',
         ]
         
         # First check interpreted text

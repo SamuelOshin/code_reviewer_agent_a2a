@@ -124,6 +124,9 @@ async def handle_analyze_pr(pr_url: str, focus_areas: list = None) -> dict[str, 
         "executive_summary": result.executive_summary,
         "risk_level": result.risk_level.value,
         "approval_recommendation": result.approval_recommendation.value,
+        # P1-06: a non-complete status means the verdict above is not an approval
+        "analysis_status": result.status.value,  # not "status": the RPC layer treats that key as a task
+        "incomplete_reasons": result.incomplete_reasons,
         "security_issues_count": len(result.security_findings),
         "performance_issues_count": len(result.performance_findings),
         "best_practice_issues_count": len(result.best_practice_findings),
@@ -134,7 +137,8 @@ async def handle_analyze_pr(pr_url: str, focus_areas: list = None) -> dict[str, 
         "analyzed_at": result.analyzed_at.isoformat(),
         "analysis_duration_seconds": result.analysis_duration_seconds,
         "llm_provider": result.llm_provider,
-        "llm_model": result.llm_model
+        "llm_model": result.llm_model,
+        "llm_models_by_role": result.llm_models_by_role
     }
 
 

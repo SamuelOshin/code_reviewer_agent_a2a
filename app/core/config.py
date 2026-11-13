@@ -8,6 +8,9 @@ from pydantic_settings import BaseSettings
 # Shortest API key accepted at startup (P1-07). 32 characters of a random token is
 # far beyond guessing range; shorter values are usually placeholders or typos.
 MIN_API_KEY_LENGTH = 32
+# Shortest webhook secret accepted (P1-15). The HMAC key is guessable offline from
+# any captured delivery, so a short value is a real weakness. token_hex(32) is 64.
+MIN_WEBHOOK_SECRET_LENGTH = 32
 _HOSTNAME_RE = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$")
 _ORIGIN_RE = re.compile(r"^https?://[a-z0-9.-]+(:[0-9]{1,5})?$")
 
@@ -57,6 +60,14 @@ class Settings(BaseSettings):
     # notifications: results are only returned to the caller. URLs must also be
     # https and resolve to public addresses only (SSRF guard).
     PUSH_URL_ALLOWED_HOSTS: str = ""
+    # Extra ports push URLs may use, comma-separated. Empty (the default) allows only
+    # 443, the https default. Add a port only for a receiver you run on a custom one.
+    PUSH_URL_ALLOWED_PORTS: str = ""
+
+    # Longest a blocking A2A message/send may run before it returns a JSON-RPC error
+    # (P1-15). A review makes four sequential model calls, each bounded by
+    # LLM_TIMEOUT_SECONDS, so keep this above that unless you want early cut-offs.
+    A2A_BLOCKING_TIMEOUT_SECONDS: float = Field(300.0, gt=0, le=3600)
 
     # Browser origins allowed by CORS, comma-separated (e.g. https://app.example.com).
     # Empty (the default) sends no CORS headers, which is right for server-to-server
@@ -113,6 +124,11 @@ class Settings(BaseSettings):
             "GITHUB_WEBHOOK_SECRET", value,
             "python -c \"import secrets; print(secrets.token_hex(32))\"",
         )
+        if len(value) < MIN_WEBHOOK_SECRET_LENGTH:
+            raise ValueError(
+                f"GITHUB_WEBHOOK_SECRET must be at least {MIN_WEBHOOK_SECRET_LENGTH} "
+                "characters (e.g. python -c \"import secrets; print(secrets.token_hex(32))\")"
+            )
         return value
 
     @field_validator("API_KEY")
@@ -138,6 +154,16 @@ class Settings(BaseSettings):
                 )
         return value
 
+    @field_validator("PUSH_URL_ALLOWED_PORTS")
+    @classmethod
+    def _valid_push_ports(cls, value: str) -> str:
+        for item in _split_csv(value):
+            if not (item.isascii() and item.isdigit() and 1 <= int(item) <= 65535):
+                raise ValueError(
+                    f"PUSH_URL_ALLOWED_PORTS entry {item!r} must be a port number (1-65535)"
+                )
+        return value
+
     @field_validator("CORS_ALLOWED_ORIGINS")
     @classmethod
     def _valid_cors_origins(cls, value: str) -> str:
@@ -155,9 +181,21 @@ class Settings(BaseSettings):
         return frozenset(h.lower() for h in _split_csv(self.PUSH_URL_ALLOWED_HOSTS))
 
     @property
+    def push_url_allowed_ports(self) -> frozenset[int]:
+        """Ports a push URL may use: 443 plus any configured extras."""
+        return frozenset({443, *(int(p) for p in _split_csv(self.PUSH_URL_ALLOWED_PORTS))})
+
+    @property
     def cors_allowed_origins(self) -> list[str]:
-        """Allowed CORS origins, without trailing slashes."""
-        return [o.rstrip("/") for o in _split_csv(self.CORS_ALLOWED_ORIGINS)]
+        """Allowed CORS origins, without trailing slashes.
+
+        Lowercased rather than rejected when mixed case (P1-15): scheme and host are
+        case-insensitive and browsers always send them lowercase in `Origin`, so
+        "https://App.Example.com" can only mean the lowercase origin. Rejecting it
+        would fail startup over a harmless typo, while leaving it as is would make
+        the exact-match CORS check silently never match.
+        """
+        return [o.rstrip("/").lower() for o in _split_csv(self.CORS_ALLOWED_ORIGINS)]
 
     @property
     def LLM_PROVIDER(self) -> str:  # noqa: N802 - kept for existing callers

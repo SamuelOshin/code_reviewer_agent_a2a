@@ -99,6 +99,7 @@ def make_analyzer(diff=RISKY_DIFF, llm_security=None, llm_performance=None,
     llm.analyze_performance = AsyncMock(return_value=llm_performance or [])
     llm.analyze_best_practices = AsyncMock(return_value=llm_best_practice or [])
     llm.generate_summary = AsyncMock(return_value=summary)
+    llm.models_by_role = MagicMock(return_value={"security": "test:model"})
 
     with patch("app.services.code_analyzer.LLMService", return_value=llm):
         analyzer = CodeAnalyzerService()
