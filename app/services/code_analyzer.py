@@ -133,6 +133,13 @@ class CodeAnalyzerService:
             # Step 7: Calculate risk level
             risk_level = self._calculate_risk_level(all_security_issues, all_performance_issues)
             
+            # P1-22: whether every findings step failed because the model was
+            # rate-limited. Decided from the steps alone, whatever the summary step does.
+            steps_ran = security_ran or performance_ran or best_practices_ran
+            all_steps_rate_limited = not steps_ran and (
+                sum(RATE_LIMITED_TEXT in r for r in incomplete_reasons) == 3
+            )
+
             # Step 8: Generate executive summary. A provider failure here loses only
             # the prose, so fall back to a plain summary and mark the review incomplete.
             try:
@@ -158,11 +165,13 @@ class CodeAnalyzerService:
                     f"{len(all_performance_issues)} performance and "
                     f"{len(all_best_practice_issues)} best practice issue(s)."
                 )
-                if not (security_ran or performance_ran or best_practices_ran) and isinstance(
-                    e, LLMRateLimitError
-                ):
-                    executive_summary += f" The model was rate-limited; {RETRY_LATER_TEXT}"
-            
+            if all_steps_rate_limited:
+                # Lead with the cause, also when the summary call itself succeeded
+                executive_summary = (
+                    f"The model was rate-limited, so no analysis step ran; {RETRY_LATER_TEXT} "
+                    + executive_summary
+                )
+
             # Step 9: Generate recommendations
             recommendations = self._generate_recommendations(
                 all_security_issues,

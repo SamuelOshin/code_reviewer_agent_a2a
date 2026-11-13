@@ -35,3 +35,37 @@ async def test_other_step_failure_keeps_type_only_reason():
     llm.analyze_security = AsyncMock(side_effect=RuntimeError("x"))
     result = await run(analyzer, github)
     assert "Security analysis failed (RuntimeError)." in result.incomplete_reasons
+
+
+@pytest.mark.asyncio
+async def test_all_steps_rate_limited_is_named_even_when_the_summary_works():
+    # Bobby Review: the summary note depended on the summary call being rate-limited
+    analyzer, github, llm = make_analyzer()
+    boom = LLMRateLimitError("SECRET-DETAIL")
+    llm.analyze_security = AsyncMock(side_effect=boom)
+    llm.analyze_performance = AsyncMock(side_effect=boom)
+    llm.analyze_best_practices = AsyncMock(side_effect=boom)
+    llm.generate_summary = AsyncMock(return_value="Model prose.")
+
+    result = await run(analyzer, github)
+
+    assert result.status.value == "failed"
+    assert result.executive_summary.startswith("The model was rate-limited")
+    assert "Model prose." in result.executive_summary
+
+
+@pytest.mark.asyncio
+async def test_rate_limited_summary_alone_does_not_blame_the_steps():
+    # Steps failed for another reason; only the summary was rate-limited
+    analyzer, github, llm = make_analyzer()
+    other = RuntimeError("x")
+    llm.analyze_security = AsyncMock(side_effect=other)
+    llm.analyze_performance = AsyncMock(side_effect=other)
+    llm.analyze_best_practices = AsyncMock(side_effect=other)
+    llm.generate_summary = AsyncMock(side_effect=LLMRateLimitError("x"))
+
+    result = await run(analyzer, github)
+
+    assert result.status.value == "failed"
+    assert "rate-limited" not in result.executive_summary
+    assert any("Summary generation failed: the model was rate-limited" in r for r in result.incomplete_reasons)
