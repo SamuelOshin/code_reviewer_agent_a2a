@@ -74,3 +74,12 @@ def test_batch_slot_timeout_id(monkeypatch, raw, echoed):
     assert out["id"] == echoed and "result" not in out
     if isinstance(raw, float) and echoed is not None:
         assert isinstance(out["id"], int)
+
+
+@pytest.mark.parametrize("bool_id", [True, False])
+def test_bool_id_is_invalid_with_null_id_on_the_normal_path(bool_id):
+    # Bobby Review: lax mode turned true/false into 1/0 on the normal path, while the
+    # slot-timeout path dropped them. A bool is not a JSON-RPC id on either path.
+    out = asyncio.run(_handler().handle_request({"jsonrpc": "2.0", "method": "ok", "id": bool_id}))
+    assert out["error"]["code"] == -32600
+    assert out["id"] is None
