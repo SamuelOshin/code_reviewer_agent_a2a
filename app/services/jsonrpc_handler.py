@@ -43,6 +43,21 @@ def _batch_semaphore() -> asyncio.Semaphore:
     return semaphore
 
 
+def _echo_id(raw_id: Any) -> str | int | None:
+    """The id to echo in a response, or None when there is no valid one (P1-22).
+
+    A string or integer is echoed as is, an integral float (1.0) as the integer, as the
+    request model does. bool, other floats, objects and lists are not valid ids.
+    """
+    if isinstance(raw_id, bool):
+        return None
+    if isinstance(raw_id, (str, int)):
+        return raw_id
+    if isinstance(raw_id, float) and raw_id.is_integer():
+        return int(raw_id)
+    return None
+
+
 class JSONRPCHandler:
     """JSON-RPC 2.0 request handler with method registration"""
     
@@ -115,7 +130,9 @@ class JSONRPCHandler:
                 error_id = new_error_id()
                 logger.error(f"Invalid JSON-RPC request [error_id={error_id}]: {type(e).__name__}")
                 return self._error_response(
-                    request_id=request_data.get("id") if isinstance(request_data, dict) else None,
+                    request_id=(
+                        _echo_id(request_data.get("id")) if isinstance(request_data, dict) else None
+                    ),
                     code=JSONRPCErrorCode.INVALID_REQUEST,
                     message="Invalid Request",
                     data={"error_id": error_id}
@@ -245,12 +262,12 @@ class JSONRPCHandler:
             except TimeoutError:
                 logger.warning(f"Batch call waited {limit:g}s for a slot")
                 # This response is built outside handle_request's safety net, so only
-                # a valid JSON-RPC id is echoed; a malformed one (object, list, float,
-                # bool) must not fail the whole batch (P1-21 review)
+                # a valid JSON-RPC id is echoed; a malformed one (object, list, bool,
+                # non-integral float) must not fail the whole batch (P1-21 review).
+                # An integral float (1.0) is echoed as 1, like the normal path (P1-22).
                 raw_id = request_data.get("id") if isinstance(request_data, dict) else None
-                valid_id = isinstance(raw_id, (str, int)) and not isinstance(raw_id, bool)
                 return self._error_response(
-                    request_id=raw_id if valid_id else None,
+                    request_id=_echo_id(raw_id),
                     code=JSONRPCErrorCode.TIMEOUT,
                     message=(
                         f"The server is busy: no batch slot was free within {limit:g} seconds. "
@@ -292,9 +309,7 @@ class JSONRPCHandler:
         )
         
         # Serialize the complete JSON-RPC response
-        response_dict = response.model_dump(mode="json", exclude_none=True)
-        
-        return response_dict
+        return self._with_id(response.model_dump(mode="json", exclude_none=True), request_id)
     
     def _error_response(
         self,
@@ -326,8 +341,15 @@ class JSONRPCHandler:
             error=error
         )
         
-        return response.model_dump(mode="json", exclude_none=True)
-    
+        return self._with_id(response.model_dump(mode="json", exclude_none=True), request_id)
+
+    @staticmethod
+    def _with_id(response: dict[str, Any], request_id: Any) -> dict[str, Any]:
+        """exclude_none drops a null id, but JSON-RPC 2.0 wants "id": null when the
+        request id could not be read (P1-22). result/error stay absent when unset."""
+        response["id"] = request_id
+        return response
+
     def introspect(self) -> dict[str, Any]:
         """
         Get introspection data about registered methods
