@@ -21,7 +21,6 @@ from fastapi.responses import JSONResponse
 
 from app.core.config import settings
 from app.core.errors import new_error_id
-from app.models.analysis import AnalysisStatus
 from app.services.code_analyzer import CodeAnalyzerService
 from app.services.github_mcp import GitHubMCPService
 from app.utils.formatters import SummaryFormatter
@@ -303,9 +302,11 @@ async def analyze_pr_background(
     Args:
         pr_url: PR URL
         pr_number: PR number
-        release: called when the review did not complete or could not be posted, so a
-            manual GitHub "Redeliver" is not ignored as a replay (P1-16). A review
-            that completed and was posted stays claimed.
+        release: called when no comment was posted (the analysis raised, or posting
+            failed), so a manual GitHub "Redeliver" is not ignored as a replay (P1-16).
+            Once a comment is posted the delivery stays claimed, even for a failed or
+            incomplete result: an incomplete result is deterministic for a large diff,
+            so releasing it would let a captured body re-run the model and re-comment.
     """
     failed = False
     try:
@@ -313,11 +314,6 @@ async def analyze_pr_background(
 
         analyzer = CodeAnalyzerService()
         analysis_result = await analyzer.analyze_pr(pr_url)
-        if analysis_result.status != AnalysisStatus.COMPLETE:
-            # Fail-closed result (failed or incomplete): the comment is still posted,
-            # but the review itself is not done, so allow a retry
-            failed = True
-
         logger.info(
             f"Background analysis completed for PR #{pr_number}: "
             f"risk={analysis_result.risk_level.value}, "

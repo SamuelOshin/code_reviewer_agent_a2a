@@ -100,12 +100,17 @@ class TestRetryAfterFailure:
         assert analyzer.analyze_pr.await_count == 1
 
     @pytest.mark.parametrize("status", [AnalysisStatus.FAILED, AnalysisStatus.INCOMPLETE])
-    def test_fail_closed_result_can_be_redelivered(self, client, webhook_secret, analyzer, github, status):  # noqa: F811
+    def test_posted_fail_closed_result_stays_claimed(self, client, webhook_secret, analyzer, github, status):  # noqa: F811
+        # The fail-closed comment is on the PR; a replay with the same or a fresh id
+        # must not re-run the model or post again (Bobby Review, P1-16)
         result = make_result()
         result.status = status
         analyzer.analyze_pr.return_value = result
         send(client, webhook_secret, "d-1")
-        assert send(client, webhook_secret, "d-1").json()["status"] == "queued"
+        for delivery in ("d-1", "d-2", "d-3"):
+            assert send(client, webhook_secret, delivery).json()["status"] == "duplicate"
+        assert analyzer.analyze_pr.await_count == 1
+        assert comments(github) == 1
 
     def test_unpostable_comment_can_be_redelivered(self, client, webhook_secret, analyzer, github):  # noqa: F811
         github.get_repo.return_value.get_issue.return_value.create_comment.side_effect = RuntimeError("403")
