@@ -13,9 +13,9 @@ read this file alone and continue the work.
 | | |
 |---|---|
 | **Current phase** | Phase 1: make it honest and working (planning complete) |
-| **Active task** | None. Done: `P1-01` to `P1-03`, `P1-08` to `P1-11`, `P1-14`. Open: `P1-12` (needs CI to run on GitHub) |
-| **Next action** | Push `chore/p1-01-pyproject` and open a PR so CI runs (closes `P1-12`). Then the next batch: `P1-04` (result path) and `P1-05` (model layer) can run in parallel. `P1-07` follows `P1-04`, and `P1-06` follows `P1-05` |
-| **Working branch** | `chore/p1-01-pyproject` holds all Phase 1 work so far, not pushed. `docs/project-tracker` is pushed |
+| **Active task** | None. Done: `P1-01` to `P1-04`, `P1-08` to `P1-11`, `P1-14`. Open: `P1-05` (needs one real review on two providers), `P1-12` (needs CI green on GitHub) |
+| **Next action** | Owner runs one real review on two providers with real keys in `.env` (closes `P1-05`). Then `P1-06` (fail closed) and `P1-07` (auth, mandatory webhook secret) can run in parallel. Don't point the webhook at a real repo until both land: today a failed LLM call can still be posted as APPROVE |
+| **Working branch** | `chore/p1-01-pyproject` holds all Phase 1 work, open as PR #1 into `main`. `P1-04` and `P1-05` are merged into it locally, not pushed yet. `docs/project-tracker` is pushed and redundant once PR #1 merges |
 | **Blockers** | None. Owner approved running repo code on 2026-11-12. Use `uv` for everything (`uv sync`, `uv run`). If an install fails on a Windows cache file lock, retry or set a different `UV_CACHE_DIR` |
 | **Working rule** | Parallel agents don't edit this file. The coordinating session records their results |
 
@@ -247,8 +247,8 @@ in CI, and the README is accurate.
 | P1-01 | done | Move to `pyproject.toml` with `uv` and a lockfile, keeping only dependencies the code imports. Record a test baseline first | Owner OK to run tests | Baseline recorded in section 9. `uv sync` works. Full `pip-audit` output reviewed, with nothing high or critical left unexplained |
 | P1-02 | done | Delete `test_webhook_only.py` and other Telex fixtures | D-10 | No `eyJ`-style token in tracked files |
 | P1-03 | done | Remove Telex and dead code: `telex_client.py`, `telex_service.py`, `a2a_service.py`, `routes/a2a.py`, `config/agent_card_telex.json`, `telex_workflow.json`, `/a2a/webhooks/{hook_id}`, legacy task format, placeholder RPC handlers, unused `public/fonts`, empty `scripts/*`, unreachable code in `performance_rules.py`, debug prints | P1-01 | `grep -ri telex app config` returns nothing. App starts. Tests no worse than baseline |
-| P1-04 | todo | Add a working result path: `message/send` returns a completed task without push config, and GitHub webhook runs have an output | P1-03 | A test proves a request with no push config returns a completed task |
-| P1-05 | todo | Build the provider-agnostic model layer from section 4, replacing the `llm_service.py` provider classes and deprecated `google-generativeai`. Check vendor docs for current model IDs | P1-01, D-12 | Provider SDKs imported only in the model layer. Contract tests pass for every adapter. One real review succeeds on at least two providers using configuration changes only. No model ID in application code |
+| P1-04 | done | Add a working result path: `message/send` returns a completed task without push config, and GitHub webhook runs have an output. Webhook runs post one summary comment (capped at 60,000 characters), but only when `GITHUB_WEBHOOK_SECRET` is set, so a forged event can't make the bot comment | P1-03 | A test proves a request with no push config returns a completed task |
+| P1-05 | doing | Build the provider-agnostic model layer from section 4, replacing the `llm_service.py` provider classes and deprecated `google-generativeai`. Check vendor docs for current model IDs | P1-01, D-12 | Provider SDKs imported only in the model layer. Contract tests pass for every adapter. One real review succeeds on at least two providers using configuration changes only. No model ID in application code |
 | P1-06 | todo | Fail closed: a parse failure or partial analysis gives a `failed` or `incomplete` result and never `approve`. Report any truncated diff. Keep rule findings when an LLM call fails. Stop logging raw LLM output (`llm_service.py` logs the first 200 characters of an unparseable response, which can echo PR code) | P1-05 | Tests: malformed, truncated and nested-array LLM output never yields approve. The strict xfail `test_llm_error_falls_back_to_rule_results` (F-03) passes and its marker is removed |
 | P1-07 | todo | Add auth to `/rpc` and `/a2a/*`, make the webhook secret mandatory, block caller-supplied URLs unless allowlisted, restrict CORS, and limit batch size | P1-03 | Tests: unauthenticated call is rejected, disallowed URL is rejected, missing secret stops startup |
 | P1-08 | done | Stop logging tokens and payloads, and return safe error messages. Clients now get a generic message plus an error id, and the full error is logged server-side under that id | P1-03 | No token or payload in logs, proven by a test using a sentinel value |
@@ -257,6 +257,7 @@ in CI, and the README is accurate.
 | P1-11 | done | Fix Docker: remove unused `SECRET_KEY` and Node.js, correct env vars, make the healthcheck fail on bad status. The image installs from `uv.lock`, `requirements.txt` is deleted, compose uses `env_file`, and the host port is configurable with `HOST_PORT` | P1-03 | `docker compose up` reaches healthy from a clean clone |
 | P1-12 | doing | Done: empty test files filled, ruff and mypy config, ruff findings fixed, and `.github/workflows/ci.yml` (ruff, pytest with coverage, `pip-audit`). Every CI step passes locally. Left: CI has never run on GitHub. mypy is out of CI because of 55 errors, moved to `P2-09` | P1-03 | CI green on a PR. Coverage figure recorded |
 | P1-13 | todo | Rewrite the README so every claim is true. It still describes Telex, MCP, `python-a2a`, Node.js and `pip install -r requirements.txt` (deleted), documents removed RPC methods and settings, and its Docker section should be `cp .env.example .env` then `docker compose up --build` | All above | Every feature listed maps to code or a test |
+| P1-15 | todo | Review follow-ups from `P1-04` and `P1-05`: dedupe replayed webhook deliveries by `X-GitHub-Delivery`; add a timeout to blocking `message/send`; use `[0-9]` instead of `\d` in `parse_pr_url`; map a Google 404 to `LLMConfigurationError` like the other providers; record the model each role used in the result, not just the default | P1-04, P1-05 | Tests: a replayed delivery posts once, a non-ASCII-digit PR URL is rejected, a Google 404 raises a configuration error |
 | P1-14 | done | Repo hygiene: add `.gitattributes` to normalise line endings, ignore `.claude/worktrees/` and tool caches, replace deprecated `datetime.utcnow` everywhere in `app/`, and use PyGithub's `Auth.Token` | P1-03 | `git add --renormalize .` leaves a clean diff. No `utcnow` in `app/` |
 
 ### Phase 2: modernize the core
@@ -295,7 +296,7 @@ Keep this honest. It records what has actually been proven.
 
 | Check | State | Notes |
 |---|---|---|
-| Test suite | Passing 2026-11-12 | On `chore/p1-01-pyproject`: **215 passed, 1 strict xfail** (F-03). Coverage **73%** (baseline was 63 passed, 1 collection error, 21%). New tests were run against the old code and fail there, so they catch the bugs they target |
+| Test suite | Passing 2026-11-13 | On `chore/p1-01-pyproject` after merging `P1-04` and `P1-05`: **320 passed, 1 strict xfail** (F-03). Coverage **82%**. The model-layer contract tests mock the network, so no real provider was called (baseline was 63 passed, 1 collection error, 21%). New tests were run against the old code and fail there, so they catch the bugs they target |
 | App startup | Starts in-process | `/`, `/health` (`healthy`), `/ready` and the agent card return 200, with or without `SECRET_KEY`. Real LLM and GitHub calls not tested |
 | Docker | Passing 2026-11-12 | From `.env.example` copied to `.env`, `docker compose up --build` reached `healthy` (Docker 29.8). `/health` returned 200 from this app. The container runs as `appuser` with no Node.js. Tested on host port 8010, because another local service holds 8000 |
 | CI | Local only | Every workflow step passes locally. The workflow has never run on GitHub |
@@ -313,6 +314,24 @@ Keep this honest. It records what has actually been proven.
 ## 9. Session log
 
 Newest first. Keep entries short.
+
+### 2026-11-13: `P1-04` and `P1-05` merged
+
+- **Done:** two side sessions built `P1-04` (result path) and `P1-05` (model layer on
+  Pydantic AI, per `D-12`) in parallel. Bobby Review rated both "Ready with
+  follow-ups". The same sessions then fixed the should-fix items:
+  - **P1-04:** no PR comment for unsigned webhooks, a neutral footer, and a cap on
+    comment size.
+  - **P1-05:** provider error bodies stay out of errors and logs (proven with a
+    sentinel test on every adapter), old `LLM_MODEL` values fail with a clear
+    message, numeric settings are validated, `httpx2` is declared, and the README's
+    LLM section is updated.
+
+  The coordinating session reran everything and merged both. Result: 320 passed, 1
+  strict xfail, 82% coverage, ruff clean, `pip-audit` clean.
+- **Not done:** no real LLM or GitHub call has run, so `P1-05` stays `doing`. CI has
+  not run on the merged result. The rest of the README is still stale (`P1-13`).
+- **New follow-ups:** `P1-15`.
 
 ### 2026-11-12: Docker verified, `P1-11` done
 
