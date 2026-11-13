@@ -6,6 +6,10 @@ The first group uses a stub message/send handler. The last group runs the real
 MessageHandler for the one path that needs no PR analysis (no PR URL in the text).
 """
 
+import asyncio
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -148,3 +152,91 @@ class TestInputRequired:
     def test_extract_pr_url_falls_back_to_history(self):
         history = [{"text": "old https://github.com/a/b/pull/1"}, {"text": f"new {PR_URL}"}]
         assert bare_handler()._extract_pr_url("no link", history) == PR_URL
+
+
+def _analysis():
+    from app.models.analysis import ApprovalRecommendation, CodeAnalysisResult, RiskLevel
+
+    return CodeAnalysisResult(
+        pr_number=42,
+        pr_title="Fix thing",
+        author="octo",
+        repository="octo/repo",
+        executive_summary="Looks fine.",
+        risk_level=RiskLevel.LOW,
+        files_changed=1,
+        lines_added=3,
+        lines_deleted=1,
+        approval_recommendation=ApprovalRecommendation.APPROVE,
+        analysis_duration_seconds=0.1,
+        analyzed_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+
+
+class TestResultPath:
+    """message/send must return a result without Telex-style push config."""
+
+    @pytest.fixture
+    def handler(self):
+        from app.utils.formatters import SummaryFormatter
+
+        h = MessageHandler.__new__(MessageHandler)
+        h.analyzer = MagicMock()
+        h.analyzer.analyze_pr = AsyncMock(return_value=_analysis())
+        h.formatter = SummaryFormatter()
+        h._background_tasks = set()
+        return h
+
+    @staticmethod
+    def message():
+        return {
+            "kind": "message",
+            "role": "user",
+            "messageId": "m1",
+            "parts": [{"kind": "text", "text": f"review {PR_URL}"}],
+        }
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "configuration",
+        [
+            None,
+            {},
+            {"blocking": True},
+            {"blocking": False},
+            {"blocking": True, "pushNotificationConfig": {"url": "https://x.test"}},
+        ],
+    )
+    async def test_no_push_or_blocking_returns_completed_task(self, handler, configuration):
+        task = await handler.handle_message_send(self.message(), configuration)
+        assert task["kind"] == "task"
+        assert task["status"]["state"] == "completed"
+        assert task["status"]["message"]["parts"][0]["text"]
+        assert len(task["artifacts"]) == 1
+        assert "Executive Summary" in task["artifacts"][0]["parts"][0]["text"]
+        handler.analyzer.analyze_pr.assert_awaited_once_with(PR_URL)
+
+    @pytest.mark.asyncio
+    async def test_analysis_failure_returns_failed_task(self, handler):
+        handler.analyzer.analyze_pr.side_effect = RuntimeError("secret detail")
+        task = await handler.handle_message_send(self.message(), None)
+        assert task["status"]["state"] == "failed"
+        assert "secret detail" not in str(task)
+
+    @pytest.mark.asyncio
+    async def test_push_mode_returns_working_message_and_keeps_task_reference(self, handler):
+        release = asyncio.Event()
+
+        async def slow(*args, **kwargs):
+            await release.wait()
+
+        configuration = {"blocking": False, "pushNotificationConfig": {"url": "https://x.test"}}
+        with patch.object(MessageHandler, "_process_and_push_safe", new=slow):
+            result = await handler.handle_message_send(self.message(), configuration)
+            assert result["kind"] == "message"
+            handler.analyzer.analyze_pr.assert_not_called()
+            assert len(handler._background_tasks) == 1  # strong reference held
+            release.set()
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+        assert handler._background_tasks == set()  # released once done

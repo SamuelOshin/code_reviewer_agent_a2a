@@ -16,8 +16,21 @@ from fastapi.responses import JSONResponse
 
 from app.core.config import settings
 from app.services.code_analyzer import CodeAnalyzerService
+from app.services.github_mcp import GitHubMCPService
+from app.utils.formatters import SummaryFormatter
 
 logger = logging.getLogger(__name__)
+
+# GitHub rejects comment bodies over 65,536 characters; stay safely below
+MAX_COMMENT_CHARS = 60000
+TRUNCATION_NOTE = " ...[comment truncated to fit GitHub's size limit]"
+_warned_unsigned = False
+
+
+def _truncate_comment(body: str) -> str:
+    if len(body) <= MAX_COMMENT_CHARS:
+        return body
+    return body[: MAX_COMMENT_CHARS - len(TRUNCATION_NOTE)] + TRUNCATION_NOTE
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
@@ -158,10 +171,19 @@ async def handle_pull_request_event(
         raise HTTPException(status_code=400, detail="Missing PR URL in payload")
     
     # Queue analysis as background task
+    # Without a webhook secret the sender is unauthenticated, so review but never
+    # write to the PR (a forged event must not make the bot comment).
+    post_comment = bool(settings.GITHUB_WEBHOOK_SECRET)
+    global _warned_unsigned
+    if not post_comment and not _warned_unsigned:
+        _warned_unsigned = True
+        logger.warning("GITHUB_WEBHOOK_SECRET not set: reviews run but PR comments are not posted")
+
     background_tasks.add_task(
         analyze_pr_background,
         pr_url=pr_url,
-        pr_number=pr_number
+        pr_number=pr_number,
+        post_comment=post_comment,
     )
     
     return JSONResponse({
@@ -171,16 +193,17 @@ async def handle_pull_request_event(
     })
 
 
-async def analyze_pr_background(pr_url: str, pr_number: int):
+async def analyze_pr_background(pr_url: str, pr_number: int, post_comment: bool = True):
     """
     Background task to analyze a PR
 
-    For now the completed result is only logged. Posting it back to the PR is
-    a later task.
+    The result is logged and posted back to the PR as one summary comment. A
+    failure to post is logged (without the token) and never raised.
 
     Args:
         pr_url: PR URL
         pr_number: PR number
+        post_comment: Post the summary back to the PR (False for unauthenticated webhooks)
     """
     try:
         logger.info(f"Starting background analysis for PR #{pr_number}")
@@ -196,6 +219,18 @@ async def analyze_pr_background(pr_url: str, pr_number: int):
             f"performance={len(analysis_result.performance_findings)}, "
             f"best_practices={len(analysis_result.best_practice_findings)}"
         )
+
+        if not post_comment:
+            return
+
+        comment = _truncate_comment(SummaryFormatter.format_for_github_comment(analysis_result))
+        try:
+            async with GitHubMCPService() as github:
+                owner, repo, number = github.parse_pr_url(pr_url)
+                await github.post_pr_comment(owner, repo, number, comment)
+        except Exception as e:
+            # Exception text can echo request details; log the type only
+            logger.error(f"Failed to post comment for PR #{pr_number}: {type(e).__name__}")
 
     except Exception as e:
         logger.error(f"Background analysis failed for PR #{pr_number}: {e}")

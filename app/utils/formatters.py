@@ -98,7 +98,7 @@ class SummaryFormatter:
             sections.append("")
         
         # Footer - keep it minimal
-        sections.append(f"*Full details in artifacts • Analysis: {analysis.analysis_duration_seconds:.1f}s*")
+        sections.append(f"*Analysis: {analysis.analysis_duration_seconds:.1f}s*")
         
         return "\n".join(sections)
     

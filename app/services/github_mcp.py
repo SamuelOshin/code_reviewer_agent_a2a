@@ -124,6 +124,28 @@ class GitHubMCPService:
             return await loop.run_in_executor(None, partial(func, *args, **kwargs))
         return await loop.run_in_executor(None, func)
     
+    async def post_pr_comment(self, owner: str, repo: str, pr_number: int, body: str) -> None:
+        """
+        Post one comment on a pull request (PR comments are issue comments)
+
+        Raises:
+            GitHubMCPError: If posting fails. The message never includes the token.
+        """
+        if not self._client:
+            raise GitHubMCPError("GitHub client not initialized. Use context manager.")
+
+        try:
+            repository = await self._run_sync(self._client.get_repo, f"{owner}/{repo}")
+            issue = await self._run_sync(repository.get_issue, pr_number)
+            await self._run_sync(issue.create_comment, body)
+            logger.info(f"Posted comment on {owner}/{repo}#{pr_number}")
+        except GithubException as e:
+            logger.error(f"Failed to post comment on {owner}/{repo}#{pr_number}: status={e.status}")
+            raise GitHubMCPError(f"Failed to post PR comment (status {e.status})") from e
+        except Exception as e:
+            logger.error(f"Failed to post comment on {owner}/{repo}#{pr_number}: {type(e).__name__}")
+            raise GitHubMCPError(f"Failed to post PR comment: {type(e).__name__}") from e
+
     async def get_pull_request(
         self, 
         owner: str, 
