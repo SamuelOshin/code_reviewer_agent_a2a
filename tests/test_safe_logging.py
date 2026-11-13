@@ -18,6 +18,7 @@ from app.routes import a2a_tasks, jsonrpc  # noqa: E402
 from app.services.github_mcp import GitHubMCPService  # noqa: E402
 from app.services.jsonrpc_handler import JSONRPCHandler  # noqa: E402
 from app.services.message_handler import MessageHandler  # noqa: E402
+from tests.conftest import AUTH_HEADERS  # noqa: E402
 
 TOKEN = "SENTINEL-TOKEN-123"
 INTERNAL = "SENTINEL-INTERNAL-DETAIL /srv/app/secret.py"
@@ -50,7 +51,7 @@ def _push_config():
 
 
 @pytest.fixture
-def app_and_handler():
+def app_and_handler(push_allowed):
     app = FastAPI()
     app.include_router(jsonrpc.router)
     app.include_router(a2a_tasks.router)
@@ -77,7 +78,7 @@ def test_configuration_token_never_logged_or_returned(app_and_handler, caplog):
     body = _rpc_body({"blocking": False, "pushNotificationConfig": _push_config()})
 
     with patch.object(MessageHandler, "_process_and_push_safe", new=AsyncMock()):
-        with TestClient(app) as client:
+        with TestClient(app, headers=AUTH_HEADERS) as client:
             r1 = client.post("/rpc", json=body)
             r2 = client.post("/a2a/tasks", json=body)
 
@@ -160,7 +161,7 @@ async def test_push_error_categories_survive_without_raw_text(app_and_handler):
 def test_internal_exception_message_not_returned_by_rpc(app_and_handler, caplog):
     app, _ = app_and_handler
     caplog.set_level(logging.DEBUG)
-    with TestClient(app) as client:
+    with TestClient(app, headers=AUTH_HEADERS) as client:
         resp = client.post("/rpc", json={"jsonrpc": "2.0", "id": 9, "method": "boom"})
 
     body = resp.json()
@@ -175,7 +176,7 @@ def test_internal_exception_message_not_returned_by_rpc(app_and_handler, caplog)
 
 def test_invalid_params_and_bad_json_do_not_echo_internals(app_and_handler):
     app, _ = app_and_handler
-    with TestClient(app) as client:
+    with TestClient(app, headers=AUTH_HEADERS) as client:
         bad_params = client.post(
             "/rpc",
             json={"jsonrpc": "2.0", "id": 2, "method": "boom", "params": {"secret_kw": TOKEN}},
