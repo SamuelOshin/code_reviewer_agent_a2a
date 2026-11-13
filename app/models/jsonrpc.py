@@ -2,7 +2,7 @@
 
 from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 
 class JSONRPCRequest(BaseModel):
@@ -11,6 +11,15 @@ class JSONRPCRequest(BaseModel):
     method: str
     params: dict[str, Any] | None = None
     id: str | int | None = None
+
+    @field_validator("id", mode="before")
+    @classmethod
+    def _reject_bool_id(cls, value: Any) -> Any:
+        # Lax mode would turn true/false into 1/0; a bool is not a JSON-RPC id, so it
+        # is an Invalid Request on every path, like the batch slot timeout (P1-22)
+        if isinstance(value, bool):
+            raise ValueError("id must be a string, a number or null")
+        return value
 
 class JSONRPCError(BaseModel):
     """JSON-RPC 2.0 Error Object"""

@@ -20,6 +20,7 @@ from typing import Any, TypeVar
 from app.core.config import settings
 from app.core.errors import new_error_id
 from app.core.exceptions import AnalysisError, GitHubMCPError, LLMError
+from app.llm.errors import LLMRateLimitError
 from app.models.analysis import (
     AnalysisStatus,
     ApprovalRecommendation,
@@ -40,6 +41,10 @@ from app.utils.security_rules import SecurityChecker
 logger = logging.getLogger(__name__)
 
 IssueT = TypeVar("IssueT")
+
+# Fixed texts for a throttled model (P1-22). No exception text, no provider name.
+RETRY_LATER_TEXT = "wait a few minutes and run the review again."
+RATE_LIMITED_TEXT = f"the model was rate-limited; {RETRY_LATER_TEXT}"
 
 
 class CodeAnalyzerService:
@@ -128,6 +133,13 @@ class CodeAnalyzerService:
             # Step 7: Calculate risk level
             risk_level = self._calculate_risk_level(all_security_issues, all_performance_issues)
             
+            # P1-22: whether every findings step failed because the model was
+            # rate-limited. Decided from the steps alone, whatever the summary step does.
+            steps_ran = security_ran or performance_ran or best_practices_ran
+            all_steps_rate_limited = not steps_ran and (
+                sum(RATE_LIMITED_TEXT in r for r in incomplete_reasons) == 3
+            )
+
             # Step 8: Generate executive summary. A provider failure here loses only
             # the prose, so fall back to a plain summary and mark the review incomplete.
             try:
@@ -144,13 +156,22 @@ class CodeAnalyzerService:
                 )
             except LLMError as e:
                 logger.error(f"Summary generation failed, using fallback: {type(e).__name__}")
-                incomplete_reasons.append(f"Summary generation failed ({type(e).__name__}).")
+                if isinstance(e, LLMRateLimitError):
+                    incomplete_reasons.append(f"Summary generation failed: {RATE_LIMITED_TEXT}")
+                else:
+                    incomplete_reasons.append(f"Summary generation failed ({type(e).__name__}).")
                 executive_summary = (
                     f"Automated summary unavailable. Found {len(all_security_issues)} security, "
                     f"{len(all_performance_issues)} performance and "
                     f"{len(all_best_practice_issues)} best practice issue(s)."
                 )
-            
+            if all_steps_rate_limited:
+                # Lead with the cause, also when the summary call itself succeeded
+                executive_summary = (
+                    f"The model was rate-limited, so no analysis step ran; {RETRY_LATER_TEXT} "
+                    + executive_summary
+                )
+
             # Step 9: Generate recommendations
             recommendations = self._generate_recommendations(
                 all_security_issues,
@@ -259,6 +280,12 @@ class CodeAnalyzerService:
             logger.error(f"{name} returned some invalid findings: {type(e).__name__}")
             incomplete_reasons.append(f"{name} returned some invalid findings, which were dropped.")
             return list(e.findings), True
+        except LLMRateLimitError as e:
+            # P1-22: fixed text, no exception text, so a throttled model reads as
+            # "retry later" and not as a bug
+            logger.error(f"{name} failed: {type(e).__name__}")
+            incomplete_reasons.append(f"{name} failed: {RATE_LIMITED_TEXT}")
+            return [], False
         except Exception as e:
             logger.error(f"{name} failed: {type(e).__name__}")
             incomplete_reasons.append(f"{name} failed ({type(e).__name__}).")

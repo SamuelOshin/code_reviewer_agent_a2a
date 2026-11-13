@@ -36,6 +36,10 @@ def _http_status(error: BaseException) -> int | None:
     return None
 
 
+# Webhook statuses after which one short "failed" post may still succeed (P1-22)
+_PUSH_RETRY_STATUSES = frozenset({413, 429})
+
+
 def _error_category(error: BaseException | None) -> str:
     """Sort an exception into "push", "rate_limit", "github" or "other" (P1-20, P1-21).
 
@@ -307,6 +311,17 @@ class MessageHandler:
             # more try: the error message is much smaller than the result.
             logger.warning(f"Not pushing an error to an unreachable webhook [error_id={error_id}]")
             return
+        if category == "push" and isinstance(error, httpx.HTTPStatusError):
+            # P1-22: only 413 (too large) and 429 (rate limited) are cases where a much
+            # smaller message can succeed. Any other status (5xx, 3xx, 4xx) can mean the
+            # webhook stored the result and then failed, and a second post with
+            # state "failed" for the same task id would overwrite a delivered result.
+            status = error.response.status_code
+            if status not in _PUSH_RETRY_STATUSES:
+                logger.warning(
+                    f"Not pushing an error after webhook status {status} [error_id={error_id}]"
+                )
+                return
         user_message = _user_message(category, error_id)
 
         error_msg = A2AMessage(
@@ -735,9 +750,12 @@ class MessageHandler:
         
         # P1-21: always return https://github.com/..., whatever scheme and host case the
         # text had ("http://", "GitHub.com", "HTTPS://GITHUB.COM"), so the result is
-        # accepted by parse_pr_url. Owner and repo keep their case.
+        # accepted by parse_pr_url. Owner and repo keep their case. P1-22: the "/pull/"
+        # segment is lowercased too ("/PULL/1", "/Pull/1"), since the search is case
+        # insensitive but parse_pr_url is not.
         def normalize(url: str) -> str:
-            return re.sub(r'^(?:https?://)?github\.com/', 'https://github.com/', url, flags=re.IGNORECASE)
+            url = re.sub(r'^(?:https?://)?github\.com/', 'https://github.com/', url, flags=re.IGNORECASE)
+            return re.sub(r'^(https://github\.com/[^/]+/[^/]+)/pull/', r'\1/pull/', url, flags=re.IGNORECASE)
 
         # First check interpreted text
         if interpreted_text:
