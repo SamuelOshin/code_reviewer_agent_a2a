@@ -20,7 +20,8 @@ jobs:
       # Dummy values: the settings class needs them at import time, and no test
       # talks to a real service.
       GITHUB_TOKEN: dummy
-      GITHUB_WEBHOOK_SECRET: dummy
+      # Must be at least 32 characters (P1-15)
+      GITHUB_WEBHOOK_SECRET: ci-dummy-webhook-secret-not-a-secret-000000
       # Must be at least 32 characters (P1-07)
       API_KEY: ci-dummy-api-key-not-a-secret-000000
       SECRET_KEY: dummy

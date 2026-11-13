@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 os.environ.setdefault("GITHUB_TOKEN", "dummy")
-os.environ.setdefault("GITHUB_WEBHOOK_SECRET", "dummy")
+os.environ.setdefault("GITHUB_WEBHOOK_SECRET", "test-webhook-secret-not-a-secret-0123456789")
 os.environ.setdefault("SECRET_KEY", "dummy")
 os.environ.setdefault("GOOGLE_API_KEY", "dummy")
 

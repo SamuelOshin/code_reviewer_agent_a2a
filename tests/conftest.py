@@ -10,8 +10,10 @@ the network.
 
 import os
 
-for _key in ("GITHUB_TOKEN", "GITHUB_WEBHOOK_SECRET", "SECRET_KEY", "GOOGLE_API_KEY"):
+for _key in ("GITHUB_TOKEN", "SECRET_KEY", "GOOGLE_API_KEY"):
     os.environ.setdefault(_key, "dummy")
+# At least 32 characters (P1-15). Test value only.
+os.environ.setdefault("GITHUB_WEBHOOK_SECRET", "test-webhook-secret-not-a-secret-0123456789")
 # The app builds its model client at startup and needs a model setting. A fake ID:
 # tests never call a real model.
 os.environ.setdefault("LLM_MODEL", "google:test-model")
