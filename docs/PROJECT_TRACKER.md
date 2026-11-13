@@ -13,9 +13,9 @@ read this file alone and continue the work.
 | | |
 |---|---|
 | **Current phase** | Phase 1: make it honest and working (planning complete) |
-| **Active task** | None. Done: `P1-01` to `P1-04`, `P1-08` to `P1-11`, `P1-14`. Open: `P1-05` (needs one real review on two providers), `P1-12` (needs CI green on GitHub) |
+| **Active task** | None. Done: `P1-01` to `P1-04`, `P1-08` to `P1-12`, `P1-14`. Open: `P1-05` (needs one real review on two providers) |
 | **Next action** | Owner runs one real review on two providers with real keys in `.env` (closes `P1-05`). Then `P1-06` (fail closed) and `P1-07` (auth, mandatory webhook secret) can run in parallel. Don't point the webhook at a real repo until both land: today a failed LLM call can still be posted as APPROVE |
-| **Working branch** | `chore/p1-01-pyproject` holds all Phase 1 work, open as PR #1 into `main`. `P1-04` and `P1-05` are merged into it locally, not pushed yet. `docs/project-tracker` is pushed and redundant once PR #1 merges |
+| **Working branch** | `main`. All Phase 1 work so far was merged through PR #1 on 2026-11-13. Start each new task on its own branch from `main`. `docs/project-tracker` is redundant and can be deleted |
 | **Blockers** | None. Owner approved running repo code on 2026-11-12. Use `uv` for everything (`uv sync`, `uv run`). If an install fails on a Windows cache file lock, retry or set a different `UV_CACHE_DIR` |
 | **Working rule** | Parallel agents don't edit this file. The coordinating session records their results |
 
@@ -255,7 +255,7 @@ in CI, and the README is accurate.
 | P1-09 | done | Use the `Severity` enum throughout and add a structured impact level | P1-03 | Test: critical findings are counted correctly in the summary |
 | P1-10 | done | Tune rules: fix `eval`, `exec`, `open` and concatenation patterns, and report each performance match once on its real line | P1-03 | Regression tests cover the `F-08` examples |
 | P1-11 | done | Fix Docker: remove unused `SECRET_KEY` and Node.js, correct env vars, make the healthcheck fail on bad status. The image installs from `uv.lock`, `requirements.txt` is deleted, compose uses `env_file`, and the host port is configurable with `HOST_PORT` | P1-03 | `docker compose up` reaches healthy from a clean clone |
-| P1-12 | doing | Done: empty test files filled, ruff and mypy config, ruff findings fixed, and `.github/workflows/ci.yml` (ruff, pytest with coverage, `pip-audit`). Every CI step passes locally. Left: CI has never run on GitHub. mypy is out of CI because of 55 errors, moved to `P2-09` | P1-03 | CI green on a PR. Coverage figure recorded |
+| P1-12 | done | Done: empty test files filled, ruff and mypy config, ruff findings fixed, and `.github/workflows/ci.yml` (ruff, pytest with coverage, `pip-audit`). CI went green on PR #1 on 2026-11-13. Coverage 82%. mypy is out of CI because of 55 errors, moved to `P2-09` | P1-03 | CI green on a PR. Coverage figure recorded |
 | P1-13 | todo | Rewrite the README so every claim is true. It still describes Telex, MCP, `python-a2a`, Node.js and `pip install -r requirements.txt` (deleted), documents removed RPC methods and settings, and its Docker section should be `cp .env.example .env` then `docker compose up --build` | All above | Every feature listed maps to code or a test |
 | P1-15 | todo | Review follow-ups from `P1-04` and `P1-05`: dedupe replayed webhook deliveries by `X-GitHub-Delivery`; add a timeout to blocking `message/send`; use `[0-9]` instead of `\d` in `parse_pr_url`; map a Google 404 to `LLMConfigurationError` like the other providers; record the model each role used in the result, not just the default | P1-04, P1-05 | Tests: a replayed delivery posts once, a non-ASCII-digit PR URL is rejected, a Google 404 raises a configuration error |
 | P1-14 | done | Repo hygiene: add `.gitattributes` to normalise line endings, ignore `.claude/worktrees/` and tool caches, replace deprecated `datetime.utcnow` everywhere in `app/`, and use PyGithub's `Auth.Token` | P1-03 | `git add --renormalize .` leaves a clean diff. No `utcnow` in `app/` |
@@ -299,7 +299,7 @@ Keep this honest. It records what has actually been proven.
 | Test suite | Passing 2026-11-13 | On `chore/p1-01-pyproject` after merging `P1-04` and `P1-05`: **320 passed, 1 strict xfail** (F-03). Coverage **82%**. The model-layer contract tests mock the network, so no real provider was called (baseline was 63 passed, 1 collection error, 21%). New tests were run against the old code and fail there, so they catch the bugs they target |
 | App startup | Starts in-process | `/`, `/health` (`healthy`), `/ready` and the agent card return 200, with or without `SECRET_KEY`. Real LLM and GitHub calls not tested |
 | Docker | Passing 2026-11-12 | From `.env.example` copied to `.env`, `docker compose up --build` reached `healthy` (Docker 29.8). `/health` returned 200 from this app. The container runs as `appuser` with no Node.js. Tested on host port 8010, because another local service holds 8000 |
-| CI | Local only | Every workflow step passes locally. The workflow has never run on GitHub |
+| CI | Passing 2026-11-13 | Green on GitHub for PR #1 (ruff, pytest with coverage, `pip-audit`). GitGuardian also passed |
 | Radon, vulture | Done | Highest complexity: `DiffParser._parse_file_diff` at 30 and `_parse_hunk` at 22 |
 | Ruff | Passing | `ruff check .` is clean with the rules in `pyproject.toml`. `ruff format` is not enforced yet (`P2-09`) |
 | mypy | 55 errors | Lenient config in `pyproject.toml`, not in CI (`P2-09`) |
