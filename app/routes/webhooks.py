@@ -9,6 +9,9 @@ Includes HMAC signature verification for security.
 import hashlib
 import hmac
 import logging
+import threading
+import time
+from collections import OrderedDict
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Request
@@ -32,6 +35,42 @@ def _truncate_comment(body: str) -> str:
     return body[: MAX_COMMENT_CHARS - len(TRUNCATION_NOTE)] + TRUNCATION_NOTE
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
+
+
+class DeliveryCache:
+    """Remembers recent X-GitHub-Delivery ids so a replayed delivery runs once (P1-15).
+
+    Bounded by size and age. In-memory only: a restart empties it and several
+    replicas each keep their own, so a replay that lands after a restart or on
+    another replica is processed again. Sharing it would need an external store.
+    """
+
+    def __init__(self, ttl_seconds: float = 3600.0, max_entries: int = 2048):
+        self._ttl = ttl_seconds
+        self._max = max_entries
+        self._seen: OrderedDict[str, float] = OrderedDict()
+        self._lock = threading.Lock()
+
+    def seen_before(self, delivery_id: str) -> bool:
+        """True if the id was already claimed; otherwise claim it and return False."""
+        now = time.monotonic()
+        with self._lock:
+            while self._seen:
+                oldest_id, claimed_at = next(iter(self._seen.items()))
+                if now - claimed_at <= self._ttl and len(self._seen) < self._max:
+                    break
+                del self._seen[oldest_id]
+            if delivery_id in self._seen:
+                return True
+            self._seen[delivery_id] = now
+            return False
+
+    def forget(self, delivery_id: str) -> None:
+        with self._lock:
+            self._seen.pop(delivery_id, None)
+
+
+delivery_cache = DeliveryCache()
 
 
 def verify_github_signature(payload_body: bytes, signature_header: str) -> bool:
@@ -75,7 +114,8 @@ async def handle_github_webhook(
     request: Request,
     background_tasks: BackgroundTasks,
     x_hub_signature_256: str = Header(None),
-    x_github_event: str = Header(None)
+    x_github_event: str = Header(None),
+    x_github_delivery: str = Header(None)
 ):
     """
     Handle GitHub webhook events
@@ -85,6 +125,7 @@ async def handle_github_webhook(
         background_tasks: FastAPI background tasks
         x_hub_signature_256: GitHub signature header
         x_github_event: GitHub event type header
+        x_github_delivery: GitHub delivery id; a replayed id is a 2xx no-op
         
     Returns:
         JSON response with status
@@ -107,7 +148,21 @@ async def handle_github_webhook(
         
         # Handle different event types
         if x_github_event == "pull_request":
-            return await handle_pull_request_event(payload, background_tasks)
+            # Claim the id only after the signature passed, so a forged request
+            # cannot use up a real delivery's id
+            if x_github_delivery and delivery_cache.seen_before(x_github_delivery):
+                logger.info("Ignoring replayed webhook delivery")
+                return JSONResponse({
+                    "status": "duplicate",
+                    "message": "Delivery already processed"
+                })
+            try:
+                return await handle_pull_request_event(payload, background_tasks)
+            except HTTPException:
+                # Rejected payload: let a corrected redelivery with this id through
+                if x_github_delivery:
+                    delivery_cache.forget(x_github_delivery)
+                raise
         
         elif x_github_event == "ping":
             logger.info("Received ping event from GitHub")
