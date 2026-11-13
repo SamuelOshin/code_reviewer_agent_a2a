@@ -16,6 +16,7 @@ from typing import Any
 import httpx
 
 from app.core.errors import new_error_id, safe_webhook_target
+from app.core.push_url import validate_push_url
 from app.models.a2a import A2AArtifact, A2AMessage, A2ATask, ArtifactPart, MessagePart, TaskStatus
 from app.services.code_analyzer import CodeAnalyzerService
 from app.utils.formatters import SummaryFormatter
@@ -106,6 +107,10 @@ class MessageHandler:
         
         # WEBHOOK MODE: Non-blocking mode with real PR analysis
         if not is_blocking and push_config:
+            # Reject before any work starts (P1-07): only allowlisted, public https
+            # URLs may receive review results. Raises PushUrlRejected, which the
+            # JSON-RPC layer returns as Invalid params.
+            await validate_push_url(push_config.get("url") if isinstance(push_config, dict) else None)
             logger.info(f"Non-blocking mode: analyzing {pr_url} in background, result will be pushed to webhook")
             
             # Create task ID upfront
@@ -295,10 +300,13 @@ class MessageHandler:
             "id": str(uuid.uuid4())
         }
         
+        # Check again right before sending: DNS may have changed since the request
+        await validate_push_url(webhook_url)
         logger.info(f"Pushing error result to webhook: {safe_webhook_target(webhook_url)}")
         logger.info(f"Error task state: {task_result.get('status', {}).get('state')}")
         
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        # Never follow redirects: a 3xx could point the push at an internal address
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
             response = await client.post(webhook_url, json=webhook_payload, headers=headers)
             response.raise_for_status()
             logger.info(f"Error pushed successfully (status: {response.status_code})")
@@ -578,6 +586,8 @@ class MessageHandler:
                 "id": str(uuid.uuid4())
             }
             
+            # Check again right before sending: DNS may have changed since the request
+            await validate_push_url(webhook_url)
             logger.info(f"Pushing full task result to webhook: {safe_webhook_target(webhook_url)}")
             logger.info(f"Task state: {result_lightweight.get('status', {}).get('state')}")
             logger.info("Sending JSON-RPC response with complete task result")
@@ -586,7 +596,8 @@ class MessageHandler:
             # Connect: 10s, Read: 60s
             timeout = httpx.Timeout(10.0, read=60.0)
             
-            async with httpx.AsyncClient(timeout=timeout) as client:
+            # Never follow redirects: a 3xx could point the push at an internal address
+            async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
                 try:
                     response = await client.post(
                         webhook_url,

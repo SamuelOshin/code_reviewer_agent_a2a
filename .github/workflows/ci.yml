@@ -21,6 +21,8 @@ jobs:
       # talks to a real service.
       GITHUB_TOKEN: dummy
       GITHUB_WEBHOOK_SECRET: dummy
+      # Must be at least 32 characters (P1-07)
+      API_KEY: ci-dummy-api-key-not-a-secret-000000
       SECRET_KEY: dummy
       GOOGLE_API_KEY: dummy
     steps:

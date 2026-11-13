@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 
 from app.models.jsonrpc import JSONRPCErrorCode as Code
 from app.services.message_handler import MessageHandler
+from tests.conftest import AUTH_HEADERS
 
 PR_URL = "https://github.com/octo/repo/pull/42"
 
@@ -100,7 +101,7 @@ class TestForwarding:
 
     def test_missing_rpc_handler_is_500(self, test_app):
         del test_app.state.jsonrpc_handler
-        res = TestClient(test_app).post("/a2a/tasks", json={"message": "hi"})
+        res = TestClient(test_app, headers=AUTH_HEADERS).post("/a2a/tasks", json={"message": "hi"})
         assert res.status_code == 500
 
     def test_handler_failure_is_a_jsonrpc_error(self, client, rpc_handler):
@@ -124,7 +125,7 @@ class TestInputRequired:
             return await handler.handle_message_send(message, configuration)
 
         rpc_handler.register_method("message/send", message_send)
-        return TestClient(test_app)
+        return TestClient(test_app, headers=AUTH_HEADERS)
 
     def test_no_pr_url_asks_for_one(self, real_handler_client):
         res = real_handler_client.post("/a2a/tasks", json=rpc_message_send("please review my code"))
@@ -177,7 +178,7 @@ class TestResultPath:
     """message/send must return a result without Telex-style push config."""
 
     @pytest.fixture
-    def handler(self):
+    def handler(self, push_allowed):
         from app.utils.formatters import SummaryFormatter
 
         h = MessageHandler.__new__(MessageHandler)

@@ -13,12 +13,15 @@ Main service that orchestrates the complete code review process:
 
 import logging
 import time
+from collections.abc import Awaitable
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, TypeVar
 
 from app.core.config import settings
+from app.core.errors import new_error_id
 from app.core.exceptions import AnalysisError, GitHubMCPError, LLMError
 from app.models.analysis import (
+    AnalysisStatus,
     ApprovalRecommendation,
     BestPracticeIssue,
     CodeAnalysisResult,
@@ -29,12 +32,14 @@ from app.models.analysis import (
 )
 from app.models.github import PullRequest, PullRequestFile
 from app.services.github_mcp import GitHubMCPService
-from app.services.llm_service import LLMService
+from app.services.llm_service import MAX_DIFF_CHARS, LLMService, PartialFindingsError
 from app.utils.diff_parser import DiffParser, FileDiff
 from app.utils.performance_rules import PerformanceChecker
 from app.utils.security_rules import SecurityChecker
 
 logger = logging.getLogger(__name__)
+
+IssueT = TypeVar("IssueT")
 
 
 class CodeAnalyzerService:
@@ -86,11 +91,33 @@ class CodeAnalyzerService:
             
             logger.info(f"Rule-based checks: {len(rule_security_issues)} security, {len(rule_performance_issues)} performance issues")
             
-            # Step 5: Run LLM-powered analysis (slower, comprehensive)
-            llm_security_issues = await self.llm_service.analyze_security(diff_content, files)
-            llm_performance_issues = await self.llm_service.analyze_performance(diff_content, files)
-            llm_best_practice_issues = await self.llm_service.analyze_best_practices(diff_content, files)
-            
+            # Step 5: Run LLM-powered analysis (slower, comprehensive). A failed step
+            # keeps the rule findings and marks the review incomplete (P1-06, F-03).
+            incomplete_reasons: list[str] = []
+            diff_chars_total = len(diff_content)
+            diff_truncated = diff_chars_total > MAX_DIFF_CHARS
+            if diff_truncated:
+                incomplete_reasons.append(
+                    f"The diff is {diff_chars_total:,} characters; the LLM reviewed only "
+                    f"the first {MAX_DIFF_CHARS:,}. Rule-based checks covered the whole diff."
+                )
+
+            llm_security_issues, security_ran = await self._run_llm_step(
+                "Security analysis",
+                self.llm_service.analyze_security(diff_content, files),
+                incomplete_reasons,
+            )
+            llm_performance_issues, performance_ran = await self._run_llm_step(
+                "Performance analysis",
+                self.llm_service.analyze_performance(diff_content, files),
+                incomplete_reasons,
+            )
+            llm_best_practice_issues, best_practices_ran = await self._run_llm_step(
+                "Best practices analysis",
+                self.llm_service.analyze_best_practices(diff_content, files),
+                incomplete_reasons,
+            )
+
             logger.info(f"LLM analysis: {len(llm_security_issues)} security, {len(llm_performance_issues)} performance, {len(llm_best_practice_issues)} best practice issues")
             
             # Step 6: Merge and deduplicate findings
@@ -101,18 +128,28 @@ class CodeAnalyzerService:
             # Step 7: Calculate risk level
             risk_level = self._calculate_risk_level(all_security_issues, all_performance_issues)
             
-            # Step 8: Generate executive summary
-            executive_summary = await self.llm_service.generate_summary(
-                pr_title=pr_data.title,
-                pr_author=pr_data.user.login if pr_data.user else "unknown",
-                pr_description=pr_data.body or "",
-                security_issues=all_security_issues,
-                performance_issues=all_performance_issues,
-                best_practice_issues=all_best_practice_issues,
-                total_additions=pr_data.additions,
-                total_deletions=pr_data.deletions,
-                changed_files=pr_data.changed_files
-            )
+            # Step 8: Generate executive summary. A provider failure here loses only
+            # the prose, so fall back to a plain summary and mark the review incomplete.
+            try:
+                executive_summary = await self.llm_service.generate_summary(
+                    pr_title=pr_data.title,
+                    pr_author=pr_data.user.login if pr_data.user else "unknown",
+                    pr_description=pr_data.body or "",
+                    security_issues=all_security_issues,
+                    performance_issues=all_performance_issues,
+                    best_practice_issues=all_best_practice_issues,
+                    total_additions=pr_data.additions,
+                    total_deletions=pr_data.deletions,
+                    changed_files=pr_data.changed_files
+                )
+            except LLMError as e:
+                logger.error(f"Summary generation failed, using fallback: {type(e).__name__}")
+                incomplete_reasons.append(f"Summary generation failed ({type(e).__name__}).")
+                executive_summary = (
+                    f"Automated summary unavailable. Found {len(all_security_issues)} security, "
+                    f"{len(all_performance_issues)} performance and "
+                    f"{len(all_best_practice_issues)} best practice issue(s)."
+                )
             
             # Step 9: Generate recommendations
             recommendations = self._generate_recommendations(
@@ -127,7 +164,24 @@ class CodeAnalyzerService:
                 all_security_issues,
                 all_performance_issues
             )
-            
+
+            # Step 11: Fail closed. FAILED when no LLM findings step produced a
+            # result, INCOMPLETE for anything partial; neither may approve.
+            if not (security_ran or performance_ran or best_practices_ran):
+                status = AnalysisStatus.FAILED
+            elif incomplete_reasons:
+                status = AnalysisStatus.INCOMPLETE
+            else:
+                status = AnalysisStatus.COMPLETE
+            approval_recommendation = self._fail_closed(status, approval_recommendation)
+            if status != AnalysisStatus.COMPLETE:
+                # Don't call an unfinished review "good"; lead with why it is unfinished
+                recommendations = [
+                    f"⏸️ INCOMPLETE: review did not finish ({len(incomplete_reasons)} "
+                    f"problem(s)); a human must review this PR"
+                ] + [r for r in recommendations if not r.startswith("✅")]
+                recommendations = recommendations[:5]
+
             
             # Step 12: Build final result
             analysis_duration = time.time() - start_time
@@ -150,6 +204,11 @@ class CodeAnalyzerService:
                 lines_added=pr_data.additions,
                 lines_deleted=pr_data.deletions,
                 approval_recommendation=approval_recommendation,
+                status=status,
+                incomplete_reasons=incomplete_reasons,
+                diff_truncated=diff_truncated,
+                diff_chars_total=diff_chars_total,
+                diff_chars_reviewed_by_llm=min(diff_chars_total, MAX_DIFF_CHARS),
                 key_concerns=recommendations,  # Map recommendations to key_concerns
                 analyzed_at=datetime.now(UTC),
                 analysis_duration_seconds=analysis_duration,
@@ -157,7 +216,7 @@ class CodeAnalyzerService:
                 llm_model=settings.LLM_MODEL
             )
             
-            logger.info(f"Analysis completed in {analysis_duration:.2f}s - Risk: {risk_level.value}, Recommendation: {approval_recommendation.value}")
+            logger.info(f"Analysis completed in {analysis_duration:.2f}s - Status: {status.value}, Risk: {risk_level.value}, Recommendation: {approval_recommendation.value}")
             return result
             
         except GitHubMCPError as e:
@@ -167,9 +226,60 @@ class CodeAnalyzerService:
             logger.error(f"LLM error during analysis: {e}")
             raise
         except Exception as e:
-            logger.error(f"Unexpected error during analysis: {e}")
-            raise AnalysisError(f"Analysis failed: {str(e)}") from e
+            # Exception text can echo PR code or upstream bodies, and callers log this
+            # error again with its traceback. Keep only the type and an id to
+            # correlate, and drop the cause (P1-06 S1, P1-08).
+            error_id = new_error_id()
+            logger.error(
+                f"Unexpected error during analysis [error_id={error_id}]: {type(e).__name__}"
+            )
+            raise AnalysisError(
+                f"Analysis failed ({type(e).__name__}, error id: {error_id})"
+            ) from None
     
+    async def _run_llm_step(
+        self,
+        name: str,
+        call: Awaitable[list[IssueT]],
+        incomplete_reasons: list[str],
+    ) -> tuple[list[IssueT], bool]:
+        """Await one LLM findings step without letting its failure end the review.
+
+        Returns the findings and whether the step produced usable output (a partial
+        result counts; it is still recorded as incomplete). Any failure is
+        recorded in `incomplete_reasons` by error type only: exception text can echo
+        the prompt or model output, and the reasons may be posted on the PR.
+        Findings that validated before a partial failure are kept.
+        """
+        try:
+            return await call, True
+        except PartialFindingsError as e:
+            logger.error(f"{name} returned some invalid findings: {type(e).__name__}")
+            incomplete_reasons.append(f"{name} returned some invalid findings, which were dropped.")
+            return list(e.findings), True
+        except Exception as e:
+            logger.error(f"{name} failed: {type(e).__name__}")
+            incomplete_reasons.append(f"{name} failed ({type(e).__name__}).")
+            return [], False
+
+    @staticmethod
+    def _fail_closed(
+        status: AnalysisStatus, recommendation: ApprovalRecommendation
+    ) -> ApprovalRecommendation:
+        """An unfinished review never approves (P1-06).
+
+        A blocking verdict (reject, request changes) stands, since the findings
+        that justify it are real. An approving one becomes INCOMPLETE.
+        """
+        if status == AnalysisStatus.COMPLETE:
+            return recommendation
+        if recommendation in (
+            ApprovalRecommendation.APPROVE,
+            ApprovalRecommendation.APPROVE_WITH_SUGGESTIONS,
+        ):
+            return ApprovalRecommendation.INCOMPLETE
+        return recommendation
+
     async def _fetch_pr_data(self, pr_url: str) -> tuple[PullRequest, str, list[PullRequestFile]]:
         """
         Fetch PR data from GitHub via API

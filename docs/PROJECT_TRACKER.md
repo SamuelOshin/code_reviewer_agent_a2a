@@ -13,9 +13,9 @@ read this file alone and continue the work.
 | | |
 |---|---|
 | **Current phase** | Phase 1: make it honest and working (planning complete) |
-| **Active task** | None. Done: `P1-01` to `P1-04`, `P1-08` to `P1-12`, `P1-14`. Open: `P1-05` (needs one real review on two providers) |
-| **Next action** | Owner runs one real review on two providers with real keys in `.env` (closes `P1-05`). Then `P1-06` (fail closed) and `P1-07` (auth, mandatory webhook secret) can run in parallel. Don't point the webhook at a real repo until both land: today a failed LLM call can still be posted as APPROVE |
-| **Working branch** | `main`. All Phase 1 work so far was merged through PR #1 on 2026-11-13. Start each new task on its own branch from `main`. `docs/project-tracker` is redundant and can be deleted |
+| **Active task** | None. Done: `P1-01` to `P1-04`, `P1-06` to `P1-12`, `P1-14`. Open: `P1-05` (needs one real review on two providers) |
+| **Next action** | Owner adds a random `API_KEY` and a real `GITHUB_WEBHOOK_SECRET` to `.env` (startup now refuses missing or placeholder values), then runs one real review on two providers (closes `P1-05`). Then `P1-13` (README rewrite, including the new auth settings) and `P1-15` (review follow-ups) |
+| **Working branch** | `main`. Start each new task on its own branch from `main`. `P1-06` and `P1-07` merged through the `chore/p1-06-p1-07` PR |
 | **Blockers** | None. Owner approved running repo code on 2026-11-12. Use `uv` for everything (`uv sync`, `uv run`). If an install fails on a Windows cache file lock, retry or set a different `UV_CACHE_DIR` |
 | **Working rule** | Parallel agents don't edit this file. The coordinating session records their results |
 
@@ -249,15 +249,15 @@ in CI, and the README is accurate.
 | P1-03 | done | Remove Telex and dead code: `telex_client.py`, `telex_service.py`, `a2a_service.py`, `routes/a2a.py`, `config/agent_card_telex.json`, `telex_workflow.json`, `/a2a/webhooks/{hook_id}`, legacy task format, placeholder RPC handlers, unused `public/fonts`, empty `scripts/*`, unreachable code in `performance_rules.py`, debug prints | P1-01 | `grep -ri telex app config` returns nothing. App starts. Tests no worse than baseline |
 | P1-04 | done | Add a working result path: `message/send` returns a completed task without push config, and GitHub webhook runs have an output. Webhook runs post one summary comment (capped at 60,000 characters), but only when `GITHUB_WEBHOOK_SECRET` is set, so a forged event can't make the bot comment | P1-03 | A test proves a request with no push config returns a completed task |
 | P1-05 | doing | Build the provider-agnostic model layer from section 4, replacing the `llm_service.py` provider classes and deprecated `google-generativeai`. Check vendor docs for current model IDs | P1-01, D-12 | Provider SDKs imported only in the model layer. Contract tests pass for every adapter. One real review succeeds on at least two providers using configuration changes only. No model ID in application code |
-| P1-06 | todo | Fail closed: a parse failure or partial analysis gives a `failed` or `incomplete` result and never `approve`. Report any truncated diff. Keep rule findings when an LLM call fails. Stop logging raw LLM output (`llm_service.py` logs the first 200 characters of an unparseable response, which can echo PR code) | P1-05 | Tests: malformed, truncated and nested-array LLM output never yields approve. The strict xfail `test_llm_error_falls_back_to_rule_results` (F-03) passes and its marker is removed |
-| P1-07 | todo | Add auth to `/rpc` and `/a2a/*`, make the webhook secret mandatory, block caller-supplied URLs unless allowlisted, restrict CORS, and limit batch size | P1-03 | Tests: unauthenticated call is rejected, disallowed URL is rejected, missing secret stops startup |
+| P1-06 | done | Fail closed: a parse failure or partial analysis gives a `failed` or `incomplete` result and never `approve`. Report any truncated diff. Keep rule findings when an LLM call fails. Stop logging raw LLM output (`llm_service.py` logs the first 200 characters of an unparseable response, which can echo PR code) | P1-05 | Tests: malformed, truncated and nested-array LLM output never yields approve. The strict xfail `test_llm_error_falls_back_to_rule_results` (F-03) passes and its marker is removed |
+| P1-07 | done | Add auth to `/rpc` and `/a2a/*`, make the webhook secret mandatory, block caller-supplied URLs unless allowlisted, restrict CORS, and limit batch size | P1-03 | Tests: unauthenticated call is rejected, disallowed URL is rejected, missing secret stops startup |
 | P1-08 | done | Stop logging tokens and payloads, and return safe error messages. Clients now get a generic message plus an error id, and the full error is logged server-side under that id | P1-03 | No token or payload in logs, proven by a test using a sentinel value |
 | P1-09 | done | Use the `Severity` enum throughout and add a structured impact level | P1-03 | Test: critical findings are counted correctly in the summary |
 | P1-10 | done | Tune rules: fix `eval`, `exec`, `open` and concatenation patterns, and report each performance match once on its real line | P1-03 | Regression tests cover the `F-08` examples |
 | P1-11 | done | Fix Docker: remove unused `SECRET_KEY` and Node.js, correct env vars, make the healthcheck fail on bad status. The image installs from `uv.lock`, `requirements.txt` is deleted, compose uses `env_file`, and the host port is configurable with `HOST_PORT` | P1-03 | `docker compose up` reaches healthy from a clean clone |
 | P1-12 | done | Done: empty test files filled, ruff and mypy config, ruff findings fixed, and `.github/workflows/ci.yml` (ruff, pytest with coverage, `pip-audit`). CI went green on PR #1 on 2026-11-13. Coverage 82%. mypy is out of CI because of 55 errors, moved to `P2-09` | P1-03 | CI green on a PR. Coverage figure recorded |
-| P1-13 | todo | Rewrite the README so every claim is true. It still describes Telex, MCP, `python-a2a`, Node.js and `pip install -r requirements.txt` (deleted), documents removed RPC methods and settings, and its Docker section should be `cp .env.example .env` then `docker compose up --build` | All above | Every feature listed maps to code or a test |
-| P1-15 | todo | Review follow-ups from `P1-04` and `P1-05`: dedupe replayed webhook deliveries by `X-GitHub-Delivery`; add a timeout to blocking `message/send`; use `[0-9]` instead of `\d` in `parse_pr_url`; map a Google 404 to `LLMConfigurationError` like the other providers; record the model each role used in the result, not just the default | P1-04, P1-05 | Tests: a replayed delivery posts once, a non-ASCII-digit PR URL is rejected, a Google 404 raises a configuration error |
+| P1-13 | todo | Rewrite the README so every claim is true. It still describes Telex, MCP, `python-a2a`, Node.js and `pip install -r requirements.txt` (deleted), documents removed RPC methods and settings, it must document `API_KEY` (its `/rpc` examples now return 401 without it), and its Docker section should be `cp .env.example .env` then `docker compose up --build` | All above | Every feature listed maps to code or a test |
+| P1-15 | todo | Review follow-ups from `P1-04` and `P1-05`: dedupe replayed webhook deliveries by `X-GitHub-Delivery`; add a timeout to blocking `message/send`; use `[0-9]` instead of `\d` in `parse_pr_url`; map a Google 404 to `LLMConfigurationError` like the other providers; record the model each role used in the result, not just the default. From the PR #2 review: show the P1-06 status and incomplete reasons in the A2A report and the `analyze_pr` RPC result; reject `::7f00:1` and NAT64 push URL addresses and restrict the port; set a minimum length for the webhook secret; reject or normalize mixed-case CORS origins; return an error for an empty JSON-RPC batch | P1-04, P1-05, P1-06, P1-07 | Tests: a replayed delivery posts once, a non-ASCII-digit PR URL is rejected, a Google 404 raises a configuration error |
 | P1-14 | done | Repo hygiene: add `.gitattributes` to normalise line endings, ignore `.claude/worktrees/` and tool caches, replace deprecated `datetime.utcnow` everywhere in `app/`, and use PyGithub's `Auth.Token` | P1-03 | `git add --renormalize .` leaves a clean diff. No `utcnow` in `app/` |
 
 ### Phase 2: modernize the core
@@ -296,10 +296,10 @@ Keep this honest. It records what has actually been proven.
 
 | Check | State | Notes |
 |---|---|---|
-| Test suite | Passing 2026-11-13 | On `chore/p1-01-pyproject` after merging `P1-04` and `P1-05`: **320 passed, 1 strict xfail** (F-03). Coverage **82%**. The model-layer contract tests mock the network, so no real provider was called (baseline was 63 passed, 1 collection error, 21%). New tests were run against the old code and fail there, so they catch the bugs they target |
+| Test suite | Passing 2026-11-13 | After the PR #2 review fixes: **516 passed, 0 xfail** (the F-03 xfail now passes). Coverage 86% before the fixes, not re-measured. LLM, GitHub and push calls are mocked; no real provider was called |
 | App startup | Starts in-process | `/`, `/health` (`healthy`), `/ready` and the agent card return 200, with or without `SECRET_KEY`. Real LLM and GitHub calls not tested |
 | Docker | Passing 2026-11-12 | From `.env.example` copied to `.env`, `docker compose up --build` reached `healthy` (Docker 29.8). `/health` returned 200 from this app. The container runs as `appuser` with no Node.js. Tested on host port 8010, because another local service holds 8000 |
-| CI | Passing 2026-11-13 | Green on GitHub for PR #1 (ruff, pytest with coverage, `pip-audit`). GitGuardian also passed |
+| CI | Passing 2026-11-13 | Green on GitHub for PR #2 at `549f481` (ruff, pytest with coverage, `pip-audit`). GitGuardian also passed |
 | Radon, vulture | Done | Highest complexity: `DiffParser._parse_file_diff` at 30 and `_parse_hunk` at 22 |
 | Ruff | Passing | `ruff check .` is clean with the rules in `pyproject.toml`. `ruff format` is not enforced yet (`P2-09`) |
 | mypy | 55 errors | Lenient config in `pyproject.toml`, not in CI (`P2-09`) |
@@ -314,6 +314,39 @@ Keep this honest. It records what has actually been proven.
 ## 9. Session log
 
 Newest first. Keep entries short.
+
+### 2026-11-13: PR #2 reviewed, fixed and merged
+
+- **Review:** Bobby Review gave "changes needed". `P1-07` held every probe (auth
+  header variants, route bypass, push URL tricks, batch, CORS, config, webhook).
+- **Fixed (`549f481`):** B1, a truncated reply with an inner `[]` parsed as "no
+  issues" and approved. Prose `[]` no longer counts, a broken object array raises,
+  and deep nesting fails cleanly. S1, raw exception text reached the logs from
+  `code_analyzer.py` and `github_mcp.py`; now only the type and an error id.
+  516 passed, ruff clean, CI green. The fix was not re-reviewed by a separate pass.
+- **Behaviour change:** prose such as "No issues found: []" now gives `incomplete`.
+- **Follow-ups:** added to `P1-15` (and the README `API_KEY` gap to `P1-13`). Webhook
+  replay was already in `P1-15`.
+
+### 2026-11-13: `P1-06` and `P1-07` merged
+
+- **Done:** two side sessions built `P1-06` and `P1-07` in parallel from `main`, in
+  separate files. The coordinating session read the key code, reran everything per
+  branch and merged, then merged both. Result: 490 passed, 0 xfail, 86% coverage,
+  ruff clean, `pip-audit` clean.
+  - **P1-06:** results carry a status (complete, incomplete or failed). An
+    unfinished review becomes `INCOMPLETE` and never approves. Rule findings
+    survive LLM failures. Truncated diffs are reported with character counts.
+    Raw model output is never logged.
+  - **P1-07:** `/rpc` and `/a2a/*` need `Authorization: Bearer <API_KEY>`
+    (at least 32 characters, constant-time check). The webhook secret is
+    required. Startup refuses the `.env.example` placeholder secrets. Push URLs
+    must be https, on `PUSH_URL_ALLOWED_HOSTS`, and resolve to public addresses.
+    CORS allows only configured origins, and JSON-RPC batches are capped.
+- **Not done:** no real LLM, GitHub or push call, and Docker was not rerun. A known
+  limit: DNS rebinding between the push URL check and the connect. The allowlist
+  is the primary control. The README does not yet describe the new settings
+  (`P1-13`).
 
 ### 2026-11-13: `P1-04` and `P1-05` merged
 

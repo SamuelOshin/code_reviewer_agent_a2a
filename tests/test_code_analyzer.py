@@ -170,12 +170,8 @@ class TestAnalyzePr:
             await run(analyzer, github)
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        strict=True,
-        reason="F-03: LLM failures are not handled, so an LLM error aborts the whole "
-               "analysis instead of falling back to rule-based results",
-    )
     async def test_llm_error_falls_back_to_rule_results(self):
+        # F-03: an LLM failure keeps the rule findings instead of aborting the review
         analyzer, github, llm = make_analyzer()
         llm.analyze_security = AsyncMock(side_effect=Exception("LLM error"))
 
