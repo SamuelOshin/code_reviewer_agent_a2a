@@ -5,12 +5,10 @@ description = "AI code review agent for GitHub Pull Requests"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "anthropic>=0.72",
     "fastapi>=0.120",
-    "google-generativeai>=0.8.5",
     "httpx>=0.28",
-    "openai>=2.6",
     "pydantic>=2.12",
+    "pydantic-ai-slim[anthropic,google,openai]>=2.68",
     "pydantic-settings>=2.11",
     "pygithub>=2.8",
     "uvicorn>=0.38",
@@ -24,6 +22,7 @@ dev = [
     "ruff>=0.14",
     "mypy>=1.13",
     "pip-audit>=2.9",
+    "httpx2>=2.16",
 ]
 
 [tool.uv]
