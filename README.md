@@ -141,14 +141,16 @@ once and pushes the result to that URL. The URL must be `https`, its host must b
 resolve to public addresses only. A blocking call that runs longer than
 `A2A_BLOCKING_TIMEOUT_SECONDS` returns error `-32004`. A JSON-RPC batch runs its calls
 concurrently, at most 5 at a time across the whole process (all batches share one
-limit), so a batch of n blocking calls can take up to ceil(n/5) times that timeout, and
-longer while other batches are running. A batch call that cannot get a slot within
-`A2A_BLOCKING_TIMEOUT_SECONDS` returns `-32004` for that call, without running it; single
+limit). Each batch call waits at most `A2A_BLOCKING_TIMEOUT_SECONDS` for a slot; if none
+is free it returns `-32004` for that call without running it. A call that gets a slot then
+runs under the same timeout, so a batch finishes within about twice the timeout. Single
 requests are not queued behind this limit. If the push to your webhook fails with an error
 status (for example 429, 413 or 5xx), the service makes one more post with a short
 "could not deliver the result" message and an error id; if the webhook cannot be reached at
-all, it does not retry. A failed review also tells you whether the cause was a model rate
-limit or GitHub access, as fixed text plus an error id, never the exception text. PR URLs
+all, it does not retry. A review that fails because GitHub could not be reached or the
+PR could not be read says so, as fixed text plus an error id, never the exception text.
+A model failure, including a rate limit, does not fail the task: it shows in the review
+as a failed analysis step (for example "Security analysis failed (LLMRateLimitError)"). PR URLs
 in message text are accepted as `http://` or `https://`, with `github.com` in any case
 (and without a scheme), and are rewritten to `https://github.com/...`; PR number 0 is
 rejected. On timeout, a GitHub request that has already started
