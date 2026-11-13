@@ -1,658 +1,193 @@
-# Code Review Agent 🤖
+# PRRover
 
-AI-powered code review agent for GitHub Pull Requests using Agent-to-Agent (A2A) protocol and Google Gemini AI. Features comprehensive security analysis, performance optimization detection, and best practice recommendations with webhook-based delivery for seamless integration.
+An AI code review agent for GitHub Pull Requests. It combines regex rules with LLM
+analysis to report security, performance and best-practice findings, and it fails
+closed: a review that did not fully run never says "approve".
 
-## 🌟 Features
+It is a FastAPI service with a JSON-RPC 2.0 endpoint, a simple A2A-style task endpoint
+and a GitHub webhook. The LLM layer is provider agnostic: provider and model are
+configuration, not code.
 
-- **🔒 Security Analysis**: Detects 10+ vulnerability types (SQL injection, XSS, hardcoded secrets, etc.) with CWE references
-- **⚡ Performance Analysis**: Identifies performance bottlenecks (N+1 queries, nested loops, blocking I/O, etc.)
-- **✨ Best Practices**: LLM-powered code quality recommendations
-- **🤝 A2A Protocol**: Full Agent-to-Agent protocol compliance with proper Message/Task handling
-- **🔗 GitHub Integration**: Uses GitHub MCP (Model Context Protocol) for seamless PR access
-- **🧠 Multi-LLM Support**: Google Gemini (default), OpenAI GPT-4, Anthropic Claude
-- **📊 Risk Assessment**: Automated risk level calculation and approval recommendations
-- **🚀 JSON-RPC 2.0**: Standard RPC interface for programmatic access
-- **🎯 GitHub Webhooks**: Automatic analysis on PR events with webhook push notifications
-- **🔄 Non-blocking Mode**: Immediate response with background processing and webhook delivery
-- **📏 Payload Optimization**: Automatic artifact truncation to prevent HTTP 413 errors
-- **🛡️ Error Handling**: Comprehensive error handling with proper webhook error reporting
+> **Status:** this project is being rebuilt as an AI engineering portfolio piece. The
+> [project tracker](docs/PROJECT_TRACKER.md) holds the plan and what is verified.
+> No real LLM or GitHub call has been run end to end yet; the test suite mocks them.
 
-## 📋 Table of Contents
+## What it does
 
-- [Architecture](#architecture)
-- [Prerequisites](#prerequisites)
-- [Installation](#installation)
-- [Configuration](#configuration)
-- [Usage](#usage)
-- [API Documentation](#api-documentation)
-- [Docker Deployment](#docker-deployment)
-- [Testing](#testing)
-- [Troubleshooting](#troubleshooting)
-- [Project Structure](#project-structure)
-- [Contributing](#contributing)
-- [Recent Updates](#recent-updates)
+| Feature | Where |
+|---|---|
+| Parses PR diffs per file and hunk | `app/utils/diff_parser.py`, `tests/test_diff_parser.py` |
+| Rule-based security checks (SQL injection, hardcoded secrets, unsafe deserialization, command injection, XSS, path traversal, weak crypto, insecure random, missing auth check, debug mode), with CWE ids | `app/utils/security_rules.py`, `tests/test_security_rules.py` |
+| Rule-based performance checks (N+1 queries, nested loops, blocking I/O, string concatenation, missing index, and others) | `app/utils/performance_rules.py`, `tests/test_performance_rules.py` |
+| LLM analysis in four roles: security, performance, best practices, summary | `app/services/llm_service.py`, `app/llm/types.py`, `tests/test_llm_summary.py` |
+| Provider-agnostic model layer on Pydantic AI: Google, OpenAI, Anthropic and any OpenAI-compatible server; per-role models; ordered fallback models | `app/llm/`, `tests/test_llm_contract.py` |
+| Risk level and approval recommendation | `app/services/code_analyzer.py`, `tests/test_code_analyzer.py` |
+| Fail-closed results (see below) | `tests/test_fail_closed.py` |
+| JSON-RPC 2.0 at `/rpc` with `analyze_pr`, `message/send`, `introspect`, batch support | `app/main.py`, `app/routes/jsonrpc.py`, `tests/test_jsonrpc.py` |
+| `POST /a2a/tasks`: JSON-RPC `message/send`, or `{"message": "<text containing a PR URL>"}` | `app/routes/a2a_tasks.py`, `tests/test_a2a_protocol.py` |
+| GitHub webhook: HMAC-verified `pull_request` events (opened, synchronize, reopened) get one summary comment on the PR, capped at 60,000 characters | `app/routes/webhooks.py`, `tests/test_webhooks.py` |
+| Optional push of the result to a caller-supplied URL (allowlisted, https, public addresses only) | `app/core/push_url.py`, `tests/test_security_p107.py` |
+| Safe logging and errors: no tokens, payloads or raw model output in logs; clients get a generic message plus an error id | `app/core/errors.py`, `tests/test_safe_logging.py` |
 
-## 🏗️ Architecture
+## Fail-closed reviews
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     Code Review Agent                        │
-├─────────────────────────────────────────────────────────────┤
-│                                                              │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐  │
-│  │   FastAPI    │───>│  JSON-RPC    │───>│    Routes    │  │
-│  │  Main App    │    │   Handler    │    │  (webhooks)  │  │
-│  └──────────────┘    └──────────────┘    └──────────────┘  │
-│         │                                         │         │
-│         v                                         v         │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │           MessageHandlerService                      │  │
-│  │  ┌────────────┐ ┌────────────┐ ┌────────────┐      │  │
-│  │  │  GitHub    │ │    LLM     │ │   Telex    │      │  │
-│  │  │    MCP     │ │  Service   │ │   Client   │      │  │
-│  │  └────────────┘ └────────────┘ └────────────┘      │  │
-│  │  ┌────────────┐ ┌────────────┐ ┌────────────┐      │  │
-│  │  │  Security  │ │Performance │ │  Formatters│      │  │
-│  │  │  Checker   │ │  Checker   │ │            │      │  │
-│  │  └────────────┘ └────────────┘ └────────────┘      │  │
-│  └──────────────────────────────────────────────────────┘  │
-│                                                              │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │              A2A Protocol Compliance                  │  │
-│  │  ┌────────────┐ ┌────────────┐ ┌────────────┐      │  │
-│  │  │  Immediate │ │ Background │ │   Webhook  │      │  │
-│  │  │  Response  │ │ Processing │ │   Push     │      │  │
-│  │  │  (Message) │ │   (Task)   │ │  (Result)  │      │  │
-│  │  └────────────┘ └────────────┘ └────────────┘      │  │
-│  └──────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────┘
-         │                  │                   │
-         v                  v                   v
-    ┌─────────┐      ┌──────────┐      ┌──────────┐
-    │ GitHub  │      │   LLM    │      │  Telex   │
-    │   API   │      │Providers │      │   A2A    │
-    └─────────┘      └──────────┘      └──────────┘
-```
+Every result carries a `status`:
 
-## 📦 Prerequisites
+- `complete`: every step ran on the whole diff.
+- `incomplete`: an LLM step failed, returned unusable output, or saw only part of the diff.
+- `failed`: no LLM findings step succeeded; only rule-based findings are reported.
 
-- **Python 3.11+**
-- **Node.js 20+** (required by python-a2a for GitHub MCP)
-- **Git**
-- **GitHub Personal Access Token** (with repo access)
-- **LLM API Key** (Google, OpenAI, or Anthropic)
+An `incomplete` or `failed` review gets the recommendation `incomplete` and **never
+approves**. Rule findings are kept when an LLM call fails. The LLM sees only the first
+8,000 characters of the diff; when the diff is longer the result sets `diff_truncated`
+and reports how many characters were reviewed (the rules still cover the whole diff).
+Malformed or truncated model output is never read as "no issues". Raw model output is
+never logged. Tests: `tests/test_fail_closed.py`.
 
-## 🚀 Installation
+The status and reasons appear in the PR comment (`app/utils/formatters.py`). They are not
+yet in the A2A report or the `analyze_pr` RPC result (tracked as `P1-15`), so RPC callers
+should treat `approval_recommendation` as the signal for now.
 
-### Local Development (PowerShell)
+## Quick start
 
-```powershell
-# Clone the repository
-git clone https://github.com/yourusername/code_reviewer_agent_a2a.git
+Needs Python 3.11+, [uv](https://docs.astral.sh/uv/), a GitHub token with read access
+to the PRs you review, and a key for one LLM provider.
+
+```bash
+git clone https://github.com/SamuelOshin/code_reviewer_agent_a2a.git
 cd code_reviewer_agent_a2a
-
-# Create virtual environment
-python -m venv venv
-
-# Activate virtual environment (PowerShell)
-& .\venv\Scripts\Activate.ps1
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Copy environment template
-cp .env.example .env
-
-# Edit .env with your credentials (use your preferred editor)
-notepad .env
+uv sync
+cp .env.example .env     # then edit .env (see Configuration)
+uv run uvicorn app.main:app --reload --port 8000
 ```
 
-### POSIX (macOS/Linux/WSL)
+Startup refuses to run without valid `GITHUB_TOKEN`, `GITHUB_WEBHOOK_SECRET` and
+`API_KEY`, so edit `.env` first. Generate values with:
 
 ```bash
-# Clone the repository
-git clone https://github.com/yourusername/code_reviewer_agent_a2a.git
-cd code_reviewer_agent_a2a
-
-# Create virtual environment
-python3 -m venv venv
-
-# Activate virtual environment
-source venv/bin/activate
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Copy environment template
-cp .env.example .env
-
-# Edit .env with your credentials
-nano .env
+python -c "import secrets; print(secrets.token_urlsafe(32))"   # API_KEY
+python -c "import secrets; print(secrets.token_hex(32))"       # GITHUB_WEBHOOK_SECRET
 ```
 
-## ⚙️ Configuration
+### Docker
 
-Create a `.env` file with the following variables:
-
-```env
-# Environment
-ENVIRONMENT=development
-LOG_LEVEL=INFO
-
-# GitHub Configuration
-GITHUB_TOKEN=ghp_your_github_token_here
-GITHUB_WEBHOOK_SECRET=your_webhook_secret
-
-# LLM Configuration: <provider>:<model-id>
-# Providers: google, openai, anthropic, openai-compatible
-LLM_MODEL=google:gemini-3.8-flash
-GOOGLE_API_KEY=your_google_api_key
-
-# Switching provider is a config change only, for example:
-# LLM_MODEL=openai:gpt-6.1-sol
-# OPENAI_API_KEY=sk-your-openai-key
-# LLM_MODEL=anthropic:claude-sonnet-5-5
-# ANTHROPIC_API_KEY=sk-ant-your-anthropic-key
-
-# Optional: per-role models, fallback models, and OpenAI-compatible servers
-# LLM_MODEL_SECURITY=anthropic:claude-sonnet-5-5
-# LLM_MODEL_SUMMARY=google:gemini-3.5-flash-lite
-# LLM_FALLBACK_MODELS=openai:gpt-6.1-sol
-# OPENAI_COMPATIBLE_BASE_URL=http://localhost:11434/v1
-
-# Telex Configuration (Optional)
-TELEX_WEBHOOK_URL=https://telex.example.com
-TELEX_API_KEY=your_telex_api_key
-```
-
-### Getting API Keys
-
-1. **GitHub Token**: https://github.com/settings/tokens
-   - Select scopes: `repo`, `read:org`
-
-2. **Google Gemini API**: https://ai.google.dev/gemini-api/docs/api-key
-
-3. **OpenAI**: https://platform.openai.com/api-keys
-
-4. **Anthropic**: https://console.anthropic.com/
-
-You only need a key for the providers your configured models use. Model IDs in
-these examples were checked against the vendors' docs on 2026-11-12; see
-`.env.example` for every LLM setting. The old `LLM_PROVIDER` setting is no longer
-read, and a model without a provider prefix (such as `gemini-1.5-flash`) stops
-startup with an error that explains the format.
-
-## 🎯 Usage
-
-### Running the Server
-
-**PowerShell:**
-```powershell
-# Activate virtual environment
-& .\venv\Scripts\Activate.ps1
-
-# Run development server with auto-reload
-uvicorn app.main:app --reload --port 8000
-```
-
-**POSIX:**
 ```bash
-# Activate virtual environment
-source venv/bin/activate
-
-# Run development server
-uvicorn app.main:app --reload --port 8000
+cp .env.example .env     # edit it first
+docker compose up --build
 ```
 
-The server will be available at `http://localhost:8000`
+The image installs from `uv.lock`, runs as a non-root user, and has a healthcheck on
+`/health`. Set `HOST_PORT` in `.env` if port 8000 is taken.
 
-### Setting Up GitHub Webhooks
+## Configuration
 
-1. Go to your GitHub repository → Settings → Webhooks
-2. Click "Add webhook"
-3. Configure:
-   - **Payload URL**: `https://your-domain.com/webhooks/github`
-   - **Content type**: `application/json`
-   - **Secret**: (same as `GITHUB_WEBHOOK_SECRET` in `.env`)
-   - **Events**: Select "Pull requests"
-4. Click "Add webhook"
+All settings are environment variables (or `.env`). [`.env.example`](.env.example) and
+[`app/core/config.py`](app/core/config.py) are the source of truth.
 
-### Testing Locally with ngrok
+| Variable | Required | Meaning |
+|---|---|---|
+| `GITHUB_TOKEN` | yes | Token used to read PRs and post comments |
+| `GITHUB_WEBHOOK_SECRET` | yes | HMAC secret for `/webhooks/github`. Startup fails if empty or still the `.env.example` placeholder |
+| `API_KEY` | yes | Bearer key for `/rpc` and `/a2a/*`. At least 32 characters; startup fails if shorter or still the placeholder |
+| `LLM_MODEL` | yes in practice | `<provider>:<model-id>`; providers `google`, `openai`, `anthropic`, `openai-compatible`. A value without a provider prefix is rejected with an explanatory error |
+| `LLM_MODEL_SECURITY`, `_PERFORMANCE`, `_BEST_PRACTICES`, `_SUMMARY` | no | Per-role model; empty uses `LLM_MODEL` |
+| `LLM_FALLBACK_MODELS` | no | Comma-separated models tried in order when a call fails |
+| `LLM_STRUCTURED_OUTPUT_MODE` | no | `auto` (default), `native`, `tool` or `prompted` |
+| `LLM_TEMPERATURE`, `LLM_MAX_TOKENS`, `LLM_MAX_RETRIES`, `LLM_TIMEOUT_SECONDS` | no | Defaults 0.3, 4000, 2, 120 |
+| `GOOGLE_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` | per provider | Only for the providers your models use |
+| `OPENAI_COMPATIBLE_BASE_URL`, `OPENAI_COMPATIBLE_API_KEY` | for `openai-compatible` | Local models or gateways |
+| `PUSH_URL_ALLOWED_HOSTS` | no | Comma-separated bare hostnames allowed to receive push notifications. Empty (default) disables them |
+| `CORS_ALLOWED_ORIGINS` | no | Comma-separated `scheme://host[:port]`. Empty sends no CORS headers; `*` is refused |
+| `JSONRPC_MAX_BATCH_SIZE` | no | Most calls per JSON-RPC batch, 1-100, default 10 |
+| `ENVIRONMENT`, `PORT`, `LOG_LEVEL`, `LOG_FORMAT`, `HOST_PORT` | no | See `.env.example` |
 
-```powershell
-# Install ngrok
-# https://ngrok.com/download
+Switching provider is a configuration change only, for example
+`LLM_MODEL=anthropic:claude-sonnet-5-5` plus `ANTHROPIC_API_KEY`. The model IDs in
+`.env.example` are examples; the default there is provisional.
 
-# Expose local server
-ngrok http 8000
+## API
 
-# Use the HTTPS URL in GitHub webhook settings
-```
+| Endpoint | Method | Auth | Description |
+|---|---|---|---|
+| `/rpc` | POST | Bearer `API_KEY` | JSON-RPC 2.0: `analyze_pr`, `message/send`, `introspect` |
+| `/a2a/tasks` | POST | Bearer `API_KEY` | `message/send` task endpoint |
+| `/webhooks/github` | POST | HMAC signature | GitHub `pull_request` events |
+| `/.well-known/agent.json` | GET | none | Agent card |
+| `/health`, `/ready`, `/live` | GET | none | Health, readiness, liveness |
+| `/docs` | GET | none | Interactive docs, `ENVIRONMENT=development` only |
 
-## 📚 API Documentation
+Without `Authorization: Bearer $API_KEY`, `/rpc` and `/a2a/*` return 401. A batch larger
+than `JSONRPC_MAX_BATCH_SIZE` is rejected.
 
-### Endpoints
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/` | GET | API information |
-| `/.well-known/agent.json` | GET | A2A agent card |
-| `/rpc` | POST | JSON-RPC 2.0 endpoint |
-| `/webhooks/github` | POST | GitHub webhook handler |
-| `/health` | GET | Health check (comprehensive) |
-| `/ready` | GET | Readiness probe (K8s) |
-| `/live` | GET | Liveness probe (K8s) |
-| `/docs` | GET | Interactive API docs (dev only) |
-
-### A2A Protocol Implementation
-
-The agent implements the Agent-to-Agent (A2A) protocol with proper handling of:
-
-#### Immediate Response (Message Object)
-When a request is received, the agent immediately returns a `Message` object:
-```json
-{
-  "jsonrpc": "2.0",
-  "result": {
-    "messageId": "uuid",
-    "role": "agent",
-    "parts": [{"kind": "text", "text": "🔄 PR analysis started!"}],
-    "kind": "message",
-    "taskId": "task-uuid",
-    "timestamp": "2025-11-04T..."
-  },
-  "id": "request-id"
-}
-```
-
-#### Background Processing & Webhook Push (Task Object)
-Analysis runs asynchronously and results are pushed via webhook as a `Task` object:
-```json
-{
-  "jsonrpc": "2.0",
-  "result": {
-    "id": "task-uuid",
-    "contextId": "context-uuid",
-    "status": {
-      "state": "completed",
-      "timestamp": "2025-11-04T...",
-      "message": {...},
-      "progress": 1.0
-    },
-    "artifacts": [
-      {
-        "artifactId": "artifact-uuid",
-        "name": "PR Analysis",
-        "parts": [{"kind": "text", "text": "# Analysis Report..."}]
-      }
-    ],
-    "history": [...],
-    "kind": "task"
-  },
-  "id": "webhook-id"
-}
-```
-
-### JSON-RPC Methods
-
-#### `message/send`
-
-Handles incoming messages from Telex via A2A protocol.
-
-**Request:**
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "message/send",
-  "params": {
-    "message": {
-      "messageId": "uuid",
-      "role": "user",
-      "parts": [{"kind": "text", "text": "Analyze PR: https://github.com/user/repo/pull/123"}],
-      "contextId": "context-uuid",
-      "timestamp": "2025-11-04T..."
-    },
-    "configuration": {
-      "pushNotificationConfig": {
-        "url": "https://telex.example.com/webhook",
-        "token": "bearer-token",
-        "authentication": {
-          "schemes": ["Bearer"]
-        }
-      }
-    }
-  },
-  "id": 1
-}
-```
-
-**Immediate Response (Message):**
-```json
-{
-  "jsonrpc": "2.0",
-  "result": {
-    "messageId": "response-uuid",
-    "role": "agent",
-    "parts": [{"kind": "text", "text": "🔄 PR analysis started!"}],
-    "kind": "message",
-    "taskId": "task-uuid",
-    "timestamp": "2025-11-04T..."
-  },
-  "id": 1
-}
-```
-
-**Webhook Push (Task - sent asynchronously):**
-```json
-{
-  "jsonrpc": "2.0",
-  "result": {
-    "id": "task-uuid",
-    "contextId": "context-uuid",
-    "status": {
-      "state": "completed",
-      "timestamp": "2025-11-04T...",
-      "message": {...},
-      "progress": 1.0
-    },
-    "artifacts": [...],
-    "history": [...],
-    "kind": "task"
-  },
-  "id": "webhook-uuid"
-}
-```
-
-## 🐳 Docker Deployment
-
-### Using Docker Compose (Recommended)
-
-```powershell
-# Build and run
-docker-compose up --build
-
-# Run in background
-docker-compose up -d
-
-# View logs
-docker-compose logs -f app
-
-# Stop
-docker-compose down
-```
-
-### Using Docker CLI
-
-```powershell
-# Build image
-docker build -t code-review-agent .
-
-# Run container
-docker run -d `
-  --name code-review-agent `
-  -p 8000:8000 `
-  --env-file .env `
-  code-review-agent
-
-# View logs
-docker logs -f code-review-agent
-
-# Stop container
-docker stop code-review-agent
-```
-
-## 🧪 Testing
-
-### Run All Tests
-
-**PowerShell:**
-```powershell
-& .\venv\Scripts\Activate.ps1
-pytest -v
-```
-
-**POSIX:**
 ```bash
-source venv/bin/activate
-pytest -v
+export API_KEY=...   # the value from your .env
+
+curl -X POST http://localhost:8000/rpc \
+  -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"analyze_pr","params":{"pr_url":"https://github.com/OWNER/REPO/pull/1"}}'
+
+curl -X POST http://localhost:8000/a2a/tasks \
+  -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" \
+  -d '{"message":"Review https://github.com/OWNER/REPO/pull/1"}'
 ```
 
-### Run Specific Test Files
+`message/send` without a push configuration returns a finished task (blocking is the
+default). With `"blocking": false` and a `pushNotificationConfig.url`, it returns at
+once and pushes the result to that URL. The URL must be `https`, its host must be in
+`PUSH_URL_ALLOWED_HOSTS`, and it must resolve to public addresses only.
 
-```powershell
-# Test diff parser
-pytest tests/test_diff_parser.py -v
+### GitHub webhook
 
-# Test security rules
-pytest tests/test_security_rules.py -v
+In the repository's Settings, Webhooks: payload URL `https://<your-host>/webhooks/github`,
+content type `application/json`, the secret equal to `GITHUB_WEBHOOK_SECRET`, event
+"Pull requests". Requests without a valid `X-Hub-Signature-256` are rejected.
 
-# Test code analyzer
-pytest tests/test_code_analyzer.py -v
+## Security notes
+
+- `/rpc` and `/a2a/*` use a constant-time Bearer check (`app/core/auth.py`).
+- The webhook secret is mandatory; unsigned events cannot make the bot comment.
+- Push URLs are allowlisted and checked against private addresses (SSRF guard). A known
+  limit: DNS can change between the check and the connection; the allowlist is the main
+  control.
+- This repo is public. Put secrets only in `.env`, which is not committed.
+
+## Development
+
+```bash
+uv run pytest                          # tests (LLM, GitHub and push calls are mocked)
+uv run pytest --cov=app                # with coverage
+uv run ruff check .                    # lint
 ```
 
-### Run with Coverage
-
-```powershell
-pytest --cov=app --cov-report=html
-```
-
-## 🔧 Troubleshooting
-
-### Common Issues
-
-#### 1. Node.js Not Found
-
-**Error**: `Node.js not found` when running python-a2a
-
-**Solution (PowerShell)**:
-```powershell
-# Install Node.js 20+
-winget install OpenJS.NodeJS.LTS
-
-# Verify installation
-node --version
-```
-
-#### 2. GitHub MCP Connection Errors
-
-**Error**: `Failed to connect to GitHub MCP`
-
-**Solutions**:
-- Verify `GITHUB_TOKEN` in `.env`
-- Check token has `repo` scope
-- Ensure Node.js 20+ is installed
-
-#### 3. LLM API Errors
-
-**Error**: `LLM provider error`
-
-**Solutions**:
-- Verify API key in `.env`
-- Check API quota/rate limits
-- Try switching to alternative provider
-
-#### 4. Import Errors
-
-**Error**: `ModuleNotFoundError`
-
-**Solution**:
-```powershell
-# Ensure virtual environment is activated
-& .\venv\Scripts\Activate.ps1
-
-# Reinstall dependencies
-pip install -r requirements.txt
-```
-
-#### 5. A2A Protocol Validation Errors
-
-**Error**: `state: 'accepted' invalid` or `wrong object type`
-
-**Solution**: This was a protocol compliance issue. The agent now:
-- Returns `Message` object immediately (not `Task`)
-- Uses valid task states: `submitted`, `working`, `completed`, `failed`, etc.
-- Sends `Task` objects via webhook push (not in immediate response)
-
-#### 6. HTTP 413 Payload Too Large
-
-**Error**: `413 Payload Too Large` on webhook push
-
-**Solution**: The agent now automatically truncates artifacts to 50KB max to prevent webhook payload size issues.
-
-#### 7. Webhook Format Errors
-
-**Error**: Telex rejects webhook payload format
-
-**Solution**: Webhook pushes now use correct JSON-RPC response format:
-```json
-{
-  "jsonrpc": "2.0",
-  "result": { /* Task object */ },
-  "id": "webhook-id"
-}
-```
-Instead of the incorrect request format with `method` and `params`.
-
-### Debug Mode
-
-Enable debug logging:
-
-```env
-LOG_LEVEL=DEBUG
-```
-
-### Testing Webhook Integration
-
-Use the provided test scripts:
-
-```powershell
-# Test A2A endpoint
-python scripts/test_a2a_endpoint.py
-
-# Test webhook push
-python scripts/test_webhook_push.py
-```
-
-## 📖 Project Structure
+CI (`.github/workflows/ci.yml`) runs ruff, pytest with coverage and `pip-audit`.
 
 ```
-code_reviewer_agent_a2a/
-├── app/
-│   ├── core/              # Core configuration
-│   │   ├── config.py      # Settings (Pydantic)
-│   │   ├── logging.py     # Logging setup
-│   │   └── exceptions.py  # Custom exceptions
-│   ├── models/            # Data models
-│   │   ├── jsonrpc.py     # JSON-RPC models
-│   │   ├── a2a.py         # A2A protocol models
-│   │   ├── github.py      # GitHub models
-│   │   └── analysis.py    # Analysis models
-│   ├── services/          # Business logic
-│   │   ├── message_handler.py  # A2A message handling
-│   │   ├── github_mcp.py  # GitHub MCP client
-│   │   ├── llm_service.py # LLM integration
-│   │   ├── code_analyzer.py # Main orchestrator
-│   │   ├── telex_client.py  # Telex A2A client
-│   │   └── jsonrpc_handler.py # RPC handler
-│   ├── routes/            # API routes
-│   │   ├── webhooks.py    # GitHub webhooks
-│   │   ├── jsonrpc.py     # RPC endpoint
-│   │   ├── a2a.py         # A2A protocol routes
-│   │   └── health.py      # Health checks
-│   ├── schemas/           # Request/Response schemas
-│   │   ├── agent.py       # Agent schemas
-│   │   ├── rpc.py         # RPC schemas
-│   │   └── webhook.py     # Webhook schemas
-│   ├── utils/             # Utilities
-│   │   ├── diff_parser.py # Diff parsing
-│   │   ├── security_rules.py # Security patterns
-│   │   ├── performance_rules.py # Performance patterns
-│   │   └── formatters.py  # Output formatting
-│   └── main.py            # FastAPI app
-├── config/
-│   ├── agent_card.json    # A2A agent card
-│   ├── agent_card_telex.json # Telex-specific agent card
-│   └── prompts/           # LLM prompts
-│       ├── security_analysis.txt
-│       ├── performance_analysis.txt
-│       ├── summary_generation.txt
-│       └── telex_chat_system.txt
-├── tests/                 # Test suite
-│   ├── conftest.py        # Test configuration
-│   ├── test_a2a_protocol.py # A2A protocol tests
-│   ├── test_code_analyzer.py # Analyzer tests
-│   ├── test_diff_parser.py # Diff parser tests
-│   ├── test_github_mcp.py  # GitHub MCP tests
-│   ├── test_jsonrpc.py     # JSON-RPC tests
-│   ├── test_security_rules.py # Security tests
-│   └── test_webhooks.py    # Webhook tests
-├── scripts/               # Utility scripts
-│   ├── setup_github_webhook.py # Webhook setup
-│   ├── test_a2a_endpoint.py    # A2A testing
-│   └── deploy.sh              # Deployment script
-├── docker-compose.yml     # Docker composition
-├── Dockerfile            # Container definition
-├── requirements.txt      # Python dependencies
-├── pyproject.toml        # Project metadata
-├── .env.example          # Environment template
-├── QUICK_START.md        # Quick start guide
-├── QUICK_START_TELEX.md  # Telex integration guide
-└── README.md
+app/
+  core/       settings, auth, push URL guard, safe errors, logging
+  llm/        provider-agnostic model layer (the only place provider SDKs are used)
+  models/     JSON-RPC, A2A, GitHub and analysis models
+  routes/     rpc, a2a tasks, webhooks, health
+  services/   analyzer, GitHub client, LLM prompts and parsing, message handler
+  utils/      diff parser, security and performance rules, formatters
+config/       agent card and LLM prompts
+tests/
 ```
 
-## 🤝 Contributing
+## Known gaps and planned work
 
-Contributions welcome! Please follow these steps:
+Not built yet; see the [tracker](docs/PROJECT_TRACKER.md):
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+- Inline PR review comments (planned, `P2-03`); today the webhook posts one summary comment.
+- Migration to the official A2A SDK. The current A2A support is hand-written, and the
+  agent card (`config/agent_card.json`) still points at an old, no-longer-running hosting URL and a skill id that
+  does not match the RPC method name (`P2-02`).
+- Chunking large diffs so the LLM reviews the whole PR (`P2-07`).
+- Prompt-injection defences (`P2-06`).
+- Evals with published precision and recall, an MCP server, tracing and cost metrics,
+  persisted runs and model routing (Phase 3).
+- Not tested yet: a real review against a live provider, and the push-notification path
+  against a real receiver.
 
-## 📄 License
+## License
 
-MIT License - see LICENSE file for details
-
-## 🙏 Acknowledgments
-
-- **python-a2a**: Agent-to-Agent protocol implementation
-- **FastAPI**: Modern Python web framework
-- **Google Gemini**: AI language model
-- **GitHub**: MCP integration
-
-## 📞 Support
-
-- **Issues**: https://github.com/yourusername/code_reviewer_agent_a2a/issues
-- **Discussions**: https://github.com/yourusername/code_reviewer_agent_a2a/discussions
-- **Documentation**: See `code_reviewer_implementation.md` and `get_started_plan.md`
-
-## 🆕 Recent Updates
-
-### v1.1.0 - A2A Protocol Compliance & Webhook Fixes
-
-**Key Improvements:**
-- ✅ **A2A Protocol Compliance**: Fixed immediate response to return `Message` objects instead of `Task` objects
-- ✅ **Webhook Format**: Corrected webhook push to use JSON-RPC response format (`result`) instead of request format (`method`/`params`)
-- ✅ **Payload Optimization**: Added automatic artifact truncation (50KB max) to prevent HTTP 413 errors
-- ✅ **Code Cleanup**: Removed duplicate functions, mock code, and invalid task states
-- ✅ **Error Handling**: Improved webhook error reporting with proper `Task` objects for failed states
-
-**Breaking Changes:**
-- Webhook payload format changed from request-style to response-style JSON-RPC
-- Immediate responses now return `Message` objects (not `Task`)
-- Invalid task state `"accepted"` removed (now uses valid A2A states)
-
-**Migration Guide:**
-If you have existing webhook integrations, update your webhook handlers to expect:
-```json
-{
-  "jsonrpc": "2.0",
-  "result": { /* Task object */ },
-  "id": "..."
-}
-```
-
----
-
-Built with ❤️ using Python, FastAPI, and Google Gemini AI
+No license file is present in the repository yet.
