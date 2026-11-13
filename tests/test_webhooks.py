@@ -184,18 +184,15 @@ class TestCommentGating:
     def comments(github):
         return github.get_repo.return_value.get_issue.return_value.create_comment
 
-    def test_empty_secret_reviews_but_does_not_comment(
-        self, client, monkeypatch, analyzer, github, caplog
-    ):
+    def test_empty_secret_at_runtime_fails_closed(self, client, monkeypatch, analyzer, github):
+        # Startup refuses an empty secret (test_security_p107); if one slipped through
+        # anyway, nothing is analyzed and nothing is posted.
         monkeypatch.setattr(webhooks.settings, "GITHUB_WEBHOOK_SECRET", "")
-        monkeypatch.setattr(webhooks, "_warned_unsigned", False)
-        for _ in range(2):  # unsigned, forged-looking request
-            res = post(client, "", "pull_request", pr_payload(), signature="sha256=bogus")
-            assert res.status_code == 200
-        assert analyzer.analyze_pr.await_count == 2
-        github.get_repo.assert_not_called()
+        for signature in ("sha256=bogus", None):
+            res = post(client, "", "pull_request", pr_payload(), signature=signature)
+            assert res.status_code == 401
+        analyzer.analyze_pr.assert_not_called()
         self.comments(github).assert_not_called()
-        assert caplog.text.count("PR comments are not posted") == 1  # warned once
 
     def test_valid_signature_with_secret_posts_one_comment(
         self, client, webhook_secret, analyzer, github
