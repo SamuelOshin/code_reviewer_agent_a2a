@@ -117,6 +117,9 @@ def test_error_category_push(error, category):
     ],
 )
 def test_failed_analysis_reaches_the_client_with_its_category(monkeypatch, error, title):
+    # The analyzer raises directly here. In production CodeAnalyzerService turns model
+    # errors (rate limits included) into a failed step, so only the GitHub case is
+    # reachable end to end; the rate-limit text is kept for an analyzer that raises.
     handler = MessageHandler.__new__(MessageHandler)
 
     class Analyzer:
@@ -181,6 +184,44 @@ def test_batch_call_waiting_for_a_slot_past_the_timeout_gets_32004(monkeypatch):
     assert waiting[0]["id"] == "w"
     assert waiting[0]["error"]["code"] == -32004
     assert all(r["result"] == "ok" for r in holders)
+
+
+@pytest.mark.parametrize("bad_id", [{"a": 1}, [1], 1.5, True])
+def test_malformed_id_on_a_timed_out_wait_fails_only_that_call(monkeypatch, bad_id):
+    # Bobby Review: the -32004 response is built outside handle_request, so a bad id
+    # used to raise and fail the whole batch
+    monkeypatch.setattr(settings, "A2A_BLOCKING_TIMEOUT_SECONDS", 0.05)
+    handler = JSONRPCHandler()
+    release = asyncio.Event()
+
+    async def hold():
+        await release.wait()
+        return "ok"
+
+    handler.register_method("hold", hold)
+    handler.register_method("quick", lambda: "ok")
+
+    async def main():
+        holders = asyncio.create_task(
+            handler.handle_batch(
+                [{"jsonrpc": "2.0", "method": "hold", "id": i} for i in range(BATCH_CONCURRENCY)]
+            )
+        )
+        await asyncio.sleep(0.01)
+        waiting = await handler.handle_batch(
+            [
+                {"jsonrpc": "2.0", "method": "quick", "id": bad_id},
+                {"jsonrpc": "2.0", "method": "quick", "id": "ok-id"},
+            ]
+        )
+        release.set()
+        await holders
+        return waiting
+
+    waiting = asyncio.run(main())
+    assert [r["error"]["code"] for r in waiting] == [-32004, -32004]
+    assert waiting[0].get("id") is None
+    assert waiting[1]["id"] == "ok-id"
 
 
 def test_slot_is_released_after_a_timed_out_wait(monkeypatch):

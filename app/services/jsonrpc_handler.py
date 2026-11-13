@@ -19,9 +19,10 @@ from app.models.jsonrpc import JSONRPCError, JSONRPCErrorCode, JSONRPCRequest, J
 logger = logging.getLogger(__name__)
 
 # How many batch calls run at the same time, across all batches (P1-18, P1-20). A batch
-# used to run its calls one after another, so 100 blocking message/send calls could hold the request
-# for 100 x A2A_BLOCKING_TIMEOUT_SECONDS. Running them concurrently, a few at a time,
-# bounds that to ceil(n / limit) x the timeout without letting one batch start 100
+# used to run its calls one after another, so 100 blocking message/send calls could
+# hold the request for 100 x A2A_BLOCKING_TIMEOUT_SECONDS. Now each call waits at most
+# that timeout for a slot (else -32004, P1-21) and then runs under the same timeout,
+# so a batch finishes within about twice the timeout, and one batch cannot start 100
 # model calls at once. Kept here, not in config, because it is a protection constant.
 BATCH_CONCURRENCY = 5
 
@@ -243,8 +244,13 @@ class JSONRPCHandler:
                 await asyncio.wait_for(semaphore.acquire(), timeout=limit)
             except TimeoutError:
                 logger.warning(f"Batch call waited {limit:g}s for a slot")
+                # This response is built outside handle_request's safety net, so only
+                # a valid JSON-RPC id is echoed; a malformed one (object, list, float,
+                # bool) must not fail the whole batch (P1-21 review)
+                raw_id = request_data.get("id") if isinstance(request_data, dict) else None
+                valid_id = isinstance(raw_id, (str, int)) and not isinstance(raw_id, bool)
                 return self._error_response(
-                    request_id=request_data.get("id") if isinstance(request_data, dict) else None,
+                    request_id=raw_id if valid_id else None,
                     code=JSONRPCErrorCode.TIMEOUT,
                     message=(
                         f"The server is busy: no batch slot was free within {limit:g} seconds. "
@@ -257,7 +263,8 @@ class JSONRPCHandler:
                 semaphore.release()
 
         # gather returns results in input order, so responses match request order.
-        # handle_request never raises, so one failing call cannot cancel the others.
+        # handle_request never raises, and the slot-timeout response above only echoes a
+        # valid id, so one failing call cannot fail or cancel the others.
         return list(await asyncio.gather(*(run_one(r) for r in batch_data)))
     
     def _success_response(
