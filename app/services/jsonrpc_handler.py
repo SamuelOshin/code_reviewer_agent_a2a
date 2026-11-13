@@ -6,6 +6,7 @@ Handles JSON-RPC method registration and request processing.
 Supports async handlers and proper error handling per JSON-RPC 2.0 spec.
 """
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -14,6 +15,13 @@ from app.core.errors import ClientInputError, RequestTimeoutError, new_error_id
 from app.models.jsonrpc import JSONRPCError, JSONRPCErrorCode, JSONRPCRequest, JSONRPCResponse
 
 logger = logging.getLogger(__name__)
+
+# How many calls of one batch run at the same time (P1-18). A batch used to run its
+# calls one after another, so 100 blocking message/send calls could hold the request
+# for 100 x A2A_BLOCKING_TIMEOUT_SECONDS. Running them concurrently, a few at a time,
+# bounds that to ceil(n / limit) x the timeout without letting one batch start 100
+# model calls at once. Kept here, not in config, because it is a protection constant.
+BATCH_CONCURRENCY = 5
 
 
 class JSONRPCHandler:
@@ -131,6 +139,7 @@ class JSONRPCHandler:
                 
             except ClientInputError as e:
                 # The message was written for the caller (e.g. a rejected push URL)
+                # ClientInputError messages are written for the caller and safe to log
                 logger.warning(f"Rejected params for {request.method}: {e}")
                 return self._error_response(
                     request_id=request.id,
@@ -150,8 +159,8 @@ class JSONRPCHandler:
                 # Invalid params (wrong arguments)
                 error_id = new_error_id()
                 logger.error(
-                    f"Invalid params for {request.method} [error_id={error_id}]: {e}",
-                    exc_info=True,
+                    f"Invalid params for {request.method} [error_id={error_id}]: "
+                    f"{type(e).__name__}",
                 )
                 return self._error_response(
                     request_id=request.id,
@@ -165,8 +174,7 @@ class JSONRPCHandler:
                 error_id = new_error_id()
                 logger.error(
                     f"Error executing {request.method} [error_id={error_id}]: "
-                    f"{type(e).__name__}: {e}",
-                    exc_info=True,
+                    f"{type(e).__name__}",
                 )
                 return self._error_response(
                     request_id=request.id,
@@ -179,8 +187,8 @@ class JSONRPCHandler:
             # Unexpected error in handler itself
             error_id = new_error_id()
             logger.error(
-                f"Unexpected error in JSON-RPC handler [error_id={error_id}]: {e}",
-                exc_info=True,
+                f"Unexpected error in JSON-RPC handler [error_id={error_id}]: "
+                f"{type(e).__name__}",
             )
             return self._error_response(
                 request_id=None,
@@ -201,12 +209,15 @@ class JSONRPCHandler:
         """
         logger.info(f"Handling batch of {len(batch_data)} JSON-RPC requests")
         
-        responses = []
-        for request_data in batch_data:
-            response = await self.handle_request(request_data)
-            responses.append(response)
-        
-        return responses
+        semaphore = asyncio.Semaphore(BATCH_CONCURRENCY)
+
+        async def run_one(request_data: dict[str, Any]) -> dict[str, Any]:
+            async with semaphore:
+                return await self.handle_request(request_data)
+
+        # gather returns results in input order, so responses match request order.
+        # handle_request never raises, so one failing call cannot cancel the others.
+        return list(await asyncio.gather(*(run_one(r) for r in batch_data)))
     
     def _success_response(
         self,

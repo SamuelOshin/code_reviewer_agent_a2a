@@ -42,8 +42,8 @@ async def handle_a2a_task(request: Request):
         body = await request.json()
     except Exception as e:
         error_id = new_error_id()
-        logger.error(f"Failed to parse A2A task request [error_id={error_id}]: {e}")
-        raise HTTPException(status_code=422, detail=f"Invalid request format (error id: {error_id})") from e
+        logger.error(f"Failed to parse A2A task request [error_id={error_id}]: {type(e).__name__}")
+        raise HTTPException(status_code=422, detail=f"Invalid request format (error id: {error_id})") from None
 
     if not isinstance(body, dict):
         raise HTTPException(status_code=422, detail="Invalid request format: expected a JSON object")

@@ -27,7 +27,7 @@ configuration, not code.
 | `POST /a2a/tasks`: JSON-RPC `message/send`, or `{"message": "<text containing a PR URL>"}` | `app/routes/a2a_tasks.py`, `tests/test_a2a_protocol.py` |
 | GitHub webhook: HMAC-verified `pull_request` events (opened, synchronize, reopened) get one summary comment on the PR, capped at 60,000 characters | `app/routes/webhooks.py`, `tests/test_webhooks.py` |
 | Optional push of the result to a caller-supplied URL (allowlisted, https, public addresses only) | `app/core/push_url.py`, `tests/test_security_p107.py` |
-| Safe errors: clients get a generic message plus an error id; raw model output is never logged. Some log lines still include raw exception text, such as GitHub error details (`P1-17`) | `app/core/errors.py`, `tests/test_safe_logging.py` |
+| Safe errors: clients get a generic message plus an error id; raw model output is never logged. Logs and raised errors carry only the exception type (or the HTTP status for GitHub errors) and an error id, never exception text or tracebacks | `app/core/errors.py`, `tests/test_safe_logging.py`, `tests/test_safe_logging_p117.py` |
 
 ## Fail-closed reviews
 
@@ -139,28 +139,42 @@ default). With `"blocking": false` and a `pushNotificationConfig.url`, it return
 once and pushes the result to that URL. The URL must be `https`, its host must be in
 `PUSH_URL_ALLOWED_HOSTS`, its port 443 or one in `PUSH_URL_ALLOWED_PORTS`, and it must
 resolve to public addresses only. A blocking call that runs longer than
-`A2A_BLOCKING_TIMEOUT_SECONDS` returns error `-32004`.
+`A2A_BLOCKING_TIMEOUT_SECONDS` returns error `-32004`. A JSON-RPC batch runs its calls
+concurrently, at most 5 at a time per batch, so a batch of n blocking calls can take up
+to ceil(n/5) times that timeout. On timeout, a GitHub request that has already started
+cannot be stopped: it finishes in a worker thread (bounded by a 15 s socket timeout, at
+most 3 retries and a 30 s cap on rate-limit waits) and its result is discarded; queued
+GitHub calls are skipped.
 
 ### GitHub webhook
 
 In the repository's Settings, Webhooks: payload URL `https://<your-host>/webhooks/github`,
 content type `application/json`, the secret equal to `GITHUB_WEBHOOK_SECRET`, event
-"Pull requests". Requests without a valid `X-Hub-Signature-256` are rejected. A delivery
-whose `X-GitHub-Delivery` id was seen in the last hour is ignored (in memory, per process),
-so GitHub redeliveries do not post twice. The id stays claimed even if the review then
-fails, so a manual "Redeliver" within that hour is ignored too; restart the service or
-wait an hour to retry (`P1-16`).
+"Pull requests". Requests without a valid `X-Hub-Signature-256` are rejected, and a
+malformed `X-GitHub-Delivery` header (not 1 to 64 of letters, digits, `.`, `_`, `-`) gets
+400. A delivery is ignored if its delivery id or the SHA-256 of its signed body was seen
+in the last hour (in memory, per process, bounded in size), so GitHub redeliveries and a
+captured body resent with a new id do not post twice. If no comment was posted (the
+analysis raised, or the comment could not be posted), the id and body are forgotten, so a
+manual "Redeliver" runs it again. Once a comment is posted, including a failed or
+incomplete result, the delivery stays claimed for up to an hour: a review that failed
+because the model was unavailable cannot be redelivered in that time. Push a new commit
+or restart the service to retry.
 
 ## Security notes
 
 - `/rpc` and `/a2a/*` use a constant-time Bearer check (`app/core/auth.py`).
 - The webhook secret is mandatory; unsigned events cannot make the bot comment.
 - Push URLs are allowlisted and checked against private addresses, including IPv4
-  addresses embedded in IPv6 (mapped, compatible and NAT64) forms (SSRF guard). A known
+  addresses embedded in IPv6 (mapped, compatible, NAT64 and 6to4) forms, and rejects
+  site-local (`fec0::/10`) and Teredo (`2001::/32`) addresses (SSRF guard). A known
   limit: DNS can change between the check and the connection; the allowlist is the main
   control.
-- Webhook replay protection keys on the delivery id, which the signature does not cover,
-  so it stops GitHub redeliveries but not a captured body resent with a new id.
+- Webhook replay protection keys on both the delivery id and the signed body's hash, so
+  a captured body resent with a new id is also ignored. It is in memory and per process:
+  a restart, or a second replica, forgets it, and a replay after the one-hour window
+  is processed again. A delivery whose analysis fails before any comment is posted is
+  released, so resending it runs the analysis again (no comment is posted) (`P1-19`).
 - This repo is public. Put secrets only in `.env`, which is not committed.
 
 ## Development

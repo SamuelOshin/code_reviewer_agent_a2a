@@ -169,9 +169,10 @@ def test_internal_exception_message_not_returned_by_rpc(app_and_handler, caplog)
     assert "SENTINEL-INTERNAL" not in resp.text
     assert "RuntimeError" not in resp.text
     error_id = body["error"]["data"]["error_id"]
-    # the full detail is kept server-side under the same id
+    # P1-17: the id and exception type are kept server-side, never the text or traceback
     assert error_id in caplog.text
-    assert INTERNAL in caplog.text
+    assert "SENTINEL-INTERNAL" not in caplog.text
+    assert "RuntimeError" in caplog.text
 
 
 def test_invalid_params_and_bad_json_do_not_echo_internals(app_and_handler):
