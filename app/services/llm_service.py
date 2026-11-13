@@ -43,6 +43,9 @@ class PartialFindingsError(LLMOutputError):
         self.findings = findings
 
 
+_OBJECT_ARRAY_START = re.compile(r"\[\s*\{")
+
+
 def _is_findings_array(value: Any) -> bool:
     return isinstance(value, list) and all(isinstance(item, dict) for item in value)
 
@@ -62,11 +65,14 @@ def extract_findings_array(response: str, role: Role) -> list[dict[str, Any]]:
     if fence:
         candidates.append(fence.group(1).strip())
 
+    # A bare `[]` as the whole text or the whole fence content means "no issues"
     for candidate in candidates:
         try:
             data = json.loads(candidate)
         except json.JSONDecodeError:
             continue
+        except RecursionError:
+            raise LLMOutputError(f"{role} output is nested too deeply to parse") from None
         if _is_findings_array(data):
             return data
         raise LLMOutputError(
@@ -74,15 +80,31 @@ def extract_findings_array(response: str, role: Role) -> list[dict[str, Any]]:
             f"(got {type(data).__name__})"
         )
 
-    # Prose around the array: take the first '[' that decodes to an array of objects
+    # Prose around the array: take the first '[' that decodes to a non-empty array of
+    # objects. An empty `[]` in prose is never "no issues": it may be a code snippet
+    # inside a truncated array. And if an array of objects (`[` then `{`) fails to
+    # decode, stop: every later '[' may sit inside that broken array (P1-06 B1).
     decoder = json.JSONDecoder()
     for match in re.finditer(r"\[", text):
+        starts_objects = _OBJECT_ARRAY_START.match(text, match.start()) is not None
         try:
             data, _ = decoder.raw_decode(text, match.start())
         except json.JSONDecodeError:
+            if starts_objects:
+                raise LLMOutputError(
+                    f"{role} output has a truncated or invalid findings array "
+                    f"({len(text)} characters)"
+                ) from None
             continue
-        if _is_findings_array(data):
+        except RecursionError:
+            raise LLMOutputError(f"{role} output is nested too deeply to parse") from None
+        if data and _is_findings_array(data):
             return data
+        if starts_objects:
+            raise LLMOutputError(
+                f"{role} output has an array that is not all finding objects "
+                f"({len(text)} characters)"
+            )
 
     raise LLMOutputError(
         f"{role} output could not be parsed as a JSON array of findings "

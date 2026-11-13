@@ -16,6 +16,7 @@ from typing import Any
 from github import Auth, Github, GithubException
 
 from app.core.config import settings
+from app.core.errors import new_error_id
 from app.core.exceptions import GitHubMCPError
 from app.models.github import PullRequest, PullRequestDiff, PullRequestFile
 
@@ -69,13 +70,21 @@ class GitHubMCPService:
             
             return self
         except GithubException as e:
+            # str(e) includes the GitHub response body; keep the status only (P1-06 S1)
             logger.error(f"GitHub API error: status={e.status}")
-            raise GitHubMCPError(f"GitHub API initialization failed: {str(e)}") from e
+            raise GitHubMCPError(
+                f"GitHub API initialization failed (status={e.status})"
+            ) from None
         except GitHubMCPError:
             raise  # Re-raise our custom errors
         except Exception as e:
-            logger.error(f"Failed to initialize GitHub client: {type(e).__name__}: {e}", exc_info=True)
-            raise GitHubMCPError(f"GitHub API initialization failed: {str(e)}") from e
+            error_id = new_error_id()
+            logger.error(
+                f"Failed to initialize GitHub client [error_id={error_id}]: {type(e).__name__}"
+            )
+            raise GitHubMCPError(
+                f"GitHub API initialization failed ({type(e).__name__}, error id: {error_id})"
+            ) from None
     
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit - cleanup"""

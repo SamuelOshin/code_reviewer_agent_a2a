@@ -9,10 +9,11 @@ provider is called.
 """
 
 import logging
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.core.exceptions import AnalysisError
 from app.llm import LLMResult, Role, Usage
 from app.llm.errors import LLMOutputError, LLMRateLimitError
 from app.models.analysis import AnalysisStatus, ApprovalRecommendation, SecurityIssue
@@ -39,6 +40,19 @@ MALFORMED_OUTPUTS = {
     "nested_array": f"[[{VALID_FINDING}]]",
     "array_of_strings": '["looks fine"]',
     "prose_with_citation": "All good, see [1] for details.",
+    # B1: a truncated array with an inner `[]` used to parse as "no issues"
+    "truncated_fence_inner_empty": (
+        '```json\n[{"severity": "critical", "title": "SQLi", '
+        '"code_snippet": "rows = []", "descr'
+    ),
+    "prose_inner_empty_then_truncated": (
+        'Checked `items = []` handling. Findings:\n'
+        '[{"severity": "critical", "title": "RCE", "descr'
+    ),
+    "prose_empty_then_truncated": 'See [] below.\n[{"severity": "critical", "title": "RCE"',
+    "prose_empty_only": "No issues found: []",
+    "deeply_nested": "[" * 5000,
+    "prose_deeply_nested": "Findings: " + "[" * 5000,
 }
 
 
@@ -234,6 +248,44 @@ class TestPostedComment:
 
 
 class TestNoRawOutputInLogs:
+    @pytest.mark.asyncio
+    async def test_unexpected_analyzer_error_text_never_logged(self, caplog):
+        # S1: an exception raised inside the analyzer (here the diff parser) used to
+        # be copied into the log line and the AnalysisError message
+        analyzer, github, _ = make_analyzer()
+        boom = ValueError(f"password = '{SENTINEL}'")
+        with caplog.at_level(logging.DEBUG):
+            with patch("app.services.code_analyzer.DiffParser.parse", side_effect=boom):
+                with pytest.raises(AnalysisError) as exc:
+                    await run(analyzer, github)
+            # Callers log it again with the traceback (message_handler)
+            logging.getLogger("caller").error("analysis failed", exc_info=exc.value)
+
+        assert SENTINEL not in str(exc.value)
+        assert "ValueError" in str(exc.value) and "error id" in str(exc.value)
+        assert exc.value.__cause__ is None and exc.value.__suppress_context__
+        assert SENTINEL not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_github_init_error_text_never_logged(self, caplog):
+        from github import GithubException
+
+        from app.core.exceptions import GitHubMCPError
+        from app.services.github_mcp import GitHubMCPService
+
+        body = {"message": SENTINEL}
+        with caplog.at_level(logging.DEBUG):
+            for error in (GithubException(500, body, None), RuntimeError(SENTINEL)):
+                with patch("app.services.github_mcp.Github", side_effect=error):
+                    with pytest.raises(GitHubMCPError) as exc:
+                        async with GitHubMCPService():
+                            pass
+                logging.getLogger("caller").error("init failed", exc_info=exc.value)
+                assert SENTINEL not in str(exc.value)
+                assert exc.value.__cause__ is None
+
+        assert SENTINEL not in caplog.text
+
     @pytest.mark.asyncio
     async def test_sentinel_in_model_output_never_logged_or_posted(self, caplog):
         outputs = {

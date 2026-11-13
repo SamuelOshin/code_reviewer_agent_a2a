@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from typing import Any, TypeVar
 
 from app.core.config import settings
+from app.core.errors import new_error_id
 from app.core.exceptions import AnalysisError, GitHubMCPError, LLMError
 from app.models.analysis import (
     AnalysisStatus,
@@ -225,8 +226,16 @@ class CodeAnalyzerService:
             logger.error(f"LLM error during analysis: {e}")
             raise
         except Exception as e:
-            logger.error(f"Unexpected error during analysis: {e}")
-            raise AnalysisError(f"Analysis failed: {str(e)}") from e
+            # Exception text can echo PR code or upstream bodies, and callers log this
+            # error again with its traceback. Keep only the type and an id to
+            # correlate, and drop the cause (P1-06 S1, P1-08).
+            error_id = new_error_id()
+            logger.error(
+                f"Unexpected error during analysis [error_id={error_id}]: {type(e).__name__}"
+            )
+            raise AnalysisError(
+                f"Analysis failed ({type(e).__name__}, error id: {error_id})"
+            ) from None
     
     async def _run_llm_step(
         self,
