@@ -64,10 +64,11 @@ class TestReplayedDelivery:
         assert analyzer.analyze_pr.await_count == 1
         assert github.get_repo.return_value.get_issue.return_value.create_comment.call_count == 1
 
-    def test_different_delivery_ids_both_run(self, client, webhook_secret, analyzer, github):  # noqa: F811
+    def test_different_ids_with_the_same_body_run_once(self, client, webhook_secret, analyzer, github):  # noqa: F811
+        # P1-16: the body hash also marks a replay, so a new id does not help
         self.send(client, webhook_secret, "d-1")
         self.send(client, webhook_secret, "d-2")
-        assert analyzer.analyze_pr.await_count == 2
+        assert analyzer.analyze_pr.await_count == 1
 
     def test_forged_request_cannot_claim_an_id(self, client, webhook_secret, analyzer, github):  # noqa: F811
         bad = self.send(client, "wrong-secret", "d-1")
