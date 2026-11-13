@@ -13,9 +13,9 @@ read this file alone and continue the work.
 | | |
 |---|---|
 | **Current phase** | Phase 1: make it honest and working (planning complete) |
-| **Active task** | None. Done: `P1-01` to `P1-04`, `P1-06` to `P1-15`. Open: `P1-05` (needs one real review on two providers), `P1-16` to `P1-18` |
-| **Next action** | Owner sets a random `API_KEY` and a random `GITHUB_WEBHOOK_SECRET` (both at least 32 characters) in `.env`, then runs one real review on two providers (closes `P1-05`). Owner picks a license (the old README claimed MIT; no LICENSE file exists). Then `P1-16`, `P1-17`, `P1-18` |
-| **Working branch** | `main`. Start each new task on its own branch from `main`. `P1-13` and `P1-15` merged through the `chore/p1-13-p1-15` PR |
+| **Active task** | None. Done: `P1-01` to `P1-04`, `P1-06` to `P1-18`. Open: `P1-05` (needs one real review on two providers), `P1-19` and `P1-20` |
+| **Next action** | Owner sets a random `API_KEY` and a random `GITHUB_WEBHOOK_SECRET` (both at least 32 characters) in `.env`, then runs one real review on two providers (closes `P1-05`). Owner picks a license (the old README claimed MIT; no LICENSE file exists). Then `P1-19` and `P1-20` |
+| **Working branch** | `main`. Start each new task on its own branch from `main`. `P1-16` to `P1-18` combined on `chore/p1-16-p1-18` for one PR |
 | **Blockers** | None. Owner approved running repo code on 2026-11-12. Use `uv` for everything (`uv sync`, `uv run`). If an install fails on a Windows cache file lock, retry or set a different `UV_CACHE_DIR` |
 | **Working rule** | Parallel agents don't edit this file. The coordinating session records their results |
 
@@ -258,9 +258,11 @@ in CI, and the README is accurate.
 | P1-12 | done | Done: empty test files filled, ruff and mypy config, ruff findings fixed, and `.github/workflows/ci.yml` (ruff, pytest with coverage, `pip-audit`). CI went green on PR #1 on 2026-11-13. Coverage 82%. mypy is out of CI because of 55 errors, moved to `P2-09` | P1-03 | CI green on a PR. Coverage figure recorded |
 | P1-13 | done | Rewrite the README so every claim is true. It still describes Telex, MCP, `python-a2a`, Node.js and `pip install -r requirements.txt` (deleted), documents removed RPC methods and settings, it must document `API_KEY` (its `/rpc` examples now return 401 without it), and its Docker section should be `cp .env.example .env` then `docker compose up --build` | All above | Every feature listed maps to code or a test |
 | P1-15 | done | Review follow-ups from `P1-04` and `P1-05`: dedupe replayed webhook deliveries by `X-GitHub-Delivery`; add a timeout to blocking `message/send`; use `[0-9]` instead of `\d` in `parse_pr_url`; map a Google 404 to `LLMConfigurationError` like the other providers; record the model each role used in the result, not just the default. From the PR #2 review: show the P1-06 status and incomplete reasons in the A2A report and the `analyze_pr` RPC result; reject `::7f00:1` and NAT64 push URL addresses and restrict the port; set a minimum length for the webhook secret; reject or normalize mixed-case CORS origins; return an error for an empty JSON-RPC batch | P1-04, P1-05, P1-06, P1-07 | Tests: a replayed delivery posts once, a non-ASCII-digit PR URL is rejected, a Google 404 raises a configuration error |
-| P1-16 | todo | Close the webhook replay gap: the `X-GitHub-Delivery` id is not covered by the signature, so a captured body resent with a new id is processed again. Also dedupe on a hash of the signed body, and let a failed review be redelivered manually instead of blocking its id for an hour. From the PR #3 review: strip whitespace before the webhook secret length check, and cap the delivery id's length and format | P1-15 | Tests: the same signed body with a new delivery id posts once; a delivery whose analysis failed can be redelivered |
-| P1-17 | todo | Remove raw exception text from the remaining log lines and error messages (about 20, e.g. `app/services/github_mcp.py`, `app/routes/webhooks.py`, `app/routes/jsonrpc.py`, `app/main.py`): log the type and an error id, and raise without the original text. Then restore the README's broader safe-logging claim | P1-08 | A sentinel test covers each path: nothing from the exception reaches the logs or the client |
-| P1-18 | todo | Smaller follow-ups from the PR #3 review: a JSON-RPC batch of blocking `message/send` calls runs sequentially (up to 100 times the timeout), so cap or parallelise it; on timeout, an in-flight GitHub call keeps running in its executor thread; `fec0::1` passes the push URL guard; `parse_pr_url` is unanchored, so `pull/12abc` parses as PR 12 | P1-15 | Tests for each case |
+| P1-16 | done | Close the webhook replay gap: the `X-GitHub-Delivery` id is not covered by the signature, so a captured body resent with a new id is processed again. Also dedupe on a hash of the signed body, and let a failed review be redelivered manually instead of blocking its id for an hour. From the PR #3 review: strip whitespace before the webhook secret length check, and cap the delivery id's length and format | P1-15 | Tests: the same signed body with a new delivery id posts once; a delivery whose analysis failed can be redelivered |
+| P1-17 | done | Remove raw exception text from the remaining log lines and error messages (about 20, e.g. `app/services/github_mcp.py`, `app/routes/webhooks.py`, `app/routes/jsonrpc.py`, `app/main.py`): log the type and an error id, and raise without the original text. Then restore the README's broader safe-logging claim | P1-08 | A sentinel test covers each path: nothing from the exception reaches the logs or the client |
+| P1-18 | done | Smaller follow-ups from the PR #3 review: a JSON-RPC batch of blocking `message/send` calls runs sequentially (up to 100 times the timeout), so cap or parallelise it; on timeout, an in-flight GitHub call keeps running in its executor thread; `fec0::1` passes the push URL guard; `parse_pr_url` is unanchored, so `pull/12abc` parses as PR 12 | P1-15 | Tests for each case |
+| P1-19 | todo | Webhook follow-ups from the `P1-16` to `P1-18` review: a delivery whose analysis keeps failing before any comment is posted is released each time, so it can be resent without limit (each resend re-runs the analysis and GitHub calls, no comment); add a per-body retry budget, e.g. at most 3 releases an hour. The replay cache drops its oldest entries early once 2048 arrive within the hour. PyGithub's own `github` logger prints rate-limit response text at DEBUG; pin it to INFO or higher | P1-16 | Tests: a body whose analysis always raises runs at most N times an hour; the `github` logger stays at INFO under `LOG_LEVEL=DEBUG` |
+| P1-20 | todo | Parsing and batching follow-ups from the same review: a PR number thousands of digits long raises `ValueError` instead of `GitHubMCPError` (use `[0-9]{1,10}`); the A2A PR URL extractor has no left boundary, so `evilgithub.com/o/r/pull/1` becomes a github.com URL, and it accepts `pull/12-x` where `parse_pr_url` rejects it; batch concurrency is 5 per batch, not per process (4 batches reached 20 calls at once); `_push_error` sorts errors by substrings of the message, so an error id containing `404` or `429` gets the wrong category | P1-18 | Tests for each case |
 | P1-14 | done | Repo hygiene: add `.gitattributes` to normalise line endings, ignore `.claude/worktrees/` and tool caches, replace deprecated `datetime.utcnow` everywhere in `app/`, and use PyGithub's `Auth.Token` | P1-03 | `git add --renormalize .` leaves a clean diff. No `utcnow` in `app/` |
 
 ### Phase 2: modernize the core
@@ -299,7 +301,7 @@ Keep this honest. It records what has actually been proven.
 
 | Check | State | Notes |
 |---|---|---|
-| Test suite | Passing 2026-11-13 | After merging `P1-13` and `P1-15`: **575 passed, 0 xfail**. Coverage **88%**. LLM, GitHub and push calls are mocked; no real provider was called |
+| Test suite | Passing 2026-11-13 | After merging `P1-16` to `P1-18`: **662 passed, 0 xfail**. Coverage **89%**. LLM, GitHub and push calls are mocked; no real provider was called |
 | App startup | Starts in-process | `/`, `/health` (`healthy`), `/ready` and the agent card return 200, with or without `SECRET_KEY`. Real LLM and GitHub calls not tested |
 | Docker | Passing 2026-11-12 | From `.env.example` copied to `.env`, `docker compose up --build` reached `healthy` (Docker 29.8). `/health` returned 200 from this app. The container runs as `appuser` with no Node.js. Tested on host port 8010, because another local service holds 8000 |
 | CI | Passing 2026-11-13 | Green on GitHub for PR #2 at `549f481` (ruff, pytest with coverage, `pip-audit`). GitGuardian also passed |
@@ -317,6 +319,34 @@ Keep this honest. It records what has actually been proven.
 ## 9. Session log
 
 Newest first. Keep entries short.
+
+### 2026-11-13: `P1-16` to `P1-18` built, reviewed and fixed
+
+- **Done:** three Sonnet side sessions built them in parallel from `main`. Merged on
+  `chore/p1-16-p1-18`: 662 passed, 89% coverage, ruff clean, `pip-audit` clean.
+  - **P1-16:** replay is caught by the delivery id or the SHA-256 of the signed body.
+    A delivery is released only when no comment was posted, so "Redeliver" works after
+    a crash or a failed post; a posted failed or incomplete review stays claimed for up
+    to an hour. The delivery id must be 1 to 64 of `[A-Za-z0-9._-]`. The webhook secret
+    is stripped before the length check, and the stripped value is the HMAC key.
+  - **P1-17:** logs and raised errors carry the exception type (or GitHub status) and
+    an error id, never exception text; the LLM layer raises `from None`. Two lines
+    keep text on purpose: `LLMError` (already a safe message) and `ClientInputError`
+    (written for the caller). The remaining `from e` lines in `push_url.py` and
+    `webhooks.py` chain generic messages that are not logged with a traceback.
+  - **P1-18:** batch calls run 5 at a time; `fec0::/10` and Teredo are rejected and
+    6to4 is judged by its IPv4; `parse_pr_url` and the A2A extractor reject
+    `pull/12abc`; PyGithub has a 15 s socket timeout, 3 retries and a 30 s cap on
+    rate-limit waits (needs `pygithub>=2.10`); queued GitHub calls are skipped after a
+    timeout, but one already running finishes in its thread.
+- **Review:** Bobby Review first gave "changes needed": a posted fail-closed review
+  was released, so a captured body for a large PR could re-run the model and comment
+  without limit. Also a missed raw-text log line on push timeouts, an uncapped
+  PyGithub rate-limit sleep (up to an hour), and a stale README clause. All fixed; the
+  re-review gave "ready with follow-ups" and re-ran the probes. Follow-ups are `P1-19`
+  and `P1-20`.
+- **Not verified:** no real GitHub, model, rate-limit or multi-worker run. Whether
+  PyGithub 2.9 already had `max_rate_limit_wait` is unknown (2.8.1 does not).
 
 ### 2026-11-13: `P1-13` and `P1-15` built
 
