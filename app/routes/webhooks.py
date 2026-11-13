@@ -124,20 +124,24 @@ class DeliveryCache:
         """True if the id was already claimed; otherwise claim it and return False."""
         return self.claim(delivery_id, None)
 
-    def forget(self, delivery_id: str | None, body_hash: str | None = None) -> None:
+    def forget(
+        self, delivery_id: str | None, body_hash: str | None = None, *, charge: bool = True
+    ) -> None:
         """Release both keys so a redelivery of a failed or rejected event can run.
 
-        Spends one run of the body's budget; when the budget is used up, both keys
-        stay claimed so the body is ignored until its TTL passes.
+        With charge (a failed run), spends one run of the body's budget; when the
+        budget is used up, both keys stay claimed so the body is ignored until its TTL
+        passes. A payload rejected before any work is released without charge.
         """
         now = time.monotonic()
         with self._lock:
-            if body_hash:
+            if body_hash and charge:
                 self._purge(self._budget, now)
                 runs, first = self._budget.get(body_hash, (0, now))
                 runs += 1
-                if body_hash in self._budget:
-                    self._budget.move_to_end(body_hash)
+                # Updating an existing key keeps its place, so the store stays ordered
+                # by first failure and _purge (front first) drops expired entries.
+                # Moving it to the end let an expired count hide behind a newer one.
                 self._budget[body_hash] = (runs, first)
                 if runs >= MAX_RUNS_PER_BODY:
                     return
@@ -248,8 +252,9 @@ async def handle_github_webhook(
             try:
                 return await handle_pull_request_event(payload, background_tasks, release)
             except HTTPException:
-                # Rejected payload: let a corrected redelivery through
-                release()
+                # Rejected payload: nothing ran, so release without spending the budget
+                # and every resend gets the same 400 (P1-19)
+                delivery_cache.forget(x_github_delivery, body_hash, charge=False)
                 raise
         
         elif x_github_event == "ping":

@@ -53,6 +53,12 @@ class TestRetryBudget:
             send(client, webhook_secret)
         assert send(client, webhook_secret, payload=pr_payload("synchronize")).json()["status"] == "queued"
 
+    def test_rejected_payload_keeps_getting_400(self, client, webhook_secret, analyzer, github):  # noqa: F811
+        # Nothing ran, so a 400 must not spend the budget and turn into "duplicate"
+        bad = {"action": "opened", "pull_request": {"number": 1}}  # no html_url
+        codes = [send(client, webhook_secret, str(uuid.uuid4()), payload=bad).status_code for _ in range(5)]
+        assert codes == [400] * 5
+
     def test_body_that_recovers_stops_costing_budget(self, client, webhook_secret, analyzer, github):  # noqa: F811
         analyzer.analyze_pr.side_effect = RuntimeError("model down")
         send(client, webhook_secret)
@@ -104,6 +110,32 @@ class TestBudgetStore:
         cache.forget("d-1", "h-1")
         assert not cache.claim("d-1", "h-1")  # a fresh budget, not an exhausted one
 
+    def test_expired_budget_behind_a_newer_one_is_still_dropped(self, clock):
+        # Bobby Review: A fails, X fails, A fails again. A's count must age out with
+        # A's first failure even though X's entry is newer (no reordering on update)
+        cache = webhooks.DeliveryCache(ttl_seconds=100, max_entries=8)
+
+        def fail(delivery, body):
+            assert not cache.claim(delivery, body)
+            cache.forget(delivery, body)
+
+        fail("a-1", "A")
+        clock[0] += 50
+        fail("x-1", "X")
+        clock[0] += 10
+        fail("a-2", "A")
+        clock[0] = 1000 + 101  # A's window is over, X's is not
+        for i in range(webhooks.MAX_RUNS_PER_BODY):
+            fail(f"a-3{i}", "A")  # a full fresh budget
+        assert cache.claim("a-4", "A")
+
+    def test_uncharged_release_spends_nothing(self, clock):
+        cache = webhooks.DeliveryCache()
+        for _ in range(5):
+            assert not cache.claim("d-1", "h-1")
+            cache.forget("d-1", "h-1", charge=False)
+        assert "h-1" not in cache._budget
+
     def test_default_size_is_larger_than_before(self):
         assert webhooks.DeliveryCache()._max == webhooks.DEFAULT_MAX_ENTRIES > 2048
 
@@ -114,14 +146,14 @@ class TestBudgetStore:
 class TestLibraryLogLevels:
     @pytest.fixture(autouse=True)
     def restore_loggers(self):
-        names = ("", "github", "urllib3", "httpx", "httpcore")
+        names = ("", "github", "urllib3", "httpx", "httpcore", "anthropic", "google_genai")
         saved = {n: (logging.getLogger(n).level, list(logging.getLogger(n).handlers)) for n in names}
         yield
         for n, (level, handlers) in saved.items():
             logging.getLogger(n).setLevel(level)
             logging.getLogger(n).handlers = handlers
 
-    @pytest.mark.parametrize("name", ["github", "urllib3"])
+    @pytest.mark.parametrize("name", ["github", "urllib3", "anthropic", "google_genai"])
     def test_stays_at_info_or_higher_under_debug(self, monkeypatch, name):
         monkeypatch.setattr(app_logging.settings, "LOG_LEVEL", "DEBUG")
         app_logging.setup_logging()
