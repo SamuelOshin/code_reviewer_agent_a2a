@@ -10,10 +10,12 @@ import asyncio
 import logging
 import os
 import re
+import threading
 from functools import partial
 from typing import Any
 
 from github import Auth, Github, GithubException
+from github.GithubRetry import GithubRetry
 
 from app.core.config import settings
 from app.core.errors import new_error_id
@@ -22,6 +24,19 @@ from app.models.github import PullRequest, PullRequestDiff, PullRequestFile
 
 logger = logging.getLogger(__name__)
 
+# Socket timeout, retry budget and rate-limit wait cap for PyGithub (P1-18). An executor
+# thread cannot be killed, so when a review times out the call already running keeps
+# going until it returns. These bound that call:
+# - GITHUB_REQUEST_TIMEOUT applies per socket operation (connect or read), not per call;
+#   15 s is also PyGithub's default, kept here so the value is explicit.
+# - failed requests are retried at most GITHUB_RETRY_TOTAL times (PyGithub's default is 10).
+# - a rate-limit backoff longer than GITHUB_RATE_LIMIT_MAX_WAIT raises instead of sleeping.
+#   Without the cap, GithubRetry sleeps until X-RateLimit-Reset (up to an hour). Secondary
+#   limits ask for 60 s, so with a 30 s cap they raise at once.
+GITHUB_REQUEST_TIMEOUT = 15
+GITHUB_RETRY_TOTAL = 3
+GITHUB_RATE_LIMIT_MAX_WAIT = 30
+
 
 class GitHubMCPService:
     """GitHub API Integration Service"""
@@ -29,6 +44,7 @@ class GitHubMCPService:
     def __init__(self):
         self.token = settings.GITHUB_TOKEN
         self._client: Github | None = None
+        self._closed = False
     
     async def __aenter__(self):
         """Context manager entry - initializes GitHub client"""
@@ -37,7 +53,13 @@ class GitHubMCPService:
             # Presence only: the token length narrows a brute-force search
             logger.info(f"Token present: {bool(self.token)}")
             
-            self._client = Github(auth=Auth.Token(self.token))
+            self._client = Github(
+                auth=Auth.Token(self.token),
+                timeout=GITHUB_REQUEST_TIMEOUT,
+                retry=GithubRetry(
+                    total=GITHUB_RETRY_TOTAL, max_rate_limit_wait=GITHUB_RATE_LIMIT_MAX_WAIT
+                ),
+            )
             logger.info("GitHub client object created, testing connection...")
             
             # Test the connection - run blocking call in thread pool WITH TIMEOUT
@@ -88,6 +110,7 @@ class GitHubMCPService:
     
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit - cleanup"""
+        self._closed = True
         if self._client:
             try:
                 self._client.close()
@@ -108,8 +131,9 @@ class GitHubMCPService:
         Raises:
             GitHubMCPError: If URL format is invalid
         """
-        pattern = r"https://github\.com/([^/]+)/([^/]+)/pull/([0-9]+)"
-        # [0-9], not \d: \d also matches non-ASCII digits (P1-15)
+        # [0-9], not \d: \d also matches non-ASCII digits (P1-15). The number must end
+        # at the end of the string, "/", "?" or "#", so "pull/12abc" is rejected (P1-18)
+        pattern = r"https://github\.com/([^/]+)/([^/]+)/pull/([0-9]+)(?=\Z|[/?#])"
         match = re.match(pattern, pr_url)
         
         if not match:
@@ -129,11 +153,28 @@ class GitHubMCPService:
         Returns:
             Result of the function
         """
-        loop = asyncio.get_event_loop()
-        if args or kwargs:
-            return await loop.run_in_executor(None, partial(func, *args, **kwargs))
-        return await loop.run_in_executor(None, func)
-    
+        if self._closed:
+            raise GitHubMCPError("GitHub client is closed")
+        loop = asyncio.get_running_loop()
+        stop = threading.Event()
+        call = partial(func, *args, **kwargs) if (args or kwargs) else func
+
+        def guarded():
+            # A call queued behind a busy pool may start only after the caller gave up
+            # (timeout or cancel). Skip it so no new GitHub request is made.
+            if stop.is_set():
+                return None
+            return call()
+
+        # Known limit (P1-18): a call that has already started cannot be stopped. It runs
+        # until it returns, bounded by the socket timeout, a small retry budget and the
+        # rate-limit wait cap (see GITHUB_RATE_LIMIT_MAX_WAIT). Its result is discarded.
+        try:
+            return await loop.run_in_executor(None, guarded)
+        except asyncio.CancelledError:
+            stop.set()
+            raise
+
     async def post_pr_comment(self, owner: str, repo: str, pr_number: int, body: str) -> None:
         """
         Post one comment on a pull request (PR comments are issue comments)

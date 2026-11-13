@@ -659,10 +659,11 @@ class MessageHandler:
         Returns:
             PR URL if found, None otherwise
         """
-        # GitHub PR URL patterns
+        # GitHub PR URL patterns. The number must not run into more word characters
+        # ("pull/12abc" is not PR 12), matching parse_pr_url (P1-18)
         url_patterns = [
-            r'https?://github\.com/[^/]+/[^/]+/pull/[0-9]+',
-            r'github\.com/[^/]+/[^/]+/pull/[0-9]+',
+            r'https?://github\.com/[^/]+/[^/]+/pull/[0-9]+(?![0-9A-Za-z_])',
+            r'github\.com/[^/]+/[^/]+/pull/[0-9]+(?![0-9A-Za-z_])',
         ]
         
         # First check interpreted text
