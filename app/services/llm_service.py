@@ -239,7 +239,7 @@ Return your findings as a JSON array following the specified format."""
 
         except Exception as e:
             # Shared error types (rate limit, auth, timeout, output) reach the caller
-            raise self._wrap_error("Security analysis", e) from e
+            raise self._wrap_error("Security analysis", e) from None
     
     async def analyze_performance(
         self, 
@@ -276,7 +276,7 @@ Return your findings as a JSON array following the specified format."""
 
         except Exception as e:
             # Shared error types (rate limit, auth, timeout, output) reach the caller
-            raise self._wrap_error("Performance analysis", e) from e
+            raise self._wrap_error("Performance analysis", e) from None
     
     async def analyze_best_practices(
         self, 
@@ -323,7 +323,7 @@ Return your findings as a JSON array with:
 
         except Exception as e:
             # Shared error types (rate limit, auth, timeout, output) reach the caller
-            raise self._wrap_error("Best practices analysis", e) from e
+            raise self._wrap_error("Best practices analysis", e) from None
     
     async def generate_summary(
         self,
@@ -378,7 +378,7 @@ Generate the executive summary following the specified format."""
             
         except Exception as e:
             # Shared error types (rate limit, auth, timeout, output) reach the caller
-            raise self._wrap_error("Summary generation", e) from e
+            raise self._wrap_error("Summary generation", e) from None
 
 
 def _severity_from_impact(finding: dict[str, Any]) -> None:

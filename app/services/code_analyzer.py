@@ -221,9 +221,10 @@ class CodeAnalyzerService:
             return result
             
         except GitHubMCPError as e:
-            logger.error(f"GitHub MCP error during analysis: {e}")
+            logger.error(f"GitHub MCP error during analysis: {type(e).__name__}")
             raise
         except LLMError as e:
+            # LLMError messages are built by safe_message(): type, status and model only
             logger.error(f"LLM error during analysis: {e}")
             raise
         except Exception as e:
@@ -306,7 +307,8 @@ class CodeAnalyzerService:
                 
                 return pr, pr_diff.raw_diff, pr_diff.files
         except Exception as e:
-            logger.error(f"Error in _fetch_pr_data: {type(e).__name__}: {e}", exc_info=True)
+            # Type only: exception text and tracebacks can echo GitHub bodies (P1-17)
+            logger.error(f"Error in _fetch_pr_data: {type(e).__name__}")
             raise
     
     def _prepare_file_changes(self, parsed_diffs: list[FileDiff]) -> list[dict[str, Any]]:

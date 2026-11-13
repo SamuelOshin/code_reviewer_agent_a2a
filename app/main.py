@@ -212,7 +212,7 @@ def get_agent_card():
         
         return JSONResponse(content=agent_card)
     except Exception as e:
-        logger.error(f"Failed to load agent card: {e}")
+        logger.error(f"Failed to load agent card: {type(e).__name__}")
         return JSONResponse(
             content={"error": "Failed to load agent card"},
             status_code=500
