@@ -27,7 +27,7 @@ configuration, not code.
 | `POST /a2a/tasks`: JSON-RPC `message/send`, or `{"message": "<text containing a PR URL>"}` | `app/routes/a2a_tasks.py`, `tests/test_a2a_protocol.py` |
 | GitHub webhook: HMAC-verified `pull_request` events (opened, synchronize, reopened) get one summary comment on the PR, capped at 60,000 characters | `app/routes/webhooks.py`, `tests/test_webhooks.py` |
 | Optional push of the result to a caller-supplied URL (allowlisted, https, public addresses only) | `app/core/push_url.py`, `tests/test_security_p107.py` |
-| Safe logging and errors: no tokens, payloads or raw model output in logs; clients get a generic message plus an error id | `app/core/errors.py`, `tests/test_safe_logging.py` |
+| Safe errors: clients get a generic message plus an error id; raw model output is never logged. Some log lines still include raw exception text, such as GitHub error details (`P1-17`) | `app/core/errors.py`, `tests/test_safe_logging.py` |
 
 ## Fail-closed reviews
 
@@ -147,7 +147,9 @@ In the repository's Settings, Webhooks: payload URL `https://<your-host>/webhook
 content type `application/json`, the secret equal to `GITHUB_WEBHOOK_SECRET`, event
 "Pull requests". Requests without a valid `X-Hub-Signature-256` are rejected. A delivery
 whose `X-GitHub-Delivery` id was seen in the last hour is ignored (in memory, per process),
-so GitHub redeliveries do not post twice.
+so GitHub redeliveries do not post twice. The id stays claimed even if the review then
+fails, so a manual "Redeliver" within that hour is ignored too; restart the service or
+wait an hour to retry (`P1-16`).
 
 ## Security notes
 
