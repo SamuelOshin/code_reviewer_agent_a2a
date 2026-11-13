@@ -13,8 +13,8 @@ read this file alone and continue the work.
 | | |
 |---|---|
 | **Current phase** | Phase 1: make it honest and working (planning complete) |
-| **Active task** | None. Done: `P1-01` to `P1-04`, `P1-06` to `P1-15`. Open: `P1-05` (needs one real review on two providers), `P1-16` |
-| **Next action** | Owner sets a random `API_KEY` and a random `GITHUB_WEBHOOK_SECRET` (both at least 32 characters) in `.env`, then runs one real review on two providers (closes `P1-05`). Owner picks a license (the old README claimed MIT; no LICENSE file exists). Then `P1-16` |
+| **Active task** | None. Done: `P1-01` to `P1-04`, `P1-06` to `P1-15`. Open: `P1-05` (needs one real review on two providers), `P1-16` to `P1-18` |
+| **Next action** | Owner sets a random `API_KEY` and a random `GITHUB_WEBHOOK_SECRET` (both at least 32 characters) in `.env`, then runs one real review on two providers (closes `P1-05`). Owner picks a license (the old README claimed MIT; no LICENSE file exists). Then `P1-16`, `P1-17`, `P1-18` |
 | **Working branch** | `main`. Start each new task on its own branch from `main`. `P1-13` and `P1-15` merged through the `chore/p1-13-p1-15` PR |
 | **Blockers** | None. Owner approved running repo code on 2026-11-12. Use `uv` for everything (`uv sync`, `uv run`). If an install fails on a Windows cache file lock, retry or set a different `UV_CACHE_DIR` |
 | **Working rule** | Parallel agents don't edit this file. The coordinating session records their results |
@@ -258,7 +258,9 @@ in CI, and the README is accurate.
 | P1-12 | done | Done: empty test files filled, ruff and mypy config, ruff findings fixed, and `.github/workflows/ci.yml` (ruff, pytest with coverage, `pip-audit`). CI went green on PR #1 on 2026-11-13. Coverage 82%. mypy is out of CI because of 55 errors, moved to `P2-09` | P1-03 | CI green on a PR. Coverage figure recorded |
 | P1-13 | done | Rewrite the README so every claim is true. It still describes Telex, MCP, `python-a2a`, Node.js and `pip install -r requirements.txt` (deleted), documents removed RPC methods and settings, it must document `API_KEY` (its `/rpc` examples now return 401 without it), and its Docker section should be `cp .env.example .env` then `docker compose up --build` | All above | Every feature listed maps to code or a test |
 | P1-15 | done | Review follow-ups from `P1-04` and `P1-05`: dedupe replayed webhook deliveries by `X-GitHub-Delivery`; add a timeout to blocking `message/send`; use `[0-9]` instead of `\d` in `parse_pr_url`; map a Google 404 to `LLMConfigurationError` like the other providers; record the model each role used in the result, not just the default. From the PR #2 review: show the P1-06 status and incomplete reasons in the A2A report and the `analyze_pr` RPC result; reject `::7f00:1` and NAT64 push URL addresses and restrict the port; set a minimum length for the webhook secret; reject or normalize mixed-case CORS origins; return an error for an empty JSON-RPC batch | P1-04, P1-05, P1-06, P1-07 | Tests: a replayed delivery posts once, a non-ASCII-digit PR URL is rejected, a Google 404 raises a configuration error |
-| P1-16 | todo | Close the webhook replay gap: the `X-GitHub-Delivery` id is not covered by the signature, so a captured body resent with a new id is processed again. Also dedupe on a hash of the signed body, and let a failed review be redelivered manually instead of blocking its id for an hour | P1-15 | Tests: the same signed body with a new delivery id posts once; a delivery whose analysis failed can be redelivered |
+| P1-16 | todo | Close the webhook replay gap: the `X-GitHub-Delivery` id is not covered by the signature, so a captured body resent with a new id is processed again. Also dedupe on a hash of the signed body, and let a failed review be redelivered manually instead of blocking its id for an hour. From the PR #3 review: strip whitespace before the webhook secret length check, and cap the delivery id's length and format | P1-15 | Tests: the same signed body with a new delivery id posts once; a delivery whose analysis failed can be redelivered |
+| P1-17 | todo | Remove raw exception text from the remaining log lines and error messages (about 20, e.g. `app/services/github_mcp.py`, `app/routes/webhooks.py`, `app/routes/jsonrpc.py`, `app/main.py`): log the type and an error id, and raise without the original text. Then restore the README's broader safe-logging claim | P1-08 | A sentinel test covers each path: nothing from the exception reaches the logs or the client |
+| P1-18 | todo | Smaller follow-ups from the PR #3 review: a JSON-RPC batch of blocking `message/send` calls runs sequentially (up to 100 times the timeout), so cap or parallelise it; on timeout, an in-flight GitHub call keeps running in its executor thread; `fec0::1` passes the push URL guard; `parse_pr_url` is unanchored, so `pull/12abc` parses as PR 12 | P1-15 | Tests for each case |
 | P1-14 | done | Repo hygiene: add `.gitattributes` to normalise line endings, ignore `.claude/worktrees/` and tool caches, replace deprecated `datetime.utcnow` everywhere in `app/`, and use PyGithub's `Auth.Token` | P1-03 | `git add --renormalize .` leaves a clean diff. No `utcnow` in `app/` |
 
 ### Phase 2: modernize the core
@@ -335,6 +337,8 @@ Newest first. Keep entries short.
 - **Not done:** no real GitHub, model or Docker run, and the replay cache is not
   shared across workers. The replay gap on the unsigned delivery id is `P1-16`. No
   LICENSE file; the owner decides.
+- **Review:** Bobby Review rated PR #3 ready with follow-ups, with no blockers. Its two
+  should-fix items were README wording, fixed before merge. The rest are `P1-16` to `P1-18`.
 
 ### 2026-11-13: PR #2 reviewed, fixed and merged
 
