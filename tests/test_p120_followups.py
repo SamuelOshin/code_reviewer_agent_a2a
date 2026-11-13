@@ -37,6 +37,9 @@ def test_ten_digit_pr_number_still_parses_and_eleven_does_not():
         "evilgithub.com/o/r/pull/1",
         "see notgithub.com/o/r/pull/1",
         "https://evilgithub.com/o/r/pull/1",
+        "x.github.com/o/r/pull/1",
+        "a-github.com/o/r/pull/1",
+        "évgithub.com/o/r/pull/1",
         "see https://github.com/o/r/pull/" + "9" * 5000,
     ],
 )
@@ -54,6 +57,11 @@ def test_extractor_rejects_lookalike_hosts_and_huge_numbers(text):
         ("github.com/o/r/pull/1", "https://github.com/o/r/pull/1"),
         ("review //github.com/o/r/pull/1", "https://github.com/o/r/pull/1"),
         ("https://github.com/o/r/pull/7/files", "https://github.com/o/r/pull/7"),
+        # Chat formats main accepted (Bobby Review): backticks, bold, "PR:", quote
+        ("`github.com/o/r/pull/1`", "https://github.com/o/r/pull/1"),
+        ("*github.com/o/r/pull/1*", "https://github.com/o/r/pull/1"),
+        ("PR:github.com/o/r/pull/1", "https://github.com/o/r/pull/1"),
+        (">github.com/o/r/pull/1", "https://github.com/o/r/pull/1"),
     ],
 )
 def test_extractor_finds_real_urls(text, expected):

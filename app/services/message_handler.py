@@ -689,11 +689,12 @@ class MessageHandler:
         """
         # GitHub PR URL patterns. The number must not run into more word characters
         # ("pull/12abc" is not PR 12), matching parse_pr_url (P1-18)
-        # P1-20: github.com must start a token (start, whitespace, ( < quote, or a scheme
-        # "//"), so "evilgithub.com/..." is not a match. The right side matches
-        # parse_pr_url: 1-10 ASCII digits that are not followed by a word character
-        # (letters, "_", any digit incl. non-ASCII) or "-".
-        left = r'(?:(?<=//)|(?<![^\s(<"\'\[]))'
+        # P1-20: github.com must not follow a character that could extend a hostname
+        # (a word character, "." or "-"), so "evilgithub.com" and "x.github.com" are not
+        # matches, while chat formats such as `...`, *...*, "PR:..." and "> ..." still
+        # are. The right side matches parse_pr_url: 1-10 ASCII digits that are not
+        # followed by a word character (letters, "_", any digit incl. non-ASCII) or "-".
+        left = r'(?<![\w.\-])'
         tail = r'github\.com/[^/\s]+/[^/\s]+/pull/[0-9]{1,10}(?![\w\-])'
         url_patterns = [
             r'https?://' + tail,

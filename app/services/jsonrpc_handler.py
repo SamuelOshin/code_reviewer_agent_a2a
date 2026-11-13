@@ -17,8 +17,8 @@ from app.models.jsonrpc import JSONRPCError, JSONRPCErrorCode, JSONRPCRequest, J
 
 logger = logging.getLogger(__name__)
 
-# How many calls of one batch run at the same time (P1-18). A batch used to run its
-# calls one after another, so 100 blocking message/send calls could hold the request
+# How many batch calls run at the same time, across all batches (P1-18, P1-20). A batch
+# used to run its calls one after another, so 100 blocking message/send calls could hold the request
 # for 100 x A2A_BLOCKING_TIMEOUT_SECONDS. Running them concurrently, a few at a time,
 # bounds that to ceil(n / limit) x the timeout without letting one batch start 100
 # model calls at once. Kept here, not in config, because it is a protection constant.
