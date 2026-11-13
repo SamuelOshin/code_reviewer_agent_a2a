@@ -17,6 +17,14 @@ class ClientInputError(ValueError):
     """
 
 
+class RequestTimeoutError(Exception):
+    """A blocking call ran past its time limit. The message is safe to return as-is.
+
+    The JSON-RPC handler maps it to a dedicated timeout error (not Internal error),
+    so the caller knows to retry non-blocking or later.
+    """
+
+
 def new_error_id() -> str:
     """Short id shown to the client and logged next to the full error."""
     return uuid.uuid4().hex[:8]
