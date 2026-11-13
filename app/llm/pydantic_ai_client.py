@@ -41,15 +41,40 @@ OUTPUT_MODES = ("auto", "native", "tool", "prompted")
 OUTPUT_RETRIES = 1
 
 
-def map_error(exc: BaseException) -> LLMError:
-    """Map a Pydantic AI or provider exception to a shared error type."""
+def safe_message(exc: BaseException, configured: str | None = None) -> str:
+    """Describe a provider failure without any upstream content.
+
+    Provider exceptions stringify the raw response body, which can echo prompts or
+    PR code (P1-08). Only the exception type, HTTP status, provider and model go
+    into our message.
+    """
+    parts = [type(exc).__name__]
+    status = getattr(exc, "status_code", None)
+    if isinstance(status, int):
+        parts.append(f"status {status}")
+    model_name = getattr(exc, "model_name", None)
+    if isinstance(model_name, str) and model_name:
+        parts.append(f"model {model_name}")
+    if configured:
+        parts.append(f"configured {configured}")
+    return ", ".join(parts)
+
+
+def map_error(exc: BaseException, configured: str | None = None) -> LLMError:
+    """Map a Pydantic AI or provider exception to a shared error type.
+
+    The original exception is kept on `provider_error` for debugging. It is not
+    chained as `__cause__`, because logged tracebacks would print its body.
+    """
     if isinstance(exc, LLMError):
         return exc
     if isinstance(exc, pai_errors.FallbackExceptionGroup) and exc.exceptions:
         # Every model in the chain failed; report the last failure.
-        return map_error(exc.exceptions[-1])
+        mapped = map_error(exc.exceptions[-1], configured)
+        mapped.provider_error = exc
+        return mapped
 
-    message = f"{type(exc).__name__}: {exc}"
+    message = safe_message(exc, configured)
     checks: tuple[tuple[tuple[type[BaseException], ...], type[LLMError]], ...] = (
         ((pai_errors.ModelContextWindowExceededError,), LLMContextLengthError),
         ((pai_errors.ModelAuthenticationError,), LLMAuthError),
@@ -74,10 +99,14 @@ def map_error(exc: BaseException) -> LLMError:
         ((pai_errors.UnexpectedModelBehavior,), LLMOutputError),
         ((pai_errors.UserError, pai_errors.ModelNotFoundError), LLMConfigurationError),
     )
-    for types, error_type in checks:
+    error_type: type[LLMError] = LLMError
+    for types, candidate in checks:
         if isinstance(exc, types):
-            return error_type(message)
-    return LLMError(message)
+            error_type = candidate
+            break
+    mapped = error_type(message)
+    mapped.provider_error = exc
+    return mapped
 
 
 def capabilities_of(model: Model) -> ModelCapabilities:
@@ -195,7 +224,8 @@ class PydanticAIClient:
         try:
             result = await agent.run(prompt)
         except Exception as exc:
-            raise map_error(exc) from exc
+            # "from None": the provider error (and its raw body) stays out of tracebacks
+            raise map_error(exc, self.model_name(role)) from None
         latency_ms = (time.perf_counter() - started) * 1000
 
         run_usage = result.usage

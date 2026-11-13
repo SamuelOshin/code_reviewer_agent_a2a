@@ -406,3 +406,53 @@ def test_settings_derive_provider_from_model():
     s = Settings(GITHUB_TOKEN="x", GITHUB_WEBHOOK_SECRET="x", LLM_MODEL="anthropic:m")
     assert s.LLM_PROVIDER == "anthropic"
     assert Settings(GITHUB_TOKEN="x", GITHUB_WEBHOOK_SECRET="x", LLM_MODEL="bad").LLM_PROVIDER == ""
+
+
+# --- review fixes: safe errors, clear config errors, validated settings ----------
+
+SENTINEL = "UPSTREAM_BODY_SENTINEL_7f3a"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", PROVIDERS)
+@pytest.mark.parametrize("status", [400, 401, 429, 503])
+async def test_provider_error_body_never_reaches_message_or_logs(provider, status, caplog):
+    import logging
+    import traceback
+
+    from app.core.exceptions import LLMError
+    from app.services.llm_service import LLMService
+
+    kind = {400: "invalid_request_error", 401: "authentication_error",
+            429: "rate_limit_error", 503: "overloaded_error"}[status]
+    script = Scripted((status, error_body(provider, status, f"echo: {SENTINEL}", kind)))
+    service = LLMService(client=client_for(provider, script))
+
+    with caplog.at_level(logging.DEBUG), pytest.raises(LLMError) as info:
+        await service.analyze_security("diff", [{"filename": "a.py"}])
+
+    err = info.value
+    assert SENTINEL not in str(err)
+    assert SENTINEL not in caplog.text
+    # A traceback logged with exc_info=True must not carry the body either
+    assert SENTINEL not in "".join(traceback.format_exception(err))
+    # The message keeps the safe fields
+    assert f"status {status}" in str(err)
+    assert f"{provider}:{MODEL_ID}" in str(err)
+    # The original stays available for debugging, outside the message
+    assert SENTINEL in str(getattr(err, "provider_error", ""))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", PROVIDERS)
+async def test_unknown_model_is_a_configuration_error(provider):
+    body = error_body(provider, 401, "model not found", "not_found_error")
+    if provider == "google":
+        body = {"error": {"code": 404, "message": "models/test-model is not found",
+                          "status": "NOT_FOUND"}}
+    script = Scripted((404, body))
+    client = client_for(provider, script)
+
+    with pytest.raises(LLMConfigurationError):
+        await client.generate(Role.SUMMARY, "hi")
+
