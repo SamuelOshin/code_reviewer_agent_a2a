@@ -95,7 +95,9 @@ def setup_logging() -> None:
     # DEBUG; google-genai can log response chunks. Same rule for both.
     logging.getLogger("anthropic").setLevel(max(log_level, logging.INFO))
     logging.getLogger("google_genai").setLevel(max(log_level, logging.INFO))
-    
+    # google-auth (logger "google.auth") logs token-refresh details at DEBUG (P1-21)
+    logging.getLogger("google").setLevel(max(log_level, logging.INFO))
+
     # Log initial message
     logger = logging.getLogger(__name__)
     logger.info(
