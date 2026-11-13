@@ -91,6 +91,10 @@ def setup_logging() -> None:
     # at DEBUG; keep both at INFO or higher even when LOG_LEVEL=DEBUG (P1-19)
     logging.getLogger("github").setLevel(max(log_level, logging.INFO))
     logging.getLogger("urllib3").setLevel(max(log_level, logging.INFO))
+    # The Anthropic SDK logs full request options, including the prompt (PR code), at
+    # DEBUG; google-genai can log response chunks. Same rule for both.
+    logging.getLogger("anthropic").setLevel(max(log_level, logging.INFO))
+    logging.getLogger("google_genai").setLevel(max(log_level, logging.INFO))
     
     # Log initial message
     logger = logging.getLogger(__name__)
