@@ -144,15 +144,19 @@ concurrently, at most 5 at a time across the whole process (all batches share on
 limit). Each batch call waits at most `A2A_BLOCKING_TIMEOUT_SECONDS` for a slot; if none
 is free it returns `-32004` for that call without running it. A call that gets a slot then
 runs under the same timeout, so a batch finishes within about twice the timeout. Single
-requests are not queued behind this limit. If the push to your webhook fails with an error
-status (for example 429, 413 or 5xx), the service makes one more post with a short
-"could not deliver the result" message and an error id; if the webhook cannot be reached at
-all, it does not retry. A review that fails because GitHub could not be reached or the
+requests are not queued behind this limit. Every error response carries `"id"`, `null` when the request id could not be read (a string or integer is echoed; an integral float such as `1.0` is echoed as `1`). If the push to your webhook answers 413 or 429,
+the service makes one more post with a short "could not deliver the result" message
+(state `failed`, same task id) and an error id. For any other error status (5xx, 3xx, 4xx)
+or an unreachable webhook it posts nothing more, because the webhook may already have
+stored the result and a `failed` post would overwrite it. A review that fails because GitHub could not be reached or the
 PR could not be read says so, as fixed text plus an error id, never the exception text.
 A model failure, including a rate limit, does not fail the task: it shows in the review
-as a failed analysis step (for example "Security analysis failed (LLMRateLimitError)"). PR URLs
-in message text are accepted as `http://` or `https://`, with `github.com` in any case
-(and without a scheme), and are rewritten to `https://github.com/...`; PR number 0 is
+as a failed analysis step (for example "Security analysis failed (RuntimeError)."). When the
+model was rate-limited, the step says so instead: "the model was rate-limited; wait a few
+minutes and run the review again." If every step failed that way, the review status is
+`failed` and the summary says it too. PR URLs
+in message text are accepted as `http://` or `https://`, with `github.com` and `/pull/` in
+any case (and without a scheme), and are rewritten to `https://github.com/.../pull/N`; PR number 0 is
 rejected. On timeout, a GitHub request that has already started
 cannot be stopped: it finishes in a worker thread (bounded by a 15 s socket timeout, at
 most 3 retries and a 30 s cap on rate-limit waits) and its result is discarded; queued
