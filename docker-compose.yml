@@ -40,8 +40,8 @@ networks:
 #
 # 1. Create .env with the required variables:
 #    cp .env.example .env
-#    # Edit .env: GITHUB_TOKEN and GITHUB_WEBHOOK_SECRET are required, plus the
-#    # API key for the LLM provider you choose
+#    # Edit .env: GITHUB_TOKEN, GITHUB_WEBHOOK_SECRET and API_KEY are required,
+#    # plus the API key for the LLM provider you choose
 #
 # 2. Build and run:
 #    docker compose up --build
@@ -52,6 +52,8 @@ networks:
 # 4. Check health:
 #    docker compose ps
 #    curl http://localhost:8000/health
+#    # /rpc and /a2a/* need the key:
+#    # curl -H "Authorization: Bearer $API_KEY" ...
 #
 # 5. View logs:
 #    docker compose logs -f app

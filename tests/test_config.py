@@ -28,15 +28,15 @@ def test_settings_load_without_secret_key(monkeypatch):
     assert settings.GITHUB_TOKEN == "dummy"
 
 
-def test_required_settings_are_only_the_github_ones(monkeypatch):
-    for name in ("GITHUB_TOKEN", "GITHUB_WEBHOOK_SECRET", "SECRET_KEY"):
+def test_required_settings_are_github_and_api_key(monkeypatch):
+    for name in ("GITHUB_TOKEN", "GITHUB_WEBHOOK_SECRET", "SECRET_KEY", "API_KEY"):
         monkeypatch.delenv(name, raising=False)
 
     with pytest.raises(Exception) as exc:
         Settings(_env_file=None)
 
     missing = {err["loc"][0] for err in exc.value.errors()}
-    assert missing == {"GITHUB_TOKEN", "GITHUB_WEBHOOK_SECRET"}
+    assert missing == {"GITHUB_TOKEN", "GITHUB_WEBHOOK_SECRET", "API_KEY"}
 
 
 @pytest.mark.parametrize("name", REMOVED_SETTINGS)
