@@ -213,7 +213,8 @@ class CodeAnalyzerService:
                 analyzed_at=datetime.now(UTC),
                 analysis_duration_seconds=analysis_duration,
                 llm_provider=settings.LLM_PROVIDER,
-                llm_model=settings.LLM_MODEL
+                llm_model=settings.LLM_MODEL,
+                llm_models_by_role=self.llm_service.models_by_role(),
             )
             
             logger.info(f"Analysis completed in {analysis_duration:.2f}s - Status: {status.value}, Risk: {risk_level.value}, Recommendation: {approval_recommendation.value}")

@@ -10,7 +10,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from app.core.errors import ClientInputError, new_error_id
+from app.core.errors import ClientInputError, RequestTimeoutError, new_error_id
 from app.models.jsonrpc import JSONRPCError, JSONRPCErrorCode, JSONRPCRequest, JSONRPCResponse
 
 logger = logging.getLogger(__name__)
@@ -135,6 +135,14 @@ class JSONRPCHandler:
                 return self._error_response(
                     request_id=request.id,
                     code=JSONRPCErrorCode.INVALID_PARAMS,
+                    message=str(e),
+                )
+
+            except RequestTimeoutError as e:
+                logger.warning(f"Timed out: {request.method}")
+                return self._error_response(
+                    request_id=request.id,
+                    code=JSONRPCErrorCode.TIMEOUT,
                     message=str(e),
                 )
 

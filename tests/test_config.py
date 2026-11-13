@@ -21,7 +21,7 @@ REMOVED_SETTINGS = [
 def test_settings_load_without_secret_key(monkeypatch):
     monkeypatch.delenv("SECRET_KEY", raising=False)
     monkeypatch.setenv("GITHUB_TOKEN", "dummy")
-    monkeypatch.setenv("GITHUB_WEBHOOK_SECRET", "dummy")
+    monkeypatch.setenv("GITHUB_WEBHOOK_SECRET", "test-webhook-secret-not-a-secret-0123456789")
 
     settings = Settings(_env_file=None)
 

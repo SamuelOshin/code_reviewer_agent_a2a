@@ -124,6 +124,10 @@ class LLMService:
             + ", ".join(f"{role}={self.client.model_name(role)}" for role in Role)
         )
 
+    def models_by_role(self) -> dict[str, str]:
+        """Configured model (with any fallbacks) for each role, for the result record."""
+        return {str(role): self.client.model_name(role) for role in Role}
+
     async def _generate(self, role: Role, prompt: str, system_prompt: str | None) -> str:
         """One text call through the model layer, with usage logged (never the output)."""
         result: LLMResult[str] = await self.client.generate(

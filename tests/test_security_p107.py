@@ -32,7 +32,7 @@ PR_URL = "https://github.com/octo/repo/pull/1"
 
 
 def base_env(**overrides):
-    env = {"GITHUB_TOKEN": "x", "GITHUB_WEBHOOK_SECRET": "x", "API_KEY": GOOD_KEY}
+    env = {"GITHUB_TOKEN": "x", "GITHUB_WEBHOOK_SECRET": "test-webhook-secret-not-a-secret-0123456789", "API_KEY": GOOD_KEY}
     env.update(overrides)
     return env
 
