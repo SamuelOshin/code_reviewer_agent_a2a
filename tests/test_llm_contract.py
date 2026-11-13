@@ -471,3 +471,24 @@ def test_role_setting_is_named_in_the_error():
     with pytest.raises(LLMConfigurationError, match="LLM_MODEL_SUMMARY"):
         build_client(make_settings("google", LLM_MODEL_SUMMARY="no-prefix"))
 
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [("LLM_MAX_RETRIES", -1), ("LLM_TIMEOUT_SECONDS", 0), ("LLM_TIMEOUT_SECONDS", -5),
+     ("LLM_MAX_TOKENS", 0)],
+)
+def test_numeric_llm_settings_are_validated(name, value):
+    from pydantic import ValidationError
+
+    from app.core.config import Settings
+
+    with pytest.raises(ValidationError, match=name):
+        Settings(GITHUB_TOKEN="x", GITHUB_WEBHOOK_SECRET="x", **{name: value})
+
+
+def test_numeric_llm_settings_accept_valid_values():
+    from app.core.config import Settings
+
+    s = Settings(GITHUB_TOKEN="x", GITHUB_WEBHOOK_SECRET="x", LLM_MAX_RETRIES=0,
+                 LLM_TIMEOUT_SECONDS=0.5, LLM_MAX_TOKENS=1)
+    assert (s.LLM_MAX_RETRIES, s.LLM_TIMEOUT_SECONDS, s.LLM_MAX_TOKENS) == (0, 0.5, 1)

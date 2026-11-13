@@ -1,5 +1,6 @@
 # app/core/config.py
 
+from pydantic import Field
 from pydantic_settings import BaseSettings
 
 
@@ -30,10 +31,10 @@ class Settings(BaseSettings):
     # auto, native, tool or prompted. auto uses native schema output where supported
     LLM_STRUCTURED_OUTPUT_MODE: str = "auto"
     LLM_TEMPERATURE: float = 0.3
-    LLM_MAX_TOKENS: int = 4000
+    LLM_MAX_TOKENS: int = Field(4000, gt=0)
     # Retries for transient provider errors, applied the same way for every provider
-    LLM_MAX_RETRIES: int = 2
-    LLM_TIMEOUT_SECONDS: float = 120.0
+    LLM_MAX_RETRIES: int = Field(2, ge=0)
+    LLM_TIMEOUT_SECONDS: float = Field(120.0, gt=0)
 
     # Provider credentials (only the ones your models use are needed)
     OPENAI_API_KEY: str = ""
