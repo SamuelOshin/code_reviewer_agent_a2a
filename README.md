@@ -156,7 +156,8 @@ malformed `X-GitHub-Delivery` header (not 1 to 64 of letters, digits, `.`, `_`, 
 in the last hour (in memory, per process, bounded in size), so GitHub redeliveries and a
 captured body resent with a new id do not post twice. If no comment was posted (the
 analysis raised, or the comment could not be posted), the id and body are forgotten, so a
-manual "Redeliver" runs it again. Once a comment is posted, including a failed or
+manual "Redeliver" runs it again, up to 3 runs per body per hour (then it is ignored as a
+duplicate). Once a comment is posted, including a failed or
 incomplete result, the delivery stays claimed for up to an hour: a review that failed
 because the model was unavailable cannot be redelivered in that time. Push a new commit
 or restart the service to retry.
@@ -174,7 +175,12 @@ or restart the service to retry.
   a captured body resent with a new id is also ignored. It is in memory and per process:
   a restart, or a second replica, forgets it, and a replay after the one-hour window
   is processed again. A delivery whose analysis fails before any comment is posted is
-  released, so resending it runs the analysis again (no comment is posted) (`P1-19`).
+  released so a manual "Redeliver" can retry, but each body gets at most 3 runs per
+  hour; after that, resends are ignored. The cache keeps up to 8192 entries per key
+  set, so past 8192 distinct deliveries within the hour the oldest body can be replayed
+  early (a shared store would remove that limit; it is not built).
+- PyGithub (`github`) and `urllib3` log at INFO or higher even when `LOG_LEVEL=DEBUG`,
+  so rate-limit response text and request details are not printed.
 - This repo is public. Put secrets only in `.env`, which is not committed.
 
 ## Development
