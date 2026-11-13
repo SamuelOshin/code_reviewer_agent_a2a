@@ -104,6 +104,12 @@ def map_error(exc: BaseException, configured: str | None = None) -> LLMError:
         if isinstance(exc, types):
             error_type = candidate
             break
+    else:
+        # A 404 means the model or endpoint does not exist, whichever provider
+        # said so and however the library categorised it (P1-15). Google's 404 in
+        # particular must not depend on the body carrying status NOT_FOUND.
+        if getattr(exc, "status_code", None) == 404:
+            error_type = LLMConfigurationError
     mapped = error_type(message)
     mapped.provider_error = exc
     return mapped
