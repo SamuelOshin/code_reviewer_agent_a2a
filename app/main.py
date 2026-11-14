@@ -182,6 +182,23 @@ async def handle_message_send(message: dict[str, Any], configuration: dict[str, 
     return result
 
 
+def message_send_needs_reply(params: dict[str, Any]) -> bool:
+    """True unless message/send is non-blocking with a push config (P1-24).
+
+    Mirrors MessageHandler.handle_message_send: blocking defaults to true, and only
+    a falsy "blocking" plus a pushNotificationConfig delivers the result by push.
+    """
+    configuration = params.get("configuration") if isinstance(params, dict) else None
+    if not isinstance(configuration, dict):
+        return True
+    # Same test as the handler: `not is_blocking and push_config`, so any falsy
+    # "blocking" (false, 0, null, "") with a push config pushes (P1-24 review)
+    pushes = not configuration.get("blocking", True) and bool(
+        configuration.get("pushNotificationConfig")
+    )
+    return not pushes
+
+
 async def register_rpc_methods(handler: JSONRPCHandler):
     """
     Register all JSON-RPC methods
@@ -189,9 +206,17 @@ async def register_rpc_methods(handler: JSONRPCHandler):
     Args:
         handler: JSONRPCHandler instance
     """
-    handler.register_method("analyze_pr", handle_analyze_pr)
+    # P1-24: a review whose result only comes back in the reply must not be sent as a
+    # notification. analyze_pr always replies with the result; message/send does unless
+    # it is non-blocking with a push config (the result is pushed instead).
+    handler.register_method("analyze_pr", handle_analyze_pr, reply_required=lambda _p: True)
     handler.register_method("introspect", handle_introspect)
-    handler.register_method("message/send", handle_message_send)
+    handler.register_method(
+        "message/send",
+        handle_message_send,
+        reply_required=message_send_needs_reply,
+        reply_hint="Or send it non-blocking (\"blocking\": false) with a pushNotificationConfig.",
+    )
 
 
 # ============================================================================

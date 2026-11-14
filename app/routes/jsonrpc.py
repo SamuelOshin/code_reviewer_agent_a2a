@@ -100,7 +100,10 @@ async def jsonrpc_endpoint(request: Request):
             return JSONResponse(content=responses)
         
         # Handle single request
-        logger.info(f"Processing JSON-RPC request: {body.get('method')}")
+        # A body that is neither an object nor an array (42, "x", true, null) is an
+        # Invalid Request; handle_request answers it with -32600 and "id": null (P1-24)
+        method = body.get("method") if isinstance(body, dict) else None
+        logger.info(f"Processing JSON-RPC request: {method!r:.100}")
         response = await rpc_handler.handle_request(body)
         if response is None:
             # A notification (no "id"): the method ran, and there is no reply (P1-23)
