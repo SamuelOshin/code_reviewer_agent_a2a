@@ -300,6 +300,10 @@ async def handle_pull_request_event(
     Returns:
         JSON response
     """
+    # GitHub always sends objects here; anything else is a bad request, not a 500
+    # that leaves the replay keys claimed (P2-10 review)
+    if not isinstance(payload, dict) or not isinstance(payload.get("pull_request", {}), dict):
+        raise HTTPException(status_code=400, detail="Invalid pull_request payload")
     action = payload.get("action")
     pull_request = payload.get("pull_request", {})
     
@@ -325,6 +329,11 @@ async def handle_pull_request_event(
     if not pr_url:
         logger.error("No PR URL in webhook payload")
         raise HTTPException(status_code=400, detail="Missing PR URL in payload")
+    # The number goes into several logs and the reply below, so require a plain int
+    # rather than escaping it in each place (P2-10 review)
+    if not isinstance(pr_number, int) or isinstance(pr_number, bool):
+        logger.error("Webhook payload has a non-integer PR number")
+        raise HTTPException(status_code=400, detail="Invalid PR number in payload")
     
     # Queue analysis as background task. The signature was verified above, so the
     # event really came from GitHub and the summary can be posted back.
