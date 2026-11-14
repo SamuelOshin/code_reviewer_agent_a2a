@@ -159,7 +159,10 @@ no method, not an object, or a body such as `42` or `"x"`) is always answered wi
 Invalid Request and `"id": null` (or its id, if readable), also in a busy batch: such a
 call is answered before it waits for a slot. A `message/send` with an `id` whose `configuration` is
 present and neither an object nor `null` (for example `"x"`, `0`, `""` or `[]`) gets Invalid
-params (`-32602`); without an `id` it counts as blocking and gets `-32600`. `"id": null` is not a
+params (`-32602`); without an `id` it counts as blocking and gets `-32600`. A `message`
+that is not an object also gets `-32602`. An unknown method name is echoed in the
+`-32601` reply cut to 100 characters, and client method names and message or task ids
+are logged escaped and capped the same way. `"id": null` is not a
 notification and gets a reply. `/a2a/tasks` follows the same rule. A success response
 always has `result` (`null` when the method returned nothing) and no `error`; an error
 response has `error` and no `result`. If the push to your webhook answers 413 or 429,
