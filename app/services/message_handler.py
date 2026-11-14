@@ -149,7 +149,11 @@ class MessageHandler:
         # not an internal error from calling .get on a string or list
         if configuration is not None and not isinstance(configuration, dict):
             raise ClientInputError("configuration must be an object")
-        logger.info(f"Handling message/send: {message.get('messageId')}")
+        # P1-26: the same for the message itself, before any .get on it
+        if not isinstance(message, dict):
+            raise ClientInputError("message must be an object")
+        # Client-supplied ids: !r and a cap, so a newline can't forge a log line (P1-26)
+        logger.info(f"Handling message/send: {message.get('messageId')!r:.100}")
         if configuration:
             # Never log the configuration itself: pushNotificationConfig carries a bearer token
             logger.info(
@@ -271,7 +275,7 @@ class MessageHandler:
         logger.info(f"🚀 _process_and_push_safe STARTED for PR: {pr_url}")
         try:
             logger.info(f"Background task started for PR: {pr_url}")
-            logger.info(f"Task details - ID: {task_id}, Message: {message_id}")
+            logger.info(f"Task details - ID: {task_id!r:.100}, Message: {message_id!r:.100}")
             logger.info(f"Push config available: {bool(push_config)}")
             
             await self._process_and_push(pr_url, task_id, message_id, message, push_config)
@@ -304,7 +308,7 @@ class MessageHandler:
         logged; the client gets error_id.
         """
         error_id = error_id or new_error_id()
-        logger.info(f"Pushing error for task {task_id} [error_id={error_id}]")
+        logger.info(f"Pushing error for task {task_id!r:.100} [error_id={error_id}]")
 
         # Determine error type and create user-friendly message
         category = _error_category(error)
@@ -583,7 +587,7 @@ class MessageHandler:
             if "kind" not in result:
                 result["kind"] = "task"
             
-            logger.info(f"Returning task result: {result.get('id')}, state: {result['status']['state']}, kind: {result.get('kind')}")
+            logger.info(f"Returning task result: {result.get('id')!r:.100}, state: {result['status']['state']}, kind: {result.get('kind')}")
             
             return result
             
