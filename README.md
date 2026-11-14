@@ -162,8 +162,9 @@ present and neither an object nor `null` (for example `"x"`, `0`, `""` or `[]`) 
 params (`-32602`); without an `id` it counts as blocking and gets `-32600`. A `message`
 that is not an object gets `-32602` too (with an `id`; without one, the same rules apply),
 and so do wrong types inside it: `parts` not an array, a part not an object, a text
-part's `text` not a string, a data part's `data` not an array, or a `messageId` or
-`taskId` that is not a string. An unknown method name is echoed in the
+part's `text` not a string, or a `messageId`, `taskId` or `contextId` that is not a
+string (a null `taskId` or `contextId` counts as unset). A data part's `data` may be any
+JSON value; only an array is read as conversation history. An unknown method name is echoed in the
 `-32601` reply cut to 100 characters, and client method names, message or task ids, PR
 URLs and the owner and repo taken from them are logged escaped and capped the same way. `"id": null` is not a
 notification and gets a reply. `/a2a/tasks` follows the same rule. A success response
