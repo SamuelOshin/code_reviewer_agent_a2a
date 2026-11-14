@@ -105,7 +105,7 @@ async def handle_analyze_pr(pr_url: str, focus_areas: list = None) -> dict[str, 
     
     Analyzes a GitHub Pull Request
     """
-    logger.info(f"RPC: analyze_pr called for {pr_url}")
+    logger.info(f"RPC: analyze_pr called for {pr_url!r:.200}")
     
     # Get services from app state
     analyzer: CodeAnalyzerService = app.state.code_analyzer

@@ -203,7 +203,7 @@ class MessageHandler:
             # URLs may receive review results. Raises PushUrlRejected, which the
             # JSON-RPC layer returns as Invalid params.
             await validate_push_url(push_config.get("url") if isinstance(push_config, dict) else None)
-            logger.info(f"Non-blocking mode: analyzing {pr_url} in background, result will be pushed to webhook")
+            logger.info(f"Non-blocking mode: analyzing {pr_url!r:.200} in background, result will be pushed to webhook")
             
             # Create task ID upfront
             message_id = message.get("messageId", str(uuid.uuid4()))
@@ -247,7 +247,7 @@ class MessageHandler:
             return result
         
         # BLOCKING MODE: no push config, or blocking requested. Return the finished task.
-        logger.info(f"Blocking mode: analyzing {pr_url} and returning the completed task")
+        logger.info(f"Blocking mode: analyzing {pr_url!r:.200} and returning the completed task")
         # Bounded (P1-15): a hung model or GitHub call must not hold the request open
         # forever. Cancelling stops the review; the caller can retry or use non-blocking.
         limit = settings.A2A_BLOCKING_TIMEOUT_SECONDS
@@ -272,14 +272,14 @@ class MessageHandler:
         push_config: dict[str, Any]
     ):
         """Wrapper for _process_and_push with comprehensive error handling"""
-        logger.info(f"🚀 _process_and_push_safe STARTED for PR: {pr_url}")
+        logger.info(f"🚀 _process_and_push_safe STARTED for PR: {pr_url!r:.200}")
         try:
-            logger.info(f"Background task started for PR: {pr_url}")
+            logger.info(f"Background task started for PR: {pr_url!r:.200}")
             logger.info(f"Task details - ID: {task_id!r:.100}, Message: {message_id!r:.100}")
             logger.info(f"Push config available: {bool(push_config)}")
             
             await self._process_and_push(pr_url, task_id, message_id, message, push_config)
-            logger.info(f"Background task completed successfully for PR: {pr_url}")
+            logger.info(f"Background task completed successfully for PR: {pr_url!r:.200}")
         except Exception as e:
             error_id = new_error_id()
             logger.error(
@@ -517,7 +517,7 @@ class MessageHandler:
     ) -> dict[str, Any]:
         """Analyze PR and return result dict"""
         try:
-            logger.info(f"Analyzing PR: {pr_url}")
+            logger.info(f"Analyzing PR: {pr_url!r:.200}")
             logger.info("About to call analyzer.analyze_pr...")
             
             analysis_result = await self.analyzer.analyze_pr(pr_url)
@@ -593,7 +593,7 @@ class MessageHandler:
             
         except Exception as e:
             error_id = new_error_id()
-            logger.error(f"Error analyzing PR {pr_url} [error_id={error_id}]: {type(e).__name__}")
+            logger.error(f"Error analyzing PR {pr_url!r:.200} [error_id={error_id}]: {type(e).__name__}")
 
             # Fixed text per category, chosen by type and HTTP status only (P1-21). The
             # exception text stays in the logs. An uncategorised error keeps the short text.
@@ -772,7 +772,7 @@ class MessageHandler:
                 match = re.search(pattern, interpreted_text, re.IGNORECASE)
                 if match:
                     url = normalize(match.group(0))
-                    logger.info(f"Found PR URL in interpreted text: {url}")
+                    logger.info(f"Found PR URL in interpreted text: {url!r:.200}")
                     return url
 
         # Then check conversation history (most recent first)
@@ -783,7 +783,7 @@ class MessageHandler:
                     match = re.search(pattern, text, re.IGNORECASE)
                     if match:
                         url = normalize(match.group(0))
-                        logger.info(f"Found PR URL in conversation history: {url}")
+                        logger.info(f"Found PR URL in conversation history: {url!r:.200}")
                         return url
         
         return None

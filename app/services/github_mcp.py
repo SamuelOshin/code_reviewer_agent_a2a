@@ -23,6 +23,11 @@ from app.core.exceptions import GitHubMCPError
 from app.models.github import PullRequest, PullRequestDiff, PullRequestFile
 
 logger = logging.getLogger(__name__)
+def _pr_ref(owner: object, repo: object) -> str:
+    """owner/repo for a log line: escaped and capped, since both come from a
+    client-supplied URL and may hold newlines or be very long (P1-27)."""
+    return repr(f"{owner}/{repo}")[:200]
+
 
 # Socket timeout, retry budget and rate-limit wait cap for PyGithub (P1-18). An executor
 # thread cannot be killed, so when a review times out the call already running keeps
@@ -194,12 +199,12 @@ class GitHubMCPService:
             repository = await self._run_sync(self._client.get_repo, f"{owner}/{repo}")
             issue = await self._run_sync(repository.get_issue, pr_number)
             await self._run_sync(issue.create_comment, body)
-            logger.info(f"Posted comment on {owner}/{repo}#{pr_number}")
+            logger.info(f"Posted comment on {_pr_ref(owner, repo)}#{pr_number}")
         except GithubException as e:
-            logger.error(f"Failed to post comment on {owner}/{repo}#{pr_number}: status={e.status}")
+            logger.error(f"Failed to post comment on {_pr_ref(owner, repo)}#{pr_number}: status={e.status}")
             raise GitHubMCPError(f"Failed to post PR comment (status {e.status})") from None
         except Exception as e:
-            logger.error(f"Failed to post comment on {owner}/{repo}#{pr_number}: {type(e).__name__}")
+            logger.error(f"Failed to post comment on {_pr_ref(owner, repo)}#{pr_number}: {type(e).__name__}")
             raise GitHubMCPError(f"Failed to post PR comment: {type(e).__name__}") from None
 
     async def get_pull_request(
@@ -226,7 +231,7 @@ class GitHubMCPService:
             raise GitHubMCPError("GitHub client not initialized. Use context manager.")
         
         try:
-            logger.info(f"Fetching PR {owner}/{repo}#{pr_number}")
+            logger.info(f"Fetching PR {_pr_ref(owner, repo)}#{pr_number}")
             
             # Run blocking GitHub API calls in thread pool
             repository = await self._run_sync(self._client.get_repo, f"{owner}/{repo}")
@@ -284,11 +289,11 @@ class GitHubMCPService:
             return PullRequest(**pr_data)
         except GithubException as e:
             # Status only: str(e) carries the GitHub response body (P1-17)
-            logger.error(f"Failed to fetch PR {owner}/{repo}#{pr_number}: status={e.status}")
+            logger.error(f"Failed to fetch PR {_pr_ref(owner, repo)}#{pr_number}: status={e.status}")
             raise GitHubMCPError(f"Failed to fetch PR (status {e.status})") from None
         except Exception as e:
             error_id = new_error_id()
-            logger.error(f"Failed to fetch PR {owner}/{repo}#{pr_number} [error_id={error_id}]: {type(e).__name__}")
+            logger.error(f"Failed to fetch PR {_pr_ref(owner, repo)}#{pr_number} [error_id={error_id}]: {type(e).__name__}")
             raise GitHubMCPError(f"Failed to fetch PR (error id: {error_id})") from None
     
     async def get_pr_diff(
@@ -312,7 +317,7 @@ class GitHubMCPService:
             raise GitHubMCPError("GitHub client not initialized. Use context manager.")
         
         try:
-            logger.info(f"Fetching diff for PR {owner}/{repo}#{pr_number}")
+            logger.info(f"Fetching diff for PR {_pr_ref(owner, repo)}#{pr_number}")
             
             # Run blocking calls in thread pool
             repository = await self._run_sync(self._client.get_repo, f"{owner}/{repo}")
@@ -331,7 +336,7 @@ class GitHubMCPService:
                     diff_parts.append(file.patch)
             
             diff = "\n".join(diff_parts)
-            logger.info(f"Fetched diff ({len(diff)} chars) for PR {owner}/{repo}#{pr_number}")
+            logger.info(f"Fetched diff ({len(diff)} chars) for PR {_pr_ref(owner, repo)}#{pr_number}")
             return diff
         except GithubException as e:
             # Status only: str(e) carries the GitHub response body (P1-17)
@@ -363,7 +368,7 @@ class GitHubMCPService:
             raise GitHubMCPError("GitHub client not initialized. Use context manager.")
         
         try:
-            logger.info(f"Fetching files for PR {owner}/{repo}#{pr_number}")
+            logger.info(f"Fetching files for PR {_pr_ref(owner, repo)}#{pr_number}")
             
             # Run blocking calls in thread pool
             repository = await self._run_sync(self._client.get_repo, f"{owner}/{repo}")
@@ -382,7 +387,7 @@ class GitHubMCPService:
                     patch=file.patch or ""
                 ))
             
-            logger.info(f"Fetched {len(pr_files)} files for PR {owner}/{repo}#{pr_number}")
+            logger.info(f"Fetched {len(pr_files)} files for PR {_pr_ref(owner, repo)}#{pr_number}")
             return pr_files
         except GithubException as e:
             # Status only: str(e) carries the GitHub response body (P1-17)
@@ -414,7 +419,7 @@ class GitHubMCPService:
             raise GitHubMCPError("GitHub client not initialized. Use context manager.")
         
         try:
-            logger.info(f"Fetching reviews for PR {owner}/{repo}#{pr_number}")
+            logger.info(f"Fetching reviews for PR {_pr_ref(owner, repo)}#{pr_number}")
             repository = self._client.get_repo(f"{owner}/{repo}")
             pr = repository.get_pull(pr_number)
             
@@ -428,7 +433,7 @@ class GitHubMCPService:
                     "submitted_at": review.submitted_at.isoformat() if review.submitted_at else None
                 })
             
-            logger.info(f"Fetched {len(reviews)} reviews for PR {owner}/{repo}#{pr_number}")
+            logger.info(f"Fetched {len(reviews)} reviews for PR {_pr_ref(owner, repo)}#{pr_number}")
             return reviews
         except GithubException as e:
             logger.warning(f"Failed to fetch PR reviews: status={e.status}")
@@ -460,7 +465,7 @@ class GitHubMCPService:
             raise GitHubMCPError("GitHub client not initialized. Use context manager.")
         
         try:
-            logger.debug(f"Fetching file content: {owner}/{repo}/{path} (ref={ref})")
+            logger.debug(f"Fetching file content: {_pr_ref(owner, repo)} {path!r:.200} (ref={ref!r:.100})")
             repository = self._client.get_repo(f"{owner}/{repo}")
             
             # Get file contents with optional ref
