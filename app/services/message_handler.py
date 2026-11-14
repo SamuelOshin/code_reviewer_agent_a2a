@@ -108,6 +108,26 @@ def _user_message(category: str, error_id: str) -> str:
     )
 
 
+def _check_message_shape(message_id: Any, task_id: Any, context_id: Any, parts: Any) -> None:
+    """Reject message fields of the wrong type before they are used (P2-10).
+
+    Fixed messages only: they go back to the caller, so never echo the values.
+    """
+    if not isinstance(message_id, str) or not isinstance(task_id, str):
+        raise ClientInputError("messageId and taskId must be strings")
+    # Checked before any review runs: a bad contextId used to fail only when the task
+    # was built, after the review (P2-10 review)
+    if context_id is not None and not isinstance(context_id, str):
+        raise ClientInputError("contextId must be a string")
+    if not isinstance(parts, list):
+        raise ClientInputError("message.parts must be an array")
+    for part in parts[:2]:
+        if not isinstance(part, dict):
+            raise ClientInputError("each message part must be an object")
+    if parts and parts[0].get("kind") == "text" and not isinstance(parts[0].get("text", ""), str):
+        raise ClientInputError("a text part's text must be a string")
+
+
 class MessageHandler:
     """Handles incoming A2A messages via message/send"""
     
@@ -164,18 +184,28 @@ class MessageHandler:
         
         # Parse message
         message_id = message.get("messageId", str(uuid.uuid4()))
-        task_id = message.get("taskId", str(uuid.uuid4()))
+        # taskId and contextId are optional in A2A; a null from a serializer means unset
+        task_id = message.get("taskId")
+        if task_id is None:
+            task_id = str(uuid.uuid4())
+        if message.get("contextId") is None:
+            message.pop("contextId", None)
         parts = message.get("parts", [])
-        
+        # P2-10: wrong shapes are the caller's mistake, so Invalid params (-32602), not
+        # an internal error from calling .get or .strip on the wrong type
+        _check_message_shape(message_id, task_id, message.get("contextId"), parts)
+
         # Extract interpreted text from parts[0]
         interpreted_text = None
         if len(parts) > 0 and parts[0].get("kind") == "text":
             interpreted_text = parts[0].get("text", "").strip()
-        
+
         # Extract conversation history from parts[1]
         conversation_history = []
         if len(parts) > 1 and parts[1].get("kind") == "data":
-            conversation_history = parts[1].get("data", [])
+            # A2A allows any JSON value in a data part; only an array is a history
+            data = parts[1].get("data", [])
+            conversation_history = data if isinstance(data, list) else []
         
         logger.info(f"Interpreted text length: {len(interpreted_text or '')} chars")
         logger.info(f"Conversation history length: {len(conversation_history)}")
