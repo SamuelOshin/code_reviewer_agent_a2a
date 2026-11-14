@@ -234,6 +234,12 @@ async def handle_github_webhook(
             logger.warning("Rejected webhook with a malformed X-GitHub-Delivery header")
             raise HTTPException(status_code=400, detail="Invalid X-GitHub-Delivery header")
         
+        # GitHub always sends the event header; without it we can't route the event
+        # (P2-10). Checked after the signature, like the delivery id.
+        if not x_github_event:
+            logger.warning("Rejected webhook without an X-GitHub-Event header")
+            raise HTTPException(status_code=400, detail="Missing X-GitHub-Event header")
+
         # Handle different event types
         if x_github_event == "pull_request":
             # Claim only after the signature passed, so a forged request cannot use
@@ -294,10 +300,18 @@ async def handle_pull_request_event(
     Returns:
         JSON response
     """
+    # GitHub always sends objects here; anything else is a bad request, not a 500
+    # that leaves the replay keys claimed (P2-10 review)
+    if not isinstance(payload, dict) or not isinstance(payload.get("pull_request", {}), dict):
+        raise HTTPException(status_code=400, detail="Invalid pull_request payload")
     action = payload.get("action")
     pull_request = payload.get("pull_request", {})
     
-    logger.info(f"Received pull_request event: action={action}, pr_number={pull_request.get('number')}")
+    # Signed body, so low risk, but escaped and capped like every other client value (P2-10)
+    logger.info(
+        f"Received pull_request event: action={action!r:.100}, "
+        f"pr_number={pull_request.get('number')!r:.30}"
+    )
     
     # Only analyze on specific actions
     trigger_actions = ["opened", "synchronize", "reopened"]
@@ -305,7 +319,7 @@ async def handle_pull_request_event(
     if action not in trigger_actions:
         return JSONResponse({
             "status": "ignored",
-            "message": f"Action '{action}' does not trigger analysis"
+            "message": f"Action {action!r:.100} does not trigger analysis"
         })
     
     # Extract PR URL
@@ -315,6 +329,11 @@ async def handle_pull_request_event(
     if not pr_url:
         logger.error("No PR URL in webhook payload")
         raise HTTPException(status_code=400, detail="Missing PR URL in payload")
+    # The number goes into several logs and the reply below, so require a plain int
+    # rather than escaping it in each place (P2-10 review)
+    if not isinstance(pr_number, int) or isinstance(pr_number, bool):
+        logger.error("Webhook payload has a non-integer PR number")
+        raise HTTPException(status_code=400, detail="Invalid PR number in payload")
     
     # Queue analysis as background task. The signature was verified above, so the
     # event really came from GitHub and the summary can be posted back.
