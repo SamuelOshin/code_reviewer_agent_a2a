@@ -58,6 +58,19 @@ def _echo_id(raw_id: Any) -> str | int | None:
     return None
 
 
+def _is_notification(request_data: Any) -> bool:
+    """A request object with no "id" member is a notification (P1-23). "id": null is a
+    request that wants a reply (with id null); only a missing key means no reply."""
+    return isinstance(request_data, dict) and "id" not in request_data
+
+
+def _is_invalid_request(response: dict[str, Any]) -> bool:
+    # Only the validation step produces -32600 in handle_request, so this tells an
+    # unreadable request (always answered, id null) from a valid notification
+    error = response.get("error")
+    return isinstance(error, dict) and error.get("code") == JSONRPCErrorCode.INVALID_REQUEST
+
+
 class JSONRPCHandler:
     """JSON-RPC 2.0 request handler with method registration"""
     
@@ -111,16 +124,24 @@ class JSONRPCHandler:
         """
         return list(self._methods.keys())
     
-    async def handle_request(self, request_data: dict[str, Any]) -> dict[str, Any]:
+    async def handle_request(self, request_data: dict[str, Any]) -> dict[str, Any] | None:
         """
         Handle a JSON-RPC request
-        
+
         Args:
             request_data: Raw request dictionary
-            
+
         Returns:
-            JSON-RPC response dictionary
+            JSON-RPC response dictionary, or None for a notification (a valid request
+            with no "id" member): the method still runs but the server must not reply,
+            not even with an error (P1-23). An invalid request is always answered.
         """
+        response = await self._handle_request(request_data)
+        if _is_notification(request_data) and not _is_invalid_request(response):
+            return None
+        return response
+
+    async def _handle_request(self, request_data: dict[str, Any]) -> dict[str, Any]:
         try:
             # Parse request
             try:
@@ -236,12 +257,13 @@ class JSONRPCHandler:
     async def handle_batch(self, batch_data: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """
         Handle a batch of JSON-RPC requests
-        
+
         Args:
             batch_data: List of request dictionaries
-            
+
         Returns:
-            List of response dictionaries
+            List of response dictionaries, in request order, without the entries for
+            notifications (P1-23). Empty when every call was a notification.
         """
         logger.info(f"Handling batch of {len(batch_data)} JSON-RPC requests")
         
@@ -255,7 +277,7 @@ class JSONRPCHandler:
         # returns at once, and queuing ordinary requests behind batches would add
         # latency for clients that never batch. A process-wide cap on model calls
         # would be a separate feature.
-        async def run_one(request_data: dict[str, Any]) -> dict[str, Any]:
+        async def run_one(request_data: dict[str, Any]) -> dict[str, Any] | None:
             limit = settings.A2A_BLOCKING_TIMEOUT_SECONDS
             try:
                 await asyncio.wait_for(semaphore.acquire(), timeout=limit)
@@ -265,6 +287,8 @@ class JSONRPCHandler:
                 # a valid JSON-RPC id is echoed; a malformed one (object, list, bool,
                 # non-integral float) must not fail the whole batch (P1-21 review).
                 # An integral float (1.0) is echoed as 1, like the normal path (P1-22).
+                if _is_notification(request_data):
+                    return None  # a notification gets no reply, not even this one (P1-23)
                 raw_id = request_data.get("id") if isinstance(request_data, dict) else None
                 return self._error_response(
                     request_id=_echo_id(raw_id),
@@ -282,7 +306,8 @@ class JSONRPCHandler:
         # gather returns results in input order, so responses match request order.
         # handle_request never raises, and the slot-timeout response above only echoes a
         # valid id, so one failing call cannot fail or cancel the others.
-        return list(await asyncio.gather(*(run_one(r) for r in batch_data)))
+        results = await asyncio.gather(*(run_one(r) for r in batch_data))
+        return [r for r in results if r is not None]
     
     def _success_response(
         self,
@@ -309,7 +334,12 @@ class JSONRPCHandler:
         )
         
         # Serialize the complete JSON-RPC response
-        return self._with_id(response.model_dump(mode="json", exclude_none=True), request_id)
+        out = self._with_id(response.model_dump(mode="json", exclude_none=True), request_id)
+        # exclude_none drops a None result, but a success response must carry "result"
+        # (null allowed) and never "error" (P1-23)
+        out.setdefault("result", None)
+        out.pop("error", None)
+        return out
     
     def _error_response(
         self,
@@ -341,12 +371,14 @@ class JSONRPCHandler:
             error=error
         )
         
-        return self._with_id(response.model_dump(mode="json", exclude_none=True), request_id)
+        out = self._with_id(response.model_dump(mode="json", exclude_none=True), request_id)
+        out.pop("result", None)  # an error response never carries "result" (P1-23)
+        return out
 
     @staticmethod
     def _with_id(response: dict[str, Any], request_id: Any) -> dict[str, Any]:
         """exclude_none drops a null id, but JSON-RPC 2.0 wants "id": null when the
-        request id could not be read (P1-22). result/error stay absent when unset."""
+        request id could not be read (P1-22)."""
         response["id"] = request_id
         return response
 

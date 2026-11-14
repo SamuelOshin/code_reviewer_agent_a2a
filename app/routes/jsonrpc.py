@@ -9,7 +9,7 @@ Methods are registered in app/main.py during startup.
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from app.core.auth import require_api_key
 from app.core.config import settings
@@ -94,11 +94,17 @@ async def jsonrpc_endpoint(request: Request):
                 )
             logger.info(f"Processing JSON-RPC batch request with {len(body)} calls")
             responses = await rpc_handler.handle_batch(body)
+            if not responses:
+                # Every call was a notification: the server must return nothing (P1-23)
+                return Response(status_code=204)
             return JSONResponse(content=responses)
         
         # Handle single request
         logger.info(f"Processing JSON-RPC request: {body.get('method')}")
         response = await rpc_handler.handle_request(body)
+        if response is None:
+            # A notification (no "id"): the method ran, and there is no reply (P1-23)
+            return Response(status_code=204)
         return JSONResponse(content=response)
     
     except HTTPException:

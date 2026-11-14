@@ -12,7 +12,7 @@ import uuid
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from app.core.auth import require_api_key
 from app.core.errors import new_error_id
@@ -82,4 +82,7 @@ async def handle_a2a_task(request: Request):
         raise HTTPException(status_code=500, detail="RPC handler not configured")
 
     result = await rpc_handler.handle_request(jsonrpc_request)
+    if result is None:
+        # A JSON-RPC message/send with no "id" is a notification: no reply (P1-23)
+        return Response(status_code=204)
     return JSONResponse(content=result)
