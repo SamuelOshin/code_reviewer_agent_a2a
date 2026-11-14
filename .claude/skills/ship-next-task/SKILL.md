@@ -100,7 +100,9 @@ A `/goal` evaluator only reads the transcript.
      - point "Resume here" at the next task;
      - add a newest-first session log entry: what was done, the review outcome, what
        was not verified;
-     - add a new `todo` row for the review follow-ups.
+     - triage the review follow-ups by the convergence rule below;
+     - record the review's findings count by severity in the session log entry, e.g.
+       `findings: 0 blocking, 1 should-fix, 3 follow-up`.
    - Run ruff, the full suite and the CI-style audit. Then commit the tracker.
 
 7. **Open the PR.**
@@ -128,3 +130,29 @@ A `/goal` evaluator only reads the transcript.
 
 10. **Next.** If this runs under a `/goal`, go back to step 1 for the next task. Print
     `DONE: no shippable todo tasks left in <phase>` when only owner items remain.
+
+## Convergence rule
+
+Each review spins off follow-ups. If every follow-up becomes the next task, the loop
+never ends. Triage them when you update the tracker:
+
+- **Next task in the current phase:** only follow-ups that the reviewer would rank
+  should-fix or worse. These are a wrong result, a security or data-safety gap, a
+  README claim the code breaks, or a crash on reachable input. Put them in one new
+  `todo` row.
+- **Backlog, not a new current-phase task:** nits, optional items, refactors with no
+  behaviour change, missing tests for already-correct code, and anything the reviewer
+  marked low priority or pre-existing and harmless. Append them to a single backlog row
+  in the next phase (create it once, then keep adding to it), and name the source task.
+- **No qualifying follow-ups:** add no new row. Print
+  `CONVERGED: <task id> - follow-ups moved to <backlog row>`.
+
+Stop the loop when:
+
+- a task's review finds no blocking or should-fix items (print `CONVERGED:` and then
+  `DONE:`), or
+- the last 2 tasks each produced only backlog follow-ups, or
+- the goal's task or turn budget is reached (print `STOPPED: budget`).
+
+When unsure whether a follow-up qualifies, put it in the backlog and say so in the
+session log. The owner can promote it.
