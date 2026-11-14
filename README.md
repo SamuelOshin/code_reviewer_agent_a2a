@@ -148,12 +148,15 @@ requests are not queued behind this limit. Every response carries `"id"`, `null`
 read: a string or integer is echoed, an integral float such as `1.0` as `1`, and a `true`
 or `false` id is an Invalid Request (`-32600`) with `"id": null`. A request with no `id`
 member at all is a JSON-RPC notification: the method runs, but the server sends no
-reply (HTTP 204, no body), not even for an error such as an unknown method. In a batch, a
-notification that gets no slot within the timeout is dropped without running, and
-nothing is sent back for it. In a batch,
-notifications are left out of the response array, and a batch of only notifications gets
-204. A request that cannot be read as a request (no method, wrong version, not an object)
-is always answered with an Invalid Request and `"id": null`. `"id": null` is not a
+reply (HTTP 204, no body), not even for an error such as an unknown method. In a batch,
+notifications are left out of the response array, a batch of only notifications gets 204,
+and a notification that gets no slot within the timeout is dropped without running. A
+call whose result only comes back in the reply can't be a notification: `analyze_pr` and
+a blocking `message/send` (anything but `"blocking": false` with a
+`pushNotificationConfig`) without an `id` get an Invalid Request (`-32600`, `"id": null`)
+before any review runs. A request that cannot be read as a request (no `"jsonrpc": "2.0"`,
+no method, not an object, or a body such as `42` or `"x"`) is always answered with an
+Invalid Request and `"id": null` (or its id, if readable). `"id": null` is not a
 notification and gets a reply. `/a2a/tasks` follows the same rule. A success response
 always has `result` (`null` when the method returned nothing) and no `error`; an error
 response has `error` and no `result`. If the push to your webhook answers 413 or 429,
