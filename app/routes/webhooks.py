@@ -265,10 +265,10 @@ async def handle_github_webhook(
             })
         
         else:
-            logger.info(f"Ignoring event type: {x_github_event}")
+            logger.info(f"Ignoring event type: {x_github_event!r:.100}")
             return JSONResponse({
                 "status": "ignored",
-                "message": f"Event type '{x_github_event}' not handled"
+                "message": f"Event type {x_github_event!r:.100} not handled"
             })
     
     except HTTPException:
