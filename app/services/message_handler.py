@@ -16,7 +16,7 @@ from typing import Any
 import httpx
 
 from app.core.config import settings
-from app.core.errors import RequestTimeoutError, new_error_id, safe_webhook_target
+from app.core.errors import ClientInputError, RequestTimeoutError, new_error_id, safe_webhook_target
 from app.core.exceptions import GitHubMCPError
 from app.core.push_url import validate_push_url
 from app.llm.errors import LLMRateLimitError
@@ -145,6 +145,10 @@ class MessageHandler:
         Returns:
             A2A Task response
         """
+        # P1-25: a non-object configuration is the caller's mistake: Invalid params,
+        # not an internal error from calling .get on a string or list
+        if configuration is not None and not isinstance(configuration, dict):
+            raise ClientInputError("configuration must be an object")
         logger.info(f"Handling message/send: {message.get('messageId')}")
         if configuration:
             # Never log the configuration itself: pushNotificationConfig carries a bearer token
