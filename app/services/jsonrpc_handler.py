@@ -58,6 +58,11 @@ def _echo_id(raw_id: Any) -> str | int | None:
     return None
 
 
+def _cap(text: str, limit: int = 100) -> str:
+    """Client text echoed in a reply, cut to `limit` characters (P1-26)."""
+    return text if len(text) <= limit else text[:limit] + "..."
+
+
 def _is_notification(request_data: Any) -> bool:
     """A request object with no "id" member is a notification (P1-23). "id": null is a
     request that wants a reply (with id null); only a missing key means no reply."""
@@ -91,7 +96,8 @@ class JSONRPCHandler:
             handler: Async function to handle the method
             reply_required: Given the params, whether the call only makes sense with a
                 reply. If true, a notification (no "id") is rejected with -32600 before
-                the method runs (P1-24).
+                the method runs (P1-24). It should be a pure function of the params:
+                it runs once per call, before any batch slot wait (P1-26).
             reply_hint: Optional advice appended to that error, e.g. how to get the
                 result without a reply. Only give advice that applies to this method.
             
@@ -138,7 +144,11 @@ class JSONRPCHandler:
         """
         return list(self._methods.keys())
     
-    async def handle_request(self, request_data: Any) -> dict[str, Any] | None:
+    async def handle_request(
+        self,
+        request_data: Any,
+        _prechecked: tuple[JSONRPCRequest | None, dict[str, Any] | None] | None = None,
+    ) -> dict[str, Any] | None:
         """
         Handle a JSON-RPC request
 
@@ -150,7 +160,7 @@ class JSONRPCHandler:
             with no "id" member): the method still runs but the server must not reply,
             not even with an error (P1-23). An invalid request is always answered.
         """
-        response, always_answer = await self._handle_request(request_data)
+        response, always_answer = await self._handle_request(request_data, _prechecked)
         if _is_notification(request_data) and not always_answer:
             return None
         return response
@@ -201,7 +211,11 @@ class JSONRPCHandler:
             )
         return request, None
 
-    async def _handle_request(self, request_data: Any) -> tuple[dict[str, Any], bool]:
+    async def _handle_request(
+        self,
+        request_data: Any,
+        prechecked: tuple[JSONRPCRequest | None, dict[str, Any] | None] | None = None,
+    ) -> tuple[dict[str, Any], bool]:
         """The response, and whether it must be sent even for a notification.
 
         P1-24: an explicit flag, set only where the request itself was rejected (not
@@ -209,7 +223,11 @@ class JSONRPCHandler:
         the error code, which a method error could also use.
         """
         try:
-            request, rejection = self._precheck(request_data)
+            # A batch call was already pre-checked before its slot wait; reuse that
+            # result so validation and reply_required run once per call (P1-26)
+            request, rejection = (
+                prechecked if prechecked is not None else self._precheck(request_data)
+            )
             if rejection is not None:
                 return rejection, True
 
@@ -222,7 +240,8 @@ class JSONRPCHandler:
                 return self._error_response(
                     request_id=request.id,
                     code=JSONRPCErrorCode.METHOD_NOT_FOUND,
-                    message=f"Method not found: {request.method}",
+                    # Capped: the name is client text and the reply should not grow with it (P1-26)
+                    message=f"Method not found: {_cap(request.method)}",
                     data={"available_methods": self.list_methods()}
                 ), False
 
@@ -337,11 +356,11 @@ class JSONRPCHandler:
             # P1-25: a call that would be rejected is answered before it waits for a
             # slot, so a busy batch can't drop it silently; it costs no slot either
             try:
-                _, rejection = self._precheck(request_data)
+                prechecked = self._precheck(request_data)
             except Exception:
-                rejection = None  # let handle_request's safety net deal with it
-            if rejection is not None:
-                return rejection
+                prechecked = None  # let handle_request's safety net deal with it
+            if prechecked is not None and prechecked[1] is not None:
+                return prechecked[1]
             limit = settings.A2A_BLOCKING_TIMEOUT_SECONDS
             try:
                 await asyncio.wait_for(semaphore.acquire(), timeout=limit)
@@ -363,7 +382,7 @@ class JSONRPCHandler:
                     ),
                 )
             try:
-                return await self.handle_request(request_data)
+                return await self.handle_request(request_data, prechecked)
             finally:
                 semaphore.release()
 
