@@ -197,7 +197,7 @@ In the repository's Settings, Webhooks: payload URL `https://<your-host>/webhook
 content type `application/json`, the secret equal to `GITHUB_WEBHOOK_SECRET`, event
 "Pull requests". Requests without a valid `X-Hub-Signature-256` are rejected, and a
 malformed `X-GitHub-Delivery` header (not 1 to 64 of letters, digits, `.`, `_`, `-`) gets
-400. A delivery is ignored if its delivery id or the SHA-256 of its signed body was seen
+400, as does a signed request with no `X-GitHub-Event` header. A delivery is ignored if its delivery id or the SHA-256 of its signed body was seen
 in the last hour (in memory, per process, bounded in size), so GitHub redeliveries and a
 captured body resent with a new id do not post twice. If no comment was posted (the
 analysis raised, or the comment could not be posted), the id and body are forgotten, so a
