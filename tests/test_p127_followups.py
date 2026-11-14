@@ -20,7 +20,7 @@ def _no_raw(lines, marker):
 
 def test_analyze_pr_logs_a_forged_url_escaped(caplog, monkeypatch):
     # A stub analyzer, so a real one left on app.state by another test can't call
-    # GitHub from here (Bobby Review)
+    # GitHub from here (P1-27)
     from app.main import app
 
     class StubAnalyzer:
