@@ -102,7 +102,7 @@ class TestRetryAfterFailure:
     @pytest.mark.parametrize("status", [AnalysisStatus.FAILED, AnalysisStatus.INCOMPLETE])
     def test_posted_fail_closed_result_stays_claimed(self, client, webhook_secret, analyzer, github, status):  # noqa: F811
         # The fail-closed comment is on the PR; a replay with the same or a fresh id
-        # must not re-run the model or post again (Bobby Review, P1-16)
+        # must not re-run the model or post again (P1-16 review)
         result = make_result()
         result.status = status
         analyzer.analyze_pr.return_value = result

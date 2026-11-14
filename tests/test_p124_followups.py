@@ -147,7 +147,7 @@ def test_non_object_body_is_an_invalid_request(client, body):
 
 @pytest.mark.parametrize("blocking", [False, 0, None, ""])
 def test_any_falsy_blocking_with_push_is_treated_as_a_push_like_the_handler(blocking):
-    # Bobby Review: the handler pushes on `not is_blocking and push_config`
+    # P1-24 review: the handler pushes on `not is_blocking and push_config`
     params = {"message": {}, "configuration": {"blocking": blocking, "pushNotificationConfig": {"url": "x"}}}
     assert message_send_needs_reply(params) is False
 

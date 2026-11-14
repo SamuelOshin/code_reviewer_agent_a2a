@@ -57,7 +57,7 @@ def test_extractor_rejects_lookalike_hosts_and_huge_numbers(text):
         ("github.com/o/r/pull/1", "https://github.com/o/r/pull/1"),
         ("review //github.com/o/r/pull/1", "https://github.com/o/r/pull/1"),
         ("https://github.com/o/r/pull/7/files", "https://github.com/o/r/pull/7"),
-        # Chat formats main accepted (Bobby Review): backticks, bold, "PR:", quote
+        # Chat formats main accepted (P1-20 review): backticks, bold, "PR:", quote
         ("`github.com/o/r/pull/1`", "https://github.com/o/r/pull/1"),
         ("*github.com/o/r/pull/1*", "https://github.com/o/r/pull/1"),
         ("PR:github.com/o/r/pull/1", "https://github.com/o/r/pull/1"),
