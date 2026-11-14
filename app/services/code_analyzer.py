@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from typing import Any, TypeVar
 
 from app.core.config import settings
-from app.core.errors import new_error_id
+from app.core.errors import new_error_id, pr_ref
 from app.core.exceptions import AnalysisError, GitHubMCPError, LLMError
 from app.llm.errors import LLMRateLimitError
 from app.models.analysis import (
@@ -39,11 +39,6 @@ from app.utils.performance_rules import PerformanceChecker
 from app.utils.security_rules import SecurityChecker
 
 logger = logging.getLogger(__name__)
-def _pr_ref(owner: object, repo: object) -> str:
-    """owner/repo for a log line: escaped and capped, since both come from a
-    client-supplied URL and may hold newlines or be very long (P1-27)."""
-    return repr(f"{owner}/{repo}")[:200]
-
 
 IssueT = TypeVar("IssueT")
 
@@ -332,7 +327,7 @@ class CodeAnalyzerService:
                 logger.info("GitHubMCPService initialized, parsing PR URL...")
                 # Parse PR URL to extract owner, repo, and PR number
                 owner, repo, pr_number = github_service.parse_pr_url(pr_url)
-                logger.info(f"Parsed URL: {_pr_ref(owner, repo)}#{pr_number}")
+                logger.info(f"Parsed URL: {pr_ref(owner, repo)}#{pr_number}")
                 
                 # Fetch PR and diff data
                 logger.info("Fetching PR and diff data...")
