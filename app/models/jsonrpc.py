@@ -7,7 +7,9 @@ from pydantic import BaseModel, field_validator
 
 class JSONRPCRequest(BaseModel):
     """JSON-RPC 2.0 Request"""
-    jsonrpc: Literal["2.0"] = "2.0"
+    # Required, no default: a body without "jsonrpc": "2.0" is not a JSON-RPC request,
+    # so it must not be accepted (and silently treated as a notification) (P1-24)
+    jsonrpc: Literal["2.0"]
     method: str
     params: dict[str, Any] | None = None
     id: str | int | None = None
