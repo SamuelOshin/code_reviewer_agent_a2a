@@ -13,9 +13,9 @@ read this file alone and continue the work.
 | | |
 |---|---|
 | **Current phase** | Phase 1: make it honest and working (planning complete) |
-| **Active task** | None. Done: `P1-01` to `P1-04`, `P1-06` to `P1-22`. Open: `P1-05` (needs one real review on two providers), `P1-23` |
-| **Next action** | Owner sets a random `API_KEY` and a random `GITHUB_WEBHOOK_SECRET` (both at least 32 characters) in `.env`, then runs one real review on two providers (closes `P1-05`). Owner picks a license (the old README claimed MIT; no LICENSE file exists). Then `P1-23` |
-| **Working branch** | `main`. Start each new task on its own branch from `main`. `P1-22` on `chore/p1-22` for one PR |
+| **Active task** | None. Done: `P1-01` to `P1-04`, `P1-06` to `P1-23`. Open: `P1-05` (needs one real review on two providers), `P1-24` |
+| **Next action** | Owner sets a random `API_KEY` and a random `GITHUB_WEBHOOK_SECRET` (both at least 32 characters) in `.env`, then runs one real review on two providers (closes `P1-05`). Owner picks a license (the old README claimed MIT; no LICENSE file exists). Then `P1-24` |
+| **Working branch** | `main`. Start each new task on its own branch from `main`. `P1-23` on `chore/p1-23` (PR #10) |
 | **Blockers** | None. Owner approved running repo code on 2026-11-12. Use `uv` for everything (`uv sync`, `uv run`). If an install fails on a Windows cache file lock, retry or set a different `UV_CACHE_DIR` |
 | **Working rule** | Parallel agents don't edit this file. The coordinating session records their results |
 
@@ -265,7 +265,8 @@ in CI, and the README is accurate.
 | P1-20 | done | Parsing and batching follow-ups from the same review: a PR number thousands of digits long raises `ValueError` instead of `GitHubMCPError` (use `[0-9]{1,10}`); the A2A PR URL extractor has no left boundary, so `evilgithub.com/o/r/pull/1` becomes a github.com URL, and it accepts `pull/12-x` where `parse_pr_url` rejects it; batch concurrency is 5 per batch, not per process (4 batches reached 20 calls at once); `_push_error` sorts errors by substrings of the message, so an error id containing `404` or `429` gets the wrong category | P1-18 | Tests for each case |
 | P1-21 | done | Follow-ups from the `P1-19` and `P1-20` review: `_push_error` categories almost never fire, because `_analyze_and_return` turns LLM and GitHub errors into a failed task, and a 429 from the client's own webhook is pushed back as "I've hit my API rate limit"; waiting for a batch slot has no limit and does not count against `A2A_BLOCKING_TIMEOUT_SECONDS`, and single requests are not limited at all; the A2A extractor accepts `http://`, `GitHub.com` and `HTTPS://GITHUB.COM`, which `parse_pr_url` then rejects (the last becomes `https://HTTPS://...`); `pull/0` is accepted; optionally pin google-auth's `google` logger to INFO like the others | P1-19, P1-20 | Tests: a webhook 429 gets its own message; a batch call waiting for a slot times out with `-32004`; the extractor and `parse_pr_url` agree on scheme and host case |
 | P1-22 | done | Follow-ups from the `P1-21` review: the A2A extractor matches `/PULL/` and `/Pull/` (IGNORECASE) and `parse_pr_url` then rejects them, so lowercase the path segment or match it case-sensitively; when a client webhook stores the result but answers 5xx or 3xx, the extra error post marks the same task `failed`, so send it only for 413 and 429 or mark it as a delivery failure; a model rate limit never gets the friendly message, because `CodeAnalyzerService` turns model errors into a failed step (decide whether a review whose steps all failed on rate limits should say so); JSON-RPC responses with no readable id leave out `id` instead of sending `"id": null` (the route already sends null); on a batch slot timeout an id of `1.0` loses its id while the normal path coerces it to `1` | P1-21 | Tests: `/PULL/1` is extracted and parsed (or rejected by both); a webhook 500 after storing the result does not mark the task failed; every error response carries `"id": null` when the id is unreadable |
-| P1-23 | todo | Follow-ups from the `P1-22` review: a JSON-RPC request without an id (a notification) still gets a response, now with `"id": null`, but JSON-RPC 2.0 says notifications get no reply; a method that returns `None` gets a response with neither `result` nor `error` (`exclude_none` drops `result: null`), which is not valid JSON-RPC; when a client webhook answers 5xx before storing anything, the client now gets nothing, so consider a delivery-failure state or a readable task (for example `tasks/get`); `code_analyzer.py` decides "every step was rate-limited" by counting exactly 3 reasons, so adding or removing a step silently breaks it (return a rate-limited flag from `_run_llm_step` instead) | P1-22 | Tests: a single notification and an all-notification batch get no response body; a method returning `None` gets `"result": null`; the rate-limit lead-in does not depend on a hard-coded step count |
+| P1-23 | done | Follow-ups from the `P1-22` review: a JSON-RPC request without an id (a notification) still gets a response, now with `"id": null`, but JSON-RPC 2.0 says notifications get no reply; a method that returns `None` gets a response with neither `result` nor `error` (`exclude_none` drops `result: null`), which is not valid JSON-RPC; when a client webhook answers 5xx before storing anything, the client now gets nothing, so consider a delivery-failure state or a readable task (for example `tasks/get`); `code_analyzer.py` decides "every step was rate-limited" by counting exactly 3 reasons, so adding or removing a step silently breaks it (return a rate-limited flag from `_run_llm_step` instead) | P1-22 | Tests: a single notification and an all-notification batch get no response body; a method returning `None` gets `"result": null`; the rate-limit lead-in does not depend on a hard-coded step count |
+| P1-24 | todo | Follow-ups from the `P1-23` review: an A2A client that sends a blocking JSON-RPC `message/send` with no `id` now pays for a full review and gets HTTP 204 (correct for a JSON-RPC notification, but costly), so reject an id-less blocking `message/send` with `-32600` or document it prominently; a body with no `jsonrpc` member is accepted as a notification because `JSONRPCRequest` defaults `jsonrpc` to "2.0", so make it required; the handler decides "answer a notification anyway" by checking for error code `-32600`, which breaks if a method error is ever mapped to that code, so return an explicit invalid-request flag from `_handle_request`; a top-level body that is not an object or an array (for example `42` or `"x"`) gets `-32603` instead of `-32600`. Item 3 of `P1-23` (a webhook 5xx before storing leaves the client with nothing) was settled by documenting the limit, since there is no task store; a `tasks/get` or delivery-failure state is an owner decision | P1-23 | Tests: an id-less blocking `message/send` gets `-32600` (or the README states the cost); `{"method": "x"}` without `jsonrpc` gets `-32600`; a method error mapped to `-32600` on a notification still gets no reply; a body of `42` gets `-32600` |
 | P1-14 | done | Repo hygiene: add `.gitattributes` to normalise line endings, ignore `.claude/worktrees/` and tool caches, replace deprecated `datetime.utcnow` everywhere in `app/`, and use PyGithub's `Auth.Token` | P1-03 | `git add --renormalize .` leaves a clean diff. No `utcnow` in `app/` |
 
 ### Phase 2: modernize the core
@@ -304,7 +305,7 @@ Keep this honest. It records what has actually been proven.
 
 | Check | State | Notes |
 |---|---|---|
-| Test suite | Passing 2026-11-13 | After merging `P1-22`: **779 passed, 0 xfail**. Coverage **90%**. LLM, GitHub and push calls are mocked; no real provider was called |
+| Test suite | Passing 2026-11-14 | After merging `P1-23`: **797 passed, 0 xfail**. Coverage **90%**. LLM, GitHub and push calls are mocked; no real provider was called |
 | App startup | Starts in-process | `/`, `/health` (`healthy`), `/ready` and the agent card return 200, with or without `SECRET_KEY`. Real LLM and GitHub calls not tested |
 | Docker | Passing 2026-11-12 | From `.env.example` copied to `.env`, `docker compose up --build` reached `healthy` (Docker 29.8). `/health` returned 200 from this app. The container runs as `appuser` with no Node.js. Tested on host port 8010, because another local service holds 8000 |
 | CI | Passing 2026-11-13 | Green on GitHub for PR #2 at `549f481` (ruff, pytest with coverage, `pip-audit`). GitGuardian also passed |
@@ -322,6 +323,27 @@ Keep this honest. It records what has actually been proven.
 ## 9. Session log
 
 Newest first. Keep entries short.
+
+### 2026-11-14: `P1-23` built, reviewed and fixed
+
+- **Done:** one Sonnet side session built it from `main`, under the owner's `/goal`. The
+  owner had it push and open the PR from that session (PR #10 on `chore/p1-23`; PR #9 on
+  the auto-named branch was closed). On `chore/p1-23`: 797 passed, 90% coverage, ruff
+  clean, the CI-style `pip-audit` of the locked packages clean.
+  - A JSON-RPC request with no `id` member is a notification: the method runs and the
+    server sends HTTP 204 with no body, even for a method error. An invalid request is
+    always answered with `-32600` and `"id": null`; `"id": null` is a request and gets
+    a reply. Batches leave notifications out; a batch of only notifications gets 204.
+  - A success response always carries `result` (null allowed) and never `error`; an
+    error response never carries `result`.
+  - A webhook 5xx before storing: documented, since there is no task store.
+  - The rate-limit lead-in is decided from a per-step flag, not a count of reasons.
+- **Review:** Bobby Review gave "ready with follow-ups" with two README should-fix
+  items: a notification in a busy batch is dropped without running, and the webhook
+  wording overclaimed and named only one log line. Both fixed; the re-review gave
+  "ready". The rest is `P1-24`.
+- **Not verified:** no real GitHub, model, webhook or A2A client (how a client handles
+  the 204), and no multi-worker run.
 
 ### 2026-11-13: `P1-22` built, reviewed and fixed
 

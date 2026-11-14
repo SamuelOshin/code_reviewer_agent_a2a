@@ -107,17 +107,17 @@ class CodeAnalyzerService:
                     f"the first {MAX_DIFF_CHARS:,}. Rule-based checks covered the whole diff."
                 )
 
-            llm_security_issues, security_ran = await self._run_llm_step(
+            llm_security_issues, security_ran, security_limited = await self._run_llm_step(
                 "Security analysis",
                 self.llm_service.analyze_security(diff_content, files),
                 incomplete_reasons,
             )
-            llm_performance_issues, performance_ran = await self._run_llm_step(
+            llm_performance_issues, performance_ran, performance_limited = await self._run_llm_step(
                 "Performance analysis",
                 self.llm_service.analyze_performance(diff_content, files),
                 incomplete_reasons,
             )
-            llm_best_practice_issues, best_practices_ran = await self._run_llm_step(
+            llm_best_practice_issues, best_practices_ran, best_practices_limited = await self._run_llm_step(
                 "Best practices analysis",
                 self.llm_service.analyze_best_practices(diff_content, files),
                 incomplete_reasons,
@@ -136,9 +136,10 @@ class CodeAnalyzerService:
             # P1-22: whether every findings step failed because the model was
             # rate-limited. Decided from the steps alone, whatever the summary step does.
             steps_ran = security_ran or performance_ran or best_practices_ran
-            all_steps_rate_limited = not steps_ran and (
-                sum(RATE_LIMITED_TEXT in r for r in incomplete_reasons) == 3
-            )
+            # P1-23: from each step's own flag, not a count of reasons, so adding or
+            # removing a step cannot break it
+            step_rate_limited = (security_limited, performance_limited, best_practices_limited)
+            all_steps_rate_limited = not steps_ran and all(step_rate_limited)
 
             # Step 8: Generate executive summary. A provider failure here loses only
             # the prose, so fall back to a plain summary and mark the review incomplete.
@@ -265,31 +266,32 @@ class CodeAnalyzerService:
         name: str,
         call: Awaitable[list[IssueT]],
         incomplete_reasons: list[str],
-    ) -> tuple[list[IssueT], bool]:
+    ) -> tuple[list[IssueT], bool, bool]:
         """Await one LLM findings step without letting its failure end the review.
 
-        Returns the findings and whether the step produced usable output (a partial
-        result counts; it is still recorded as incomplete). Any failure is
+        Returns the findings, whether the step produced usable output (a partial
+        result counts; it is still recorded as incomplete), and whether the step failed
+        because the model was rate-limited (P1-23). Any failure is
         recorded in `incomplete_reasons` by error type only: exception text can echo
         the prompt or model output, and the reasons may be posted on the PR.
         Findings that validated before a partial failure are kept.
         """
         try:
-            return await call, True
+            return await call, True, False
         except PartialFindingsError as e:
             logger.error(f"{name} returned some invalid findings: {type(e).__name__}")
             incomplete_reasons.append(f"{name} returned some invalid findings, which were dropped.")
-            return list(e.findings), True
+            return list(e.findings), True, False
         except LLMRateLimitError as e:
             # P1-22: fixed text, no exception text, so a throttled model reads as
             # "retry later" and not as a bug
             logger.error(f"{name} failed: {type(e).__name__}")
             incomplete_reasons.append(f"{name} failed: {RATE_LIMITED_TEXT}")
-            return [], False
+            return [], False, True
         except Exception as e:
             logger.error(f"{name} failed: {type(e).__name__}")
             incomplete_reasons.append(f"{name} failed ({type(e).__name__}).")
-            return [], False
+            return [], False, False
 
     @staticmethod
     def _fail_closed(

@@ -22,7 +22,7 @@ def _handler():
 @pytest.mark.parametrize(
     "request_data",
     [
-        {"jsonrpc": "2.0", "method": "nope"},  # no id
+        {"jsonrpc": "2.0", "method": "nope", "id": None},  # null id
         {"jsonrpc": "1.0", "method": "ok", "id": 1},
         {"jsonrpc": "2.0", "id": {"a": 1}},  # no method, unreadable id
         {"jsonrpc": "2.0", "method": "ok", "id": [1], "params": {}},
@@ -39,13 +39,13 @@ def test_error_responses_always_carry_id(request_data):
 def test_unreadable_id_is_null_and_readable_id_is_echoed():
     h = _handler()
     assert asyncio.run(h.handle_request({"jsonrpc": "2.0", "id": {"a": 1}}))["id"] is None
-    assert asyncio.run(h.handle_request({"jsonrpc": "2.0", "method": "nope"}))["id"] is None
+    assert asyncio.run(h.handle_request({"jsonrpc": "2.0", "method": "nope", "id": None}))["id"] is None
     assert asyncio.run(h.handle_request({"jsonrpc": "2.0", "method": "nope", "id": "a"}))["id"] == "a"
     assert asyncio.run(h.handle_request({"jsonrpc": "2.0", "id": 1.0}))["id"] == 1
 
 
 def test_success_response_without_id_carries_null_and_no_error_key():
-    out = asyncio.run(_handler().handle_request({"jsonrpc": "2.0", "method": "ok"}))
+    out = asyncio.run(_handler().handle_request({"jsonrpc": "2.0", "method": "ok", "id": None}))
     assert out["id"] is None and out["result"] == {"x": 1}
     assert "error" not in out
 
