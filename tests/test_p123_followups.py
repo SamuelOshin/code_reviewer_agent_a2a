@@ -170,3 +170,44 @@ async def test_no_lead_in_when_one_step_succeeded():
     boom = LLMRateLimitError("x")
     result = await _result_with(boom, boom, lambda *a, **k: [])
     assert not result.executive_summary.startswith("The model was rate-limited")
+
+
+def test_notification_without_a_batch_slot_is_dropped_without_running(monkeypatch):
+    # Bobby Review: documents that a notification that gets no slot never runs and
+    # gets no reply, while a request in the same position still gets -32004
+    from app.core.config import settings
+    from app.services.jsonrpc_handler import BATCH_CONCURRENCY, JSONRPCHandler
+
+    monkeypatch.setattr(settings, "A2A_BLOCKING_TIMEOUT_SECONDS", 0.05)
+    handler = JSONRPCHandler()
+    release = asyncio.Event()
+    ran = []
+
+    async def hold():
+        await release.wait()
+        return "ok"
+
+    async def record():
+        ran.append(1)
+        return "ok"
+
+    handler.register_method("hold", hold)
+    handler.register_method("record", record)
+
+    async def main():
+        holders = asyncio.create_task(
+            handler.handle_batch(
+                [{"jsonrpc": "2.0", "method": "hold", "id": i} for i in range(BATCH_CONCURRENCY)]
+            )
+        )
+        await asyncio.sleep(0.01)
+        waiting = await handler.handle_batch(
+            [{"jsonrpc": "2.0", "method": "record"}, {"jsonrpc": "2.0", "method": "record", "id": 9}]
+        )
+        release.set()
+        await holders
+        return waiting
+
+    waiting = asyncio.run(main())
+    assert ran == []
+    assert [(r["id"], r["error"]["code"]) for r in waiting] == [(9, -32004)]

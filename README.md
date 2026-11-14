@@ -147,8 +147,10 @@ runs under the same timeout, so a batch finishes within about twice the timeout.
 requests are not queued behind this limit. Every response carries `"id"`, `null` when the request's id was `null` or could not be
 read: a string or integer is echoed, an integral float such as `1.0` as `1`, and a `true`
 or `false` id is an Invalid Request (`-32600`) with `"id": null`. A request with no `id`
-member at all is a JSON-RPC notification: the method still runs, but the server sends no
-reply (HTTP 204, no body), not even for an error such as an unknown method. In a batch,
+member at all is a JSON-RPC notification: the method runs, but the server sends no
+reply (HTTP 204, no body), not even for an error such as an unknown method. In a batch, a
+notification that gets no slot within the timeout is dropped without running, and
+nothing is sent back for it. In a batch,
 notifications are left out of the response array, and a batch of only notifications gets
 204. A request that cannot be read as a request (no method, wrong version, not an object)
 is always answered with an Invalid Request and `"id": null`. `"id": null` is not a
@@ -159,9 +161,10 @@ the service makes one more post with a short "could not deliver the result" mess
 (state `failed`, same task id) and an error id. For any other error status (5xx, 3xx, 4xx)
 or an unreachable webhook it posts nothing more, because the webhook may already have
 stored the result and a `failed` post would overwrite it. This server keeps no task store
-(there is no `tasks/get`), so in those cases your client gets no result and no error from
-us; the failure is only in our log, as `Not pushing an error after webhook status <n>` with
-an error id. Make the webhook return 2xx once it has the result. A review that fails because GitHub could not be reached or the
+(there is no `tasks/get`), so in those cases your client gets no error from us, and no
+result unless the webhook stored it before failing. The failure is only in our log, with an
+error id: `Not pushing an error after webhook status <n>`, or `Not pushing an error to an
+unreachable webhook` when the webhook could not be reached. Make the webhook return 2xx once it has the result. A review that fails because GitHub could not be reached or the
 PR could not be read says so, as fixed text plus an error id, never the exception text.
 A model failure, including a rate limit, does not fail the task: it shows in the review
 as a failed analysis step (for example "Security analysis failed (RuntimeError)."). When the

@@ -320,7 +320,7 @@ class MessageHandler:
             if status not in _PUSH_RETRY_STATUSES:
                 logger.warning(
                     f"Not pushing an error after webhook status {status} [error_id={error_id}]; "
-                    "the server keeps no copy of the result, so the client gets no reply"
+                    "the server keeps no copy of the result, so the client may get no reply"
                 )
                 return
         user_message = _user_message(category, error_id)
