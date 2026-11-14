@@ -157,8 +157,9 @@ a blocking `message/send` (anything but a false-like `"blocking"` such as `false
 before any review runs. A request that cannot be read as a request (no `"jsonrpc": "2.0"`,
 no method, not an object, or a body such as `42` or `"x"`) is always answered with an
 Invalid Request and `"id": null` (or its id, if readable), also in a busy batch: such a
-call is answered before it waits for a slot. A `message/send` whose `configuration` is not
-an object gets Invalid params (`-32602`). `"id": null` is not a
+call is answered before it waits for a slot. A `message/send` with an `id` whose `configuration` is
+present and neither an object nor `null` (for example `"x"`, `0`, `""` or `[]`) gets Invalid
+params (`-32602`); without an `id` it counts as blocking and gets `-32600`. `"id": null` is not a
 notification and gets a reply. `/a2a/tasks` follows the same rule. A success response
 always has `result` (`null` when the method returned nothing) and no `error`; an error
 response has `error` and no `result`. If the push to your webhook answers 413 or 429,

@@ -124,3 +124,30 @@ def test_real_app_registers_reply_rules_and_hints():
     assert "pushNotificationConfig" in handler._reply_hints["message/send"]
     assert handler._reply_required["analyze_pr"]({}) is True
     assert handler._reply_required["message/send"]({"message": {}}) is True
+
+
+def test_batch_survives_a_failing_precheck_with_a_malformed_id(monkeypatch):
+    # Bobby Review: if _precheck itself raises, run_one falls through to the slot wait;
+    # the batch must still answer every call, echoing only a valid id (P1-21 guard)
+    monkeypatch.setattr(settings, "A2A_BLOCKING_TIMEOUT_SECONDS", 0.05)
+    handler = JSONRPCHandler()
+    handler.register_method("ok", lambda: "ok")
+    original = handler._precheck
+    calls = {"n": 0}
+
+    def flaky(request_data):
+        calls["n"] += 1
+        if isinstance(request_data, dict) and request_data.get("method") == "ok":
+            raise RuntimeError("precheck broke")
+        return original(request_data)
+
+    monkeypatch.setattr(handler, "_precheck", flaky)
+    out = _busy_batch(
+        handler,
+        [
+            {"jsonrpc": "2.0", "method": "ok", "id": {"a": 1}},
+            {"jsonrpc": "2.0", "method": "ok", "id": 7},
+        ],
+    )
+    assert [(r.get("id"), r["error"]["code"]) for r in out] == [(None, -32004), (7, -32004)]
+    assert calls["n"] >= 2
