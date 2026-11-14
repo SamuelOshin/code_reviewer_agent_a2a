@@ -138,12 +138,12 @@ class JSONRPCHandler:
         """
         return list(self._methods.keys())
     
-    async def handle_request(self, request_data: dict[str, Any]) -> dict[str, Any] | None:
+    async def handle_request(self, request_data: Any) -> dict[str, Any] | None:
         """
         Handle a JSON-RPC request
 
         Args:
-            request_data: Raw request dictionary
+            request_data: The decoded JSON value (normally an object)
 
         Returns:
             JSON-RPC response dictionary, or None for a notification (a valid request
@@ -155,7 +155,53 @@ class JSONRPCHandler:
             return None
         return response
 
-    async def _handle_request(self, request_data: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    def _precheck(self, request_data: Any) -> tuple[JSONRPCRequest | None, dict[str, Any] | None]:
+        """Reject a request before it runs or waits for a batch slot (P1-24, P1-25).
+
+        Returns the parsed request, or a rejection that must be answered even for a
+        notification: the body is not a valid request, or it is a notification for a
+        method whose result only comes back in the reply (a blocking review).
+        """
+        try:
+            request = JSONRPCRequest.model_validate(request_data)
+        except Exception as e:
+            # Pydantic errors echo the offending input, so keep them server-side
+            error_id = new_error_id()
+            logger.error(f"Invalid JSON-RPC request [error_id={error_id}]: {type(e).__name__}")
+            return None, self._error_response(
+                request_id=(
+                    _echo_id(request_data.get("id")) if isinstance(request_data, dict) else None
+                ),
+                code=JSONRPCErrorCode.INVALID_REQUEST,
+                message="Invalid Request",
+                data={"error_id": error_id}
+            )
+
+        # P1-24: a call whose only output is its reply (a blocking review) must not
+        # be sent as a notification: it would run a full review and return nothing
+        reply_required = self._reply_required.get(request.method)
+        if (
+            _is_notification(request_data)
+            and reply_required is not None
+            and reply_required(request.params or {})
+        ):
+            logger.warning(f"Rejected {request.method!r:.100} sent as a notification")
+            return None, self._error_response(
+                request_id=None,
+                code=JSONRPCErrorCode.INVALID_REQUEST,
+                message=" ".join(
+                    part
+                    for part in (
+                        f"{request.method} returns its result in the reply, so it "
+                        "needs an \"id\".",
+                        self._reply_hints.get(request.method),
+                    )
+                    if part
+                ),
+            )
+        return request, None
+
+    async def _handle_request(self, request_data: Any) -> tuple[dict[str, Any], bool]:
         """The response, and whether it must be sent even for a notification.
 
         P1-24: an explicit flag, set only where the request itself was rejected (not
@@ -163,27 +209,16 @@ class JSONRPCHandler:
         the error code, which a method error could also use.
         """
         try:
-            # Parse request
-            try:
-                request = JSONRPCRequest.model_validate(request_data)
-            except Exception as e:
-                # Pydantic errors echo the offending input, so keep them server-side
-                error_id = new_error_id()
-                logger.error(f"Invalid JSON-RPC request [error_id={error_id}]: {type(e).__name__}")
-                return self._error_response(
-                    request_id=(
-                        _echo_id(request_data.get("id")) if isinstance(request_data, dict) else None
-                    ),
-                    code=JSONRPCErrorCode.INVALID_REQUEST,
-                    message="Invalid Request",
-                    data={"error_id": error_id}
-                ), True
-            
-            logger.info(f"Handling JSON-RPC request: {request.method} (id={request.id})")
-            
+            request, rejection = self._precheck(request_data)
+            if rejection is not None:
+                return rejection, True
+
+            # !r and a cap: the method name is client text and may hold newlines (P1-25)
+            logger.info(f"Handling JSON-RPC request: {request.method!r:.100} (id={request.id!r:.100})")
+
             # Check if method exists
             if request.method not in self._methods:
-                logger.warning(f"Method not found: {request.method}")
+                logger.warning(f"Method not found: {request.method!r:.100}")
                 return self._error_response(
                     request_id=request.id,
                     code=JSONRPCErrorCode.METHOD_NOT_FOUND,
@@ -191,28 +226,6 @@ class JSONRPCHandler:
                     data={"available_methods": self.list_methods()}
                 ), False
 
-            # P1-24: a call whose only output is its reply (a blocking review) must not
-            # be sent as a notification: it would run a full review and return nothing
-            reply_required = self._reply_required.get(request.method)
-            if (
-                _is_notification(request_data)
-                and reply_required is not None
-                and reply_required(request.params or {})
-            ):
-                logger.warning(f"Rejected {request.method} sent as a notification")
-                return self._error_response(
-                    request_id=None,
-                    code=JSONRPCErrorCode.INVALID_REQUEST,
-                    message=" ".join(
-                        part
-                        for part in (
-                            f"{request.method} returns its result in the reply, so it "
-                            "needs an \"id\".",
-                            self._reply_hints.get(request.method),
-                        )
-                        if part
-                    ),
-                ), True
             
             # Get handler
             handler = self._methods[request.method]
@@ -320,7 +333,15 @@ class JSONRPCHandler:
         # returns at once, and queuing ordinary requests behind batches would add
         # latency for clients that never batch. A process-wide cap on model calls
         # would be a separate feature.
-        async def run_one(request_data: dict[str, Any]) -> dict[str, Any] | None:
+        async def run_one(request_data: Any) -> dict[str, Any] | None:
+            # P1-25: a call that would be rejected is answered before it waits for a
+            # slot, so a busy batch can't drop it silently; it costs no slot either
+            try:
+                _, rejection = self._precheck(request_data)
+            except Exception:
+                rejection = None  # let handle_request's safety net deal with it
+            if rejection is not None:
+                return rejection
             limit = settings.A2A_BLOCKING_TIMEOUT_SECONDS
             try:
                 await asyncio.wait_for(semaphore.acquire(), timeout=limit)

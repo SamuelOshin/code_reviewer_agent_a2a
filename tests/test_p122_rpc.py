@@ -70,7 +70,9 @@ def test_batch_slot_timeout_id(monkeypatch, raw, echoed):
                 sem.release()
 
     (out,) = asyncio.run(go())
-    assert out["error"]["code"] == -32004
+    # P1-25: an invalid id is rejected before the call waits for a slot (-32600);
+    # a valid one waits and times out (-32004)
+    assert out["error"]["code"] == (-32004 if echoed is not None or raw is None else -32600)
     assert out["id"] == echoed and "result" not in out
     if isinstance(raw, float) and echoed is not None:
         assert isinstance(out["id"], int)

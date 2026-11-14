@@ -219,7 +219,9 @@ def test_malformed_id_on_a_timed_out_wait_fails_only_that_call(monkeypatch, bad_
         return waiting
 
     waiting = asyncio.run(main())
-    assert [r["error"]["code"] for r in waiting] == [-32004, -32004]
+    # P1-25: the malformed id is an Invalid Request, answered before it waits for a
+    # slot; the valid call still times out waiting
+    assert [r["error"]["code"] for r in waiting] == [-32600, -32004]
     assert waiting[0].get("id") is None
     assert waiting[1]["id"] == "ok-id"
 
