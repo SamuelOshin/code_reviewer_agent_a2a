@@ -5,10 +5,12 @@ import contextlib
 import logging
 from unittest.mock import MagicMock
 
+from app.core.errors import pr_ref as _pr_ref
+
 # Imported at module level: importing app.main runs setup_logging(), which replaces
 # the root handlers, including the one caplog installs for a test
 from app.main import handle_analyze_pr
-from app.services.github_mcp import GitHubMCPService, _pr_ref
+from app.services.github_mcp import GitHubMCPService
 
 
 def _no_raw(lines, marker):

@@ -30,6 +30,13 @@ def new_error_id() -> str:
     return uuid.uuid4().hex[:8]
 
 
+def pr_ref(owner: object, repo: object) -> str:
+    """owner/repo for a log line: escaped and capped, since both come from a
+    client-supplied URL and may hold newlines or be very long (P1-27). One shared
+    copy for github_mcp and code_analyzer (P2-10)."""
+    return repr(f"{owner}/{repo}")[:200]
+
+
 def safe_webhook_target(url: object) -> str:
     """Return only scheme://host of a push URL for logging.
 
