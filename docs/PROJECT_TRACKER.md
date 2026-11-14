@@ -13,9 +13,9 @@ read this file alone and continue the work.
 | | |
 |---|---|
 | **Current phase** | Phase 1: make it honest and working (planning complete) |
-| **Active task** | None. Done: `P1-01` to `P1-04`, `P1-06` to `P1-25`. Open: `P1-05` (needs one real review on two providers), `P1-26` |
-| **Next action** | Owner sets a random `API_KEY` and a random `GITHUB_WEBHOOK_SECRET` (both at least 32 characters) in `.env`, then runs one real review on two providers (closes `P1-05`). Owner picks a license (the old README claimed MIT; no LICENSE file exists). Then `P1-26` |
-| **Working branch** | `main`. Start each new task on its own branch from `main`. `P1-25` on `chore/p1-25` for one PR |
+| **Active task** | None. Done: `P1-01` to `P1-04`, `P1-06` to `P1-26`. Open: `P1-05` (needs one real review on two providers), `P1-27` |
+| **Next action** | Owner sets a random `API_KEY` and a random `GITHUB_WEBHOOK_SECRET` (both at least 32 characters) in `.env`, then runs one real review on two providers (closes `P1-05`). Owner picks a license (the old README claimed MIT; no LICENSE file exists). Then `P1-27` |
+| **Working branch** | `main`. Start each new task on its own branch from `main`. `P1-26` on `chore/p1-26` for one PR |
 | **Blockers** | None. Owner approved running repo code on 2026-11-12. Use `uv` for everything (`uv sync`, `uv run`). If an install fails on a Windows cache file lock, retry or set a different `UV_CACHE_DIR` |
 | **Working rule** | Parallel agents don't edit this file. The coordinating session records their results |
 
@@ -268,7 +268,8 @@ in CI, and the README is accurate.
 | P1-23 | done | Follow-ups from the `P1-22` review: a JSON-RPC request without an id (a notification) still gets a response, now with `"id": null`, but JSON-RPC 2.0 says notifications get no reply; a method that returns `None` gets a response with neither `result` nor `error` (`exclude_none` drops `result: null`), which is not valid JSON-RPC; when a client webhook answers 5xx before storing anything, the client now gets nothing, so consider a delivery-failure state or a readable task (for example `tasks/get`); `code_analyzer.py` decides "every step was rate-limited" by counting exactly 3 reasons, so adding or removing a step silently breaks it (return a rate-limited flag from `_run_llm_step` instead) | P1-22 | Tests: a single notification and an all-notification batch get no response body; a method returning `None` gets `"result": null`; the rate-limit lead-in does not depend on a hard-coded step count |
 | P1-24 | done | Follow-ups from the `P1-23` review: an A2A client that sends a blocking JSON-RPC `message/send` with no `id` now pays for a full review and gets HTTP 204 (correct for a JSON-RPC notification, but costly), so reject an id-less blocking `message/send` with `-32600` or document it prominently; a body with no `jsonrpc` member is accepted as a notification because `JSONRPCRequest` defaults `jsonrpc` to "2.0", so make it required; the handler decides "answer a notification anyway" by checking for error code `-32600`, which breaks if a method error is ever mapped to that code, so return an explicit invalid-request flag from `_handle_request`; a top-level body that is not an object or an array (for example `42` or `"x"`) gets `-32603` instead of `-32600`. Item 3 of `P1-23` (a webhook 5xx before storing leaves the client with nothing) was settled by documenting the limit, since there is no task store; a `tasks/get` or delivery-failure state is an owner decision | P1-23 | Tests: an id-less blocking `message/send` gets `-32600` (or the README states the cost); `{"method": "x"}` without `jsonrpc` gets `-32600`; a method error mapped to `-32600` on a notification still gets no reply; a body of `42` gets `-32600` |
 | P1-25 | done | Follow-ups from the `P1-24` review: in a busy batch an id-less call that would be rejected (blocking `message/send`, no `jsonrpc`, no method) is dropped without running instead of getting `-32600` (documented); run validation and the reply-required check before `run_one` takes a slot; `jsonrpc_handler.py` still logs the raw method text in full (with newlines) in "Handling JSON-RPC request" and "Method not found", so use `!r` and a length cap; a non-dict `configuration` sent with an id gets `-32603` instead of `-32602` (`message_handler.py`); `_handle_request` is typed `dict` but receives any JSON value; README says only `"blocking": false` counts as non-blocking, while any false-like value does; `test_rejection_hint_is_per_method` registers its own hint, so assert on `register_rpc_methods` instead | P1-24 | Tests: an invalid id-less call in a busy batch gets `-32600`; a method name with a newline is logged escaped and capped; `"configuration": "x"` gets `-32602`; the real app's `message/send` hint is asserted |
-| P1-26 | todo | Follow-ups from the `P1-25` review: `message_handler.py` logs the client's `messageId` and `taskId` raw, so with `LOG_FORMAT=text` a newline forges a log line (escape with `!r` and a cap, as P1-25 did for method names); a non-object `message` in `message/send` probably reaches `.get` and gets `-32603` instead of `-32602` (not probed); the "Method not found" response echoes the method name with no length cap; batch calls run `_precheck` (validation and `reply_required`) twice, so pass the parsed request through and document that `reply_required` must be pure | P1-25 | Tests: a `messageId` with a newline is logged escaped; `"message": "x"` gets `-32602`; a 3,000-character method name is capped in the response; `reply_required` runs once per batch call |
+| P1-26 | done | Follow-ups from the `P1-25` review: `message_handler.py` logs the client's `messageId` and `taskId` raw, so with `LOG_FORMAT=text` a newline forges a log line (escape with `!r` and a cap, as P1-25 did for method names); a non-object `message` in `message/send` probably reaches `.get` and gets `-32603` instead of `-32602` (not probed); the "Method not found" response echoes the method name with no length cap; batch calls run `_precheck` (validation and `reply_required`) twice, so pass the parsed request through and document that `reply_required` must be pure | P1-25 | Tests: a `messageId` with a newline is logged escaped; `"message": "x"` gets `-32602`; a 3,000-character method name is capped in the response; `reply_required` runs once per batch call |
+| P1-27 | todo | Should-fix follow-ups from the `P1-26` review (same log-forging class as `P1-25` and `P1-26`): `analyze_pr` logs its `pr_url` raw at `app/main.py` and `app/services/code_analyzer.py`, so with `LOG_FORMAT=text` a newline in the URL forges a log line; the extracted PR URL (no whitespace, but owner and repo unbounded) is logged uncapped in `message_handler.py` and `github_mcp.py`, so a 5,000-character owner is logged at that length each time | P1-26 | Tests: an `analyze_pr` `pr_url` with a newline is logged escaped and capped; a PR URL with a 5,000-character owner is logged capped |
 | P1-14 | done | Repo hygiene: add `.gitattributes` to normalise line endings, ignore `.claude/worktrees/` and tool caches, replace deprecated `datetime.utcnow` everywhere in `app/`, and use PyGithub's `Auth.Token` | P1-03 | `git add --renormalize .` leaves a clean diff. No `utcnow` in `app/` |
 
 ### Phase 2: modernize the core
@@ -284,6 +285,7 @@ in CI, and the README is accurate.
 | P2-07 | todo | Review whole PRs by chunking large diffs per file, and state any coverage limit in the result | P2-01 | Test: a bug past the old 8,000-character limit is reviewed |
 | P2-08 | todo | Tune the remaining noisy performance rules (`inefficient_list_operations`, `synchronous_in_async`, `loading_all_records`) | P3-01 | Eval shows fewer false positives without lower recall |
 | P2-09 | todo | Fix the 55 mypy errors (mostly in `message_handler.py`, `performance_rules.py`, `health.py` and `security_rules.py`), add mypy to CI, and add `ruff format --check` once the code is formatted | Phase 1 | CI runs mypy and the format check, both green |
+| P2-10 | todo | Review backlog (follow-ups triaged out of Phase 1 by the convergence rule; promote any to Phase 1 if needed). From `P1-26`: bad shapes inside an object `message` (`parts: "abc"`, `parts: ["a"]`, `taskId: ["t"]`, a text part with `"text": 5`) get `-32603` instead of `-32602`; a lone surrogate (U+D800) in a method name or id gives `-32603` because the response can't be encoded (already on `main`); `tests/test_p121_followups.py::test_slot_is_released_after_a_timed_out_wait` is flaky (about 1 in 1,500 runs under load; raise its 50 ms timeout or hold slots with an event); a README line in the JSON-RPC paragraph runs to 130 characters | P1-26 | Each item has a test or is closed with a reason |
 
 ### Phase 3: the portfolio piece
 
@@ -307,7 +309,7 @@ Keep this honest. It records what has actually been proven.
 
 | Check | State | Notes |
 |---|---|---|
-| Test suite | Passing 2026-11-14 | After merging `P1-25`: **829 passed, 0 xfail**. Coverage **90%**. LLM, GitHub and push calls are mocked; no real provider was called |
+| Test suite | Passing 2026-11-14 | After merging `P1-26`: **839 passed, 0 xfail**. Coverage **90%**. One test is flaky at about 1 in 1,500 runs (`P2-10`). LLM, GitHub and push calls are mocked; no real provider was called |
 | App startup | Starts in-process | `/`, `/health` (`healthy`), `/ready` and the agent card return 200, with or without `SECRET_KEY`. Real LLM and GitHub calls not tested |
 | Docker | Passing 2026-11-12 | From `.env.example` copied to `.env`, `docker compose up --build` reached `healthy` (Docker 29.8). `/health` returned 200 from this app. The container runs as `appuser` with no Node.js. Tested on host port 8010, because another local service holds 8000 |
 | CI | Passing 2026-11-13 | Green on GitHub for PR #2 at `549f481` (ruff, pytest with coverage, `pip-audit`). GitGuardian also passed |
@@ -325,6 +327,28 @@ Keep this honest. It records what has actually been proven.
 ## 9. Session log
 
 Newest first. Keep entries short.
+
+### 2026-11-14: `P1-26` built, reviewed and fixed
+
+- **Done:** built in the coordinating session, under the owner's `/goal` with the
+  skill's convergence rule. On `chore/p1-26`: 839 passed, 90% coverage, ruff clean, the
+  CI-style `pip-audit` of the locked packages clean.
+  - Client `messageId` and `taskId` values are logged with `!r` and capped at 100
+    characters, so a newline can't forge a log line with `LOG_FORMAT=text`.
+  - A `message/send` with a non-object `message` gets `-32602` instead of `-32603`.
+  - The method name echoed in the `-32601` reply is capped at 100 characters.
+  - A batch call is pre-checked once: the result computed before the slot wait is
+    passed to `handle_request`.
+- **Review:** first round "changes needed"; findings: 0 blocking, 2 should-fix,
+  6 follow-up. Should-fix: the returned task id was still logged raw (so the README
+  claim was false), and the README's non-object `message` sentence was unclear. Both
+  fixed; the re-review gave "ready" (findings: 0 blocking, 0 should-fix, 1 nit).
+- **Triage (convergence rule):** the raw and uncapped `pr_url` logs are a security gap,
+  so they are `P1-27`. Wrong error codes for bad `message` parts, the lone-surrogate
+  `-32603`, a flaky test and a README line wrap went to the `P2-10` backlog.
+- **Not verified:** no real GitHub, model, webhook or A2A client, and no multi-worker
+  run. One unidentified failure in one of three local coverage runs; the reviewer
+  traced it to the flaky test in `P2-10`.
 
 ### 2026-11-14: `P1-25` built, reviewed and fixed
 
