@@ -283,7 +283,7 @@ class MessageHandler:
         except Exception as e:
             error_id = new_error_id()
             logger.error(
-                f"Fatal error in background task [error_id={error_id}] for PR {pr_url}: "
+                f"Fatal error in background task [error_id={error_id}] for PR {pr_url!r:.200}: "
                 f"{type(e).__name__}",
             )
             # Try to push the error to the client's webhook
