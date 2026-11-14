@@ -39,7 +39,7 @@ async def test_other_step_failure_keeps_type_only_reason():
 
 @pytest.mark.asyncio
 async def test_all_steps_rate_limited_is_named_even_when_the_summary_works():
-    # Bobby Review: the summary note depended on the summary call being rate-limited
+    # P1-22 review: the summary note depended on the summary call being rate-limited
     analyzer, github, llm = make_analyzer()
     boom = LLMRateLimitError("SECRET-DETAIL")
     llm.analyze_security = AsyncMock(side_effect=boom)

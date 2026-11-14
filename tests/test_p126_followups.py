@@ -97,7 +97,7 @@ def test_reply_required_runs_once_per_batch_call():
 
 
 def test_returned_task_id_is_logged_escaped(caplog):
-    # Bobby Review: the blocking path logged the client's taskId raw on return
+    # P1-26 review: the blocking path logged the client's taskId raw on return
     from tests.test_webhooks import make_result
 
     handler = MessageHandler.__new__(MessageHandler)

@@ -188,7 +188,7 @@ def test_batch_call_waiting_for_a_slot_past_the_timeout_gets_32004(monkeypatch):
 
 @pytest.mark.parametrize("bad_id", [{"a": 1}, [1], 1.5, True])
 def test_malformed_id_on_a_timed_out_wait_fails_only_that_call(monkeypatch, bad_id):
-    # Bobby Review: the -32004 response is built outside handle_request, so a bad id
+    # P1-21 review: the -32004 response is built outside handle_request, so a bad id
     # used to raise and fail the whole batch
     monkeypatch.setattr(settings, "A2A_BLOCKING_TIMEOUT_SECONDS", 0.05)
     handler = JSONRPCHandler()
@@ -227,16 +227,46 @@ def test_malformed_id_on_a_timed_out_wait_fails_only_that_call(monkeypatch, bad_
 
 
 def test_slot_is_released_after_a_timed_out_wait(monkeypatch):
+    # P2-10: this used to race 15 quick calls against a 50 ms slot timeout and failed
+    # about 1 run in 1,500 under load. Now it forces a real timed-out wait while every
+    # slot is held, then checks every slot comes back and later calls all run.
+    from app.services import jsonrpc_handler as jh
+
     monkeypatch.setattr(settings, "A2A_BLOCKING_TIMEOUT_SECONDS", 0.05)
     handler = JSONRPCHandler()
+    release = asyncio.Event()
+
+    async def hold():
+        await release.wait()
+        return "held"
 
     async def quick():
         return "ok"
 
+    handler.register_method("hold", hold)
     handler.register_method("quick", quick)
-    req = [{"jsonrpc": "2.0", "method": "quick", "id": i} for i in range(BATCH_CONCURRENCY * 3)]
-    responses = asyncio.run(handler.handle_batch(req))
-    assert all(r["result"] == "ok" for r in responses)
+
+    async def main():
+        holders = asyncio.create_task(
+            handler.handle_batch(
+                [{"jsonrpc": "2.0", "method": "hold", "id": i} for i in range(BATCH_CONCURRENCY)]
+            )
+        )
+        await asyncio.sleep(0.01)
+        timed_out = await handler.handle_batch([{"jsonrpc": "2.0", "method": "quick", "id": "w"}])
+        release.set()
+        await holders
+        # Generous timeout from here on: this part checks slot release, not timing
+        settings.A2A_BLOCKING_TIMEOUT_SECONDS = 5
+        later = await handler.handle_batch(
+            [{"jsonrpc": "2.0", "method": "quick", "id": i} for i in range(BATCH_CONCURRENCY * 3)]
+        )
+        return timed_out, later, jh._batch_semaphore()._value
+
+    timed_out, later, free = asyncio.run(main())
+    assert timed_out[0]["error"]["code"] == -32004
+    assert all(r["result"] == "ok" for r in later)
+    assert free == BATCH_CONCURRENCY
 
 
 # --- 3. extractor and parse_pr_url agree ------------------------------------------------

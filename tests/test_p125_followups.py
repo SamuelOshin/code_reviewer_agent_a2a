@@ -127,7 +127,7 @@ def test_real_app_registers_reply_rules_and_hints():
 
 
 def test_batch_survives_a_failing_precheck_with_a_malformed_id(monkeypatch):
-    # Bobby Review: if _precheck itself raises, run_one falls through to the slot wait;
+    # P1-25 review: if _precheck itself raises, run_one falls through to the slot wait;
     # the batch must still answer every call, echoing only a valid id (P1-21 guard)
     monkeypatch.setattr(settings, "A2A_BLOCKING_TIMEOUT_SECONDS", 0.05)
     handler = JSONRPCHandler()
