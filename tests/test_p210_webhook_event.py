@@ -12,7 +12,7 @@ def test_forged_event_header_is_escaped_and_capped(client, webhook_secret, caplo
     forged = "a\x85FORGED " + "Z" * 5000
     body = json.dumps(pr_payload()).encode()
     headers = {
-        "X-GitHub-Event": forged.encode("latin-1"),  # raw bytes: httpx would refuse  in a str
+        "X-GitHub-Event": forged.encode("latin-1"),  # raw bytes: httpx would refuse U+0085 in a str
         "X-Hub-Signature-256": sign(webhook_secret, body),
         "Content-Type": "application/json",
     }
