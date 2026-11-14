@@ -64,25 +64,24 @@ def _is_notification(request_data: Any) -> bool:
     return isinstance(request_data, dict) and "id" not in request_data
 
 
-def _is_invalid_request(response: dict[str, Any]) -> bool:
-    # Only the validation step produces -32600 in handle_request, so this tells an
-    # unreadable request (always answered, id null) from a valid notification
-    error = response.get("error")
-    return isinstance(error, dict) and error.get("code") == JSONRPCErrorCode.INVALID_REQUEST
-
-
 class JSONRPCHandler:
     """JSON-RPC 2.0 request handler with method registration"""
     
     def __init__(self):
         """Initialize handler with empty method registry"""
         self._methods: dict[str, Callable[..., Awaitable[Any]]] = {}
+        # Methods that must not be called as notifications, decided from the params
+        self._reply_required: dict[str, Callable[[dict[str, Any]], bool]] = {}
+        # Extra advice for the -32600 a rejected notification gets, per method
+        self._reply_hints: dict[str, str] = {}
         logger.info("JSONRPCHandler initialized")
     
     def register_method(
         self,
         name: str,
-        handler: Callable[..., Awaitable[Any]]
+        handler: Callable[..., Awaitable[Any]],
+        reply_required: Callable[[dict[str, Any]], bool] | None = None,
+        reply_hint: str | None = None,
     ) -> None:
         """
         Register a JSON-RPC method
@@ -90,6 +89,11 @@ class JSONRPCHandler:
         Args:
             name: Method name (e.g., "analyze_pr")
             handler: Async function to handle the method
+            reply_required: Given the params, whether the call only makes sense with a
+                reply. If true, a notification (no "id") is rejected with -32600 before
+                the method runs (P1-24).
+            reply_hint: Optional advice appended to that error, e.g. how to get the
+                result without a reply. Only give advice that applies to this method.
             
         Example:
             async def analyze_pr(pr_url: str) -> dict:
@@ -102,6 +106,14 @@ class JSONRPCHandler:
             logger.warning(f"Overwriting existing method: {name}")
         
         self._methods[name] = handler
+        if reply_required is None:
+            self._reply_required.pop(name, None)
+        else:
+            self._reply_required[name] = reply_required
+        if reply_hint is None:
+            self._reply_hints.pop(name, None)
+        else:
+            self._reply_hints[name] = reply_hint
         logger.info(f"Registered JSON-RPC method: {name}")
     
     def unregister_method(self, name: str) -> None:
@@ -113,6 +125,8 @@ class JSONRPCHandler:
         """
         if name in self._methods:
             del self._methods[name]
+            self._reply_required.pop(name, None)
+            self._reply_hints.pop(name, None)
             logger.info(f"Unregistered JSON-RPC method: {name}")
     
     def list_methods(self) -> list[str]:
@@ -136,12 +150,18 @@ class JSONRPCHandler:
             with no "id" member): the method still runs but the server must not reply,
             not even with an error (P1-23). An invalid request is always answered.
         """
-        response = await self._handle_request(request_data)
-        if _is_notification(request_data) and not _is_invalid_request(response):
+        response, always_answer = await self._handle_request(request_data)
+        if _is_notification(request_data) and not always_answer:
             return None
         return response
 
-    async def _handle_request(self, request_data: dict[str, Any]) -> dict[str, Any]:
+    async def _handle_request(self, request_data: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+        """The response, and whether it must be sent even for a notification.
+
+        P1-24: an explicit flag, set only where the request itself was rejected (not
+        readable, or a notification that needs a reply), instead of inferring it from
+        the error code, which a method error could also use.
+        """
         try:
             # Parse request
             try:
@@ -157,7 +177,7 @@ class JSONRPCHandler:
                     code=JSONRPCErrorCode.INVALID_REQUEST,
                     message="Invalid Request",
                     data={"error_id": error_id}
-                )
+                ), True
             
             logger.info(f"Handling JSON-RPC request: {request.method} (id={request.id})")
             
@@ -169,7 +189,30 @@ class JSONRPCHandler:
                     code=JSONRPCErrorCode.METHOD_NOT_FOUND,
                     message=f"Method not found: {request.method}",
                     data={"available_methods": self.list_methods()}
-                )
+                ), False
+
+            # P1-24: a call whose only output is its reply (a blocking review) must not
+            # be sent as a notification: it would run a full review and return nothing
+            reply_required = self._reply_required.get(request.method)
+            if (
+                _is_notification(request_data)
+                and reply_required is not None
+                and reply_required(request.params or {})
+            ):
+                logger.warning(f"Rejected {request.method} sent as a notification")
+                return self._error_response(
+                    request_id=None,
+                    code=JSONRPCErrorCode.INVALID_REQUEST,
+                    message=" ".join(
+                        part
+                        for part in (
+                            f"{request.method} returns its result in the reply, so it "
+                            "needs an \"id\".",
+                            self._reply_hints.get(request.method),
+                        )
+                        if part
+                    ),
+                ), True
             
             # Get handler
             handler = self._methods[request.method]
@@ -192,7 +235,7 @@ class JSONRPCHandler:
                 return self._success_response(
                     request_id=request.id,
                     result=result
-                )
+                ), False
                 
             except ClientInputError as e:
                 # The message was written for the caller (e.g. a rejected push URL)
@@ -202,7 +245,7 @@ class JSONRPCHandler:
                     request_id=request.id,
                     code=JSONRPCErrorCode.INVALID_PARAMS,
                     message=str(e),
-                )
+                ), False
 
             except RequestTimeoutError as e:
                 logger.warning(f"Timed out: {request.method}")
@@ -210,7 +253,7 @@ class JSONRPCHandler:
                     request_id=request.id,
                     code=JSONRPCErrorCode.TIMEOUT,
                     message=str(e),
-                )
+                ), False
 
             except TypeError as e:
                 # Invalid params (wrong arguments)
@@ -224,7 +267,7 @@ class JSONRPCHandler:
                     code=JSONRPCErrorCode.INVALID_PARAMS,
                     message="Invalid method parameters",
                     data={"error_id": error_id}
-                )
+                ), False
             
             except Exception as e:
                 # Internal error during method execution
@@ -238,7 +281,7 @@ class JSONRPCHandler:
                     code=JSONRPCErrorCode.INTERNAL_ERROR,
                     message="Internal error",
                     data={"error_id": error_id}
-                )
+                ), False
         
         except Exception as e:
             # Unexpected error in handler itself
@@ -252,7 +295,7 @@ class JSONRPCHandler:
                 code=JSONRPCErrorCode.INTERNAL_ERROR,
                 message="Internal server error",
                 data={"error_id": error_id}
-            )
+            ), False
     
     async def handle_batch(self, batch_data: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """
