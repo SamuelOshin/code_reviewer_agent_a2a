@@ -152,13 +152,13 @@ reply (HTTP 204, no body), not even for an error such as an unknown method. In a
 notifications are left out of the response array, a batch of only notifications gets 204,
 and a notification that gets no slot within the timeout is dropped without running. A
 call whose result only comes back in the reply can't be a notification: `analyze_pr` and
-a blocking `message/send` (anything but `"blocking": false` with a
+a blocking `message/send` (anything but a false-like `"blocking"` such as `false` with a
 `pushNotificationConfig`) without an `id` get an Invalid Request (`-32600`, `"id": null`)
 before any review runs. A request that cannot be read as a request (no `"jsonrpc": "2.0"`,
 no method, not an object, or a body such as `42` or `"x"`) is always answered with an
-Invalid Request and `"id": null` (or its id, if readable). The one exception is a busy
-batch: an id-less call that gets no slot within the timeout is dropped without running,
-even if it would have been rejected. `"id": null` is not a
+Invalid Request and `"id": null` (or its id, if readable), also in a busy batch: such a
+call is answered before it waits for a slot. A `message/send` whose `configuration` is not
+an object gets Invalid params (`-32602`). `"id": null` is not a
 notification and gets a reply. `/a2a/tasks` follows the same rule. A success response
 always has `result` (`null` when the method returned nothing) and no `error`; an error
 response has `error` and no `result`. If the push to your webhook answers 413 or 429,
