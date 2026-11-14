@@ -194,20 +194,20 @@ GitHub calls are skipped.
 ### GitHub webhook
 
 In the repository's Settings, Webhooks: payload URL `https://<your-host>/webhooks/github`,
-content type `application/json`, the secret equal to `GITHUB_WEBHOOK_SECRET`, event
-"Pull requests". Requests without a valid `X-Hub-Signature-256` are rejected, and a
-malformed `X-GitHub-Delivery` header (not 1 to 64 of letters, digits, `.`, `_`, `-`) gets
-400, as does a signed request with no `X-GitHub-Event` header, a `pull_request` that is
-not an object, or a PR number that is not an integer. A delivery is ignored if its
-delivery id or the SHA-256 of its signed body was seen in the last hour (in memory, per process, bounded in size), so GitHub redeliveries and a
-captured body resent with a new id do not post twice. If no comment was posted (the
-analysis raised, or the comment could not be posted), the id and body are forgotten, so a
-manual "Redeliver" runs it again, up to 3 runs per body within an hour of its first
-failure (then it is ignored as a duplicate). A payload rejected with 400 is released
-without using up those runs. Once a comment is posted, including a failed or
-incomplete result, the delivery stays claimed for up to an hour: a review that failed
-because the model was unavailable cannot be redelivered in that time. Push a new commit
-or restart the service to retry.
+content type `application/json`, the secret equal to `GITHUB_WEBHOOK_SECRET`, event "Pull
+requests". Requests without a valid `X-Hub-Signature-256` are rejected, and a malformed
+`X-GitHub-Delivery` header (not 1 to 64 of letters, digits, `.`, `_`, `-`) gets 400, as
+does a signed request with no `X-GitHub-Event` header, a `pull_request` that is not an
+object, or a PR number that is not an integer. A delivery is ignored if its delivery id or
+the SHA-256 of its signed body was seen in the last hour (in memory, per process, bounded
+in size), so GitHub redeliveries and a captured body resent with a new id do not post
+twice. If no comment was posted (the analysis raised, or the comment could not be posted),
+the id and body are forgotten, so a manual "Redeliver" runs it again, up to 3 runs per
+body within an hour of its first failure (then it is ignored as a duplicate). A payload
+rejected with 400 is released without using up those runs. Once a comment is posted,
+including a failed or incomplete result, the delivery stays claimed for up to an hour: a
+review that failed because the model was unavailable cannot be redelivered in that time.
+Push a new commit or restart the service to retry.
 
 ## Security notes
 
