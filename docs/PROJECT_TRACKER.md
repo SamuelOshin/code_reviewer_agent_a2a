@@ -285,7 +285,7 @@ in CI, and the README is accurate.
 | P2-07 | todo | Review whole PRs by chunking large diffs per file, and state any coverage limit in the result | P2-01 | Test: a bug past the old 8,000-character limit is reviewed |
 | P2-08 | todo | Tune the remaining noisy performance rules (`inefficient_list_operations`, `synchronous_in_async`, `loading_all_records`) | P3-01 | Eval shows fewer false positives without lower recall |
 | P2-09 | todo | Fix the 55 mypy errors (mostly in `message_handler.py`, `performance_rules.py`, `health.py` and `security_rules.py`), add mypy to CI, and add `ruff format --check` once the code is formatted | Phase 1 | CI runs mypy and the format check, both green |
-| P2-10 | todo | Review backlog (follow-ups triaged out of Phase 1 by the convergence rule; promote any to Phase 1 if needed). From `P1-26`: bad shapes inside an object `message` (`parts: "abc"`, `parts: ["a"]`, `taskId: ["t"]`, a text part with `"text": 5`) get `-32603` instead of `-32602`; a lone surrogate (U+D800) in a method name or id gives `-32603` because the response can't be encoded (already on `main`); ~~`test_slot_is_released_after_a_timed_out_wait` is flaky~~ (done 2026-11-14, rewritten to force a real timed-out wait); a README line in the JSON-RPC paragraph runs to 130 characters. From `P1-27`: ~~the `X-GitHub-Event` header is logged and echoed raw and uncapped~~ (done 2026-11-14, escaped and capped in the log and the ignored-event reply); `_pr_ref` is copied in `github_mcp.py` and `code_analyzer.py`, so move it to `app/core/errors.py`; values cut by `!r:.200` give no sign they were cut, so add an ellipsis; `README.md` line 165 is 109 characters; ~~11 test files cite "Bobby Review" in comments~~ (done 2026-11-14, they cite task ids). From the header fix's review: `action` and `pull_request.number` from the signed body are logged raw and `action` is echoed raw in `webhooks.py` (low risk, signed); a webhook with no `X-GitHub-Event` header gets 200 "ignored" rather than 400. From the flaky-test fix's review: the two busy-slot tests in `test_p121_followups.py` hang instead of failing if the slot wait loses its timeout (wrap the waiting call in `asyncio.wait_for(..., 5)`); the rewritten test reads the private `asyncio.Semaphore._value` | P1-26, P1-27 | Each item has a test or is closed with a reason |
+| P2-10 | todo | Review backlog (follow-ups triaged out of Phase 1 by the convergence rule; promote any to Phase 1 if needed). From `P1-26`: ~~bad shapes inside an object `message` get `-32603`~~ (done 2026-11-14: `-32602`, and `contextId` is checked before the review); a lone surrogate (U+D800) in a method name or id gives `-32603` because the response can't be encoded (already on `main`); ~~`test_slot_is_released_after_a_timed_out_wait` is flaky~~ (done 2026-11-14, rewritten to force a real timed-out wait); a README line in the JSON-RPC paragraph runs to 130 characters. From `P1-27`: ~~the `X-GitHub-Event` header is logged and echoed raw and uncapped~~ (done 2026-11-14, escaped and capped in the log and the ignored-event reply); `_pr_ref` is copied in `github_mcp.py` and `code_analyzer.py`, so move it to `app/core/errors.py`; values cut by `!r:.200` give no sign they were cut, so add an ellipsis; `README.md` line 165 is 109 characters; ~~11 test files cite "Bobby Review" in comments~~ (done 2026-11-14, they cite task ids). From the header fix's review: `action` and `pull_request.number` from the signed body are logged raw and `action` is echoed raw in `webhooks.py` (low risk, signed); a webhook with no `X-GitHub-Event` header gets 200 "ignored" rather than 400. From the flaky-test fix's review: the two busy-slot tests in `test_p121_followups.py` hang instead of failing if the slot wait loses its timeout (wrap the waiting call in `asyncio.wait_for(..., 5)`); the rewritten test reads the private `asyncio.Semaphore._value`. From the message-shape fix's review: history items whose `text` isn't a string get the generic "Invalid method parameters" (skip them instead); the input-required reply makes a new `contextId` instead of echoing the client's; `handle_message_send` pops a null `contextId` from the caller's dict (use a local variable); `tests/test_p210_message_shape.py` imports a helper from `tests/test_webhooks.py` (move it to `conftest.py`); `test_security_p107.py` startup tests can hit their 120 s subprocess timeout on a busy machine | P1-26, P1-27 | Each item has a test or is closed with a reason |
 
 ### Phase 3: the portfolio piece
 
@@ -309,7 +309,7 @@ Keep this honest. It records what has actually been proven.
 
 | Check | State | Notes |
 |---|---|---|
-| Test suite | Passing 2026-11-14 | After the `P2-10` webhook header fix: **845 passed, 0 xfail**. Coverage **90%**. The flaky slot-release test is fixed (0 failures in 1,000 loops under load). LLM, GitHub and push calls are mocked; no real provider was called |
+| Test suite | Passing 2026-11-14 | After the `P2-10` webhook header fix: **860 passed, 0 xfail** after the `P2-10` message-shape fix. Coverage **90%**. The flaky slot-release test is fixed (0 failures in 1,000 loops under load). LLM, GitHub and push calls are mocked; no real provider was called |
 | App startup | Starts in-process | `/`, `/health` (`healthy`), `/ready` and the agent card return 200, with or without `SECRET_KEY`. Real LLM and GitHub calls not tested |
 | Docker | Passing 2026-11-12 | From `.env.example` copied to `.env`, `docker compose up --build` reached `healthy` (Docker 29.8). `/health` returned 200 from this app. The container runs as `appuser` with no Node.js. Tested on host port 8010, because another local service holds 8000 |
 | CI | Passing 2026-11-13 | Green on GitHub for PR #2 at `549f481` (ruff, pytest with coverage, `pip-audit`). GitGuardian also passed |
@@ -327,6 +327,24 @@ Keep this honest. It records what has actually been proven.
 ## 9. Session log
 
 Newest first. Keep entries short.
+
+### 2026-11-14: `P2-10` message shapes
+
+- **Done:** wrong types inside an object `message` (`parts` not an array, a part not
+  an object, a non-string `text`, a non-string `messageId`, `taskId` or `contextId`)
+  get `-32602` with a fixed message instead of `-32603`. A non-string `contextId` used
+  to fail only after a full review, and on the push path the result was then lost; it
+  is now rejected before any work. A null `taskId` or `contextId` counts as unset. A
+  data part may hold any JSON value, as A2A allows; only an array is read as history.
+  860 passed, 90% coverage.
+- **Review:** first round "changes needed"; findings: 0 blocking, 2 should-fix,
+  2 follow-up, 3 nits. Should-fix: rejecting a non-array `data` broke spec-valid A2A
+  messages, and a non-string `contextId` still failed after the review. Both fixed;
+  the re-review gave "ready" (0 blocking, 0 should-fix, 2 follow-up, 2 nits) and
+  confirmed the push path now delivers one result for a null `contextId`. Follow-ups
+  added to `P2-10`.
+- **Not verified:** no real A2A client, model or webhook; the A2A field types were
+  checked from a summary of the spec, not its exact text.
 
 ### 2026-11-14: `P2-10` flaky test and reviewer-name comments
 
