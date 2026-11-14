@@ -72,6 +72,8 @@ class JSONRPCHandler:
         self._methods: dict[str, Callable[..., Awaitable[Any]]] = {}
         # Methods that must not be called as notifications, decided from the params
         self._reply_required: dict[str, Callable[[dict[str, Any]], bool]] = {}
+        # Extra advice for the -32600 a rejected notification gets, per method
+        self._reply_hints: dict[str, str] = {}
         logger.info("JSONRPCHandler initialized")
     
     def register_method(
@@ -79,6 +81,7 @@ class JSONRPCHandler:
         name: str,
         handler: Callable[..., Awaitable[Any]],
         reply_required: Callable[[dict[str, Any]], bool] | None = None,
+        reply_hint: str | None = None,
     ) -> None:
         """
         Register a JSON-RPC method
@@ -89,6 +92,8 @@ class JSONRPCHandler:
             reply_required: Given the params, whether the call only makes sense with a
                 reply. If true, a notification (no "id") is rejected with -32600 before
                 the method runs (P1-24).
+            reply_hint: Optional advice appended to that error, e.g. how to get the
+                result without a reply. Only give advice that applies to this method.
             
         Example:
             async def analyze_pr(pr_url: str) -> dict:
@@ -105,6 +110,10 @@ class JSONRPCHandler:
             self._reply_required.pop(name, None)
         else:
             self._reply_required[name] = reply_required
+        if reply_hint is None:
+            self._reply_hints.pop(name, None)
+        else:
+            self._reply_hints[name] = reply_hint
         logger.info(f"Registered JSON-RPC method: {name}")
     
     def unregister_method(self, name: str) -> None:
@@ -117,6 +126,7 @@ class JSONRPCHandler:
         if name in self._methods:
             del self._methods[name]
             self._reply_required.pop(name, None)
+            self._reply_hints.pop(name, None)
             logger.info(f"Unregistered JSON-RPC method: {name}")
     
     def list_methods(self) -> list[str]:
@@ -193,10 +203,14 @@ class JSONRPCHandler:
                 return self._error_response(
                     request_id=None,
                     code=JSONRPCErrorCode.INVALID_REQUEST,
-                    message=(
-                        f"{request.method} returns its result in the reply, so it needs an "
-                        "\"id\". Send an id, or use a non-blocking call with a push "
-                        "notification config."
+                    message=" ".join(
+                        part
+                        for part in (
+                            f"{request.method} returns its result in the reply, so it "
+                            "needs an \"id\".",
+                            self._reply_hints.get(request.method),
+                        )
+                        if part
                     ),
                 ), True
             

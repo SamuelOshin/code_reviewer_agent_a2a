@@ -140,3 +140,31 @@ def test_non_object_body_is_an_invalid_request(client, body):
     assert res.status_code == 200
     assert res.json()["error"]["code"] == -32600
     assert res.json()["id"] is None
+
+
+# --- review round 1 ---------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("blocking", [False, 0, None, ""])
+def test_any_falsy_blocking_with_push_is_treated_as_a_push_like_the_handler(blocking):
+    # Bobby Review: the handler pushes on `not is_blocking and push_config`
+    params = {"message": {}, "configuration": {"blocking": blocking, "pushNotificationConfig": {"url": "x"}}}
+    assert message_send_needs_reply(params) is False
+
+
+def test_rejection_hint_is_per_method(client, rpc_handler):
+    async def analyze(**_):
+        return {}
+
+    rpc_handler.register_method("analyze_pr", analyze, reply_required=lambda _p: True)
+    _register_send(rpc_handler)
+    rpc_handler.register_method(
+        "message/send",
+        rpc_handler._methods["message/send"],
+        reply_required=message_send_needs_reply,
+        reply_hint="Or send it non-blocking with a pushNotificationConfig.",
+    )
+    a = client.post("/rpc", json={"jsonrpc": "2.0", "method": "analyze_pr", "params": {}}).json()
+    m = client.post("/rpc", json={"jsonrpc": "2.0", "method": "message/send", "params": BLOCKING_PARAMS}).json()
+    assert "push" not in a["error"]["message"].lower()
+    assert "pushNotificationConfig" in m["error"]["message"]
