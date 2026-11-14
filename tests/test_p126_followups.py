@@ -94,3 +94,27 @@ def test_reply_required_runs_once_per_batch_call():
         )
     )
     assert sorted(p["n"] for p in seen) == [1, 2]
+
+
+def test_returned_task_id_is_logged_escaped(caplog):
+    # Bobby Review: the blocking path logged the client's taskId raw on return
+    from tests.test_webhooks import make_result
+
+    handler = MessageHandler.__new__(MessageHandler)
+
+    class Analyzer:
+        async def analyze_pr(self, url):
+            return make_result()
+
+    from app.utils.formatters import SummaryFormatter
+
+    handler.analyzer = Analyzer()
+    handler.formatter = SummaryFormatter()
+    forged ="t\nFORGED-TASK " + "Q" * 300
+    with caplog.at_level(logging.INFO):
+        result = asyncio.run(handler._analyze_and_return("https://github.com/o/r/pull/1", forged, "m1", {}))
+    assert result["id"] == forged  # the reply keeps the id as sent
+    lines = [r.getMessage() for r in caplog.records if "Returning task result" in r.getMessage()]
+    assert lines
+    for line in lines:
+        assert "\n" not in line and "Q" * 200 not in line

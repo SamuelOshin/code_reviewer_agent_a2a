@@ -587,7 +587,7 @@ class MessageHandler:
             if "kind" not in result:
                 result["kind"] = "task"
             
-            logger.info(f"Returning task result: {result.get('id')}, state: {result['status']['state']}, kind: {result.get('kind')}")
+            logger.info(f"Returning task result: {result.get('id')!r:.100}, state: {result['status']['state']}, kind: {result.get('kind')}")
             
             return result
             
