@@ -173,7 +173,7 @@ async def test_no_lead_in_when_one_step_succeeded():
 
 
 def test_notification_without_a_batch_slot_is_dropped_without_running(monkeypatch):
-    # Bobby Review: documents that a notification that gets no slot never runs and
+    # P1-23 review: documents that a notification that gets no slot never runs and
     # gets no reply, while a request in the same position still gets -32004
     from app.core.config import settings
     from app.services.jsonrpc_handler import BATCH_CONCURRENCY, JSONRPCHandler

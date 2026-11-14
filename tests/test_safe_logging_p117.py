@@ -263,7 +263,7 @@ async def test_message_handler_failures_log_no_raw_text(push_allowed, caplog):
 
 @pytest.mark.asyncio
 async def test_push_timeout_logs_no_raw_text(caplog):
-    # httpx timeout text can carry the push URL; log the type only (Bobby Review)
+    # httpx timeout text can carry the push URL; log the type only (P1-17 review)
     handler = MessageHandler()
     handler._analyze_and_return = AsyncMock(return_value={})
     handler._create_lightweight_result = MagicMock(return_value={"status": {"state": "completed"}})

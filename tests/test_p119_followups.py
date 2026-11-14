@@ -111,7 +111,7 @@ class TestBudgetStore:
         assert not cache.claim("d-1", "h-1")  # a fresh budget, not an exhausted one
 
     def test_expired_budget_behind_a_newer_one_is_still_dropped(self, clock):
-        # Bobby Review: A fails, X fails, A fails again. A's count must age out with
+        # P1-19 review: A fails, X fails, A fails again. A's count must age out with
         # A's first failure even though X's entry is newer (no reordering on update)
         cache = webhooks.DeliveryCache(ttl_seconds=100, max_entries=8)
 
