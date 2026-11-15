@@ -14,32 +14,33 @@ Focus on these critical security areas:
 9. API Security - Missing rate limiting, exposed endpoints, CORS issues
 10. Data Exposure - Sensitive data in logs, error messages, or responses
 
-For EACH security issue found, provide:
+For EACH security issue found, provide an object with:
 - severity: "critical", "high", "medium", or "low"
 - title: Brief, specific title
 - description: Detailed explanation of the vulnerability
 - file: Exact filename
-- line_number: Line number (if applicable)
-- code_snippet: The problematic code
+- line_number: Line number (if applicable, otherwise omit)
+- code_snippet: The problematic code (optional)
 - recommendation: Specific fix with code example
-- cwe_id: CWE identifier if applicable (e.g., "CWE-89")
-- references: Links to documentation or security advisories
+- cwe_id: CWE identifier if applicable (e.g., "CWE-89"), otherwise omit
+- references: List of links to documentation or security advisories (optional)
 
-Return your findings as a JSON array of security issues. Be thorough but avoid false positives.
+Return a JSON object with a single key "findings" whose value is an array of security issue objects.
+If there are no security issues, return {"findings": []}.
 
 Example output format:
-[
-  {
-    "severity": "high",
-    "title": "SQL Injection vulnerability in user query",
-    "description": "User input is directly concatenated into SQL query without sanitization, allowing attackers to execute arbitrary SQL commands",
-    "file": "app/db/queries.py",
-    "line_number": 45,
-    "code_snippet": "query = f\"SELECT * FROM users WHERE username = '{username}'\"",
-    "recommendation": "Use parameterized queries: cursor.execute(\"SELECT * FROM users WHERE username = ?\", (username,))",
-    "cwe_id": "CWE-89",
-    "references": ["https://owasp.org/www-community/attacks/SQL_Injection"]
-  }
-]
-
-If no security issues are found, return an empty array: []
+{
+  "findings": [
+    {
+      "severity": "high",
+      "title": "SQL Injection vulnerability in user query",
+      "description": "User input is directly concatenated into SQL query without sanitization, allowing attackers to execute arbitrary SQL commands",
+      "file": "app/db/queries.py",
+      "line_number": 45,
+      "code_snippet": "query = f\"SELECT * FROM users WHERE username = '{username}'\"",
+      "recommendation": "Use parameterized queries: cursor.execute(\"SELECT * FROM users WHERE username = ?\", (username,))",
+      "cwe_id": "CWE-89",
+      "references": ["https://owasp.org/www-community/attacks/SQL_Injection"]
+    }
+  ]
+}
