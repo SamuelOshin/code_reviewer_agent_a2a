@@ -4,12 +4,14 @@
 
 Every model call goes through the provider-agnostic layer in `app.llm`, so this file
 never touches a provider SDK. Provider and model per role are configuration.
+
+P2-01: the three findings roles now call `client.generate(output_type=<Report>)`.
+The model layer validates the structured response and retries once; two failures raise
+`LLMOutputError`, which the analyzer records as a failed step (fail-closed).
+`generate_summary` stays free-text; do not change it.
 """
 
-import json
 import logging
-import re
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -19,7 +21,18 @@ from app.core.config import settings
 from app.core.exceptions import LLMError
 from app.llm import LLMClient, LLMResult, Role, build_client
 from app.llm.errors import LLMOutputError
-from app.models.analysis import BestPracticeIssue, PerformanceIssue, SecurityIssue, Severity
+from app.models.analysis import (
+    BestPracticeIssue,
+    BestPracticesReport,
+    PerformanceIssue,
+    PerformanceReport,
+    SecurityIssue,
+    SecurityReport,
+    Severity,
+    _severity_from_impact,
+)
+
+__all__ = ["LLMService", "PartialFindingsError", "MAX_DIFF_CHARS", "_severity_from_impact"]
 
 logger = logging.getLogger(__name__)
 
@@ -43,75 +56,6 @@ class PartialFindingsError(LLMOutputError):
         self.findings = findings
 
 
-_OBJECT_ARRAY_START = re.compile(r"\[\s*\{")
-
-
-def _is_findings_array(value: Any) -> bool:
-    return isinstance(value, list) and all(isinstance(item, dict) for item in value)
-
-
-def extract_findings_array(response: str, role: Role) -> list[dict[str, Any]]:
-    """Parse a JSON array of finding objects out of a model response.
-
-    Accepts a bare array, an array in a markdown code fence, or an array inside
-    prose. Anything else (no array, a truncated array, an array of arrays, an
-    object) raises `LLMOutputError`. It never returns `[]` for output it could not
-    read, because an empty list means "no issues" and could approve the PR (F-03).
-    Error messages describe the output's shape only, never its content.
-    """
-    text = (response or "").strip()
-    candidates = [text]
-    fence = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
-    if fence:
-        candidates.append(fence.group(1).strip())
-
-    # A bare `[]` as the whole text or the whole fence content means "no issues"
-    for candidate in candidates:
-        try:
-            data = json.loads(candidate)
-        except json.JSONDecodeError:
-            continue
-        except RecursionError:
-            raise LLMOutputError(f"{role} output is nested too deeply to parse") from None
-        if _is_findings_array(data):
-            return data
-        raise LLMOutputError(
-            f"{role} output is JSON but not an array of finding objects "
-            f"(got {type(data).__name__})"
-        )
-
-    # Prose around the array: take the first '[' that decodes to a non-empty array of
-    # objects. An empty `[]` in prose is never "no issues": it may be a code snippet
-    # inside a truncated array. And if an array of objects (`[` then `{`) fails to
-    # decode, stop: every later '[' may sit inside that broken array (P1-06 B1).
-    decoder = json.JSONDecoder()
-    for match in re.finditer(r"\[", text):
-        starts_objects = _OBJECT_ARRAY_START.match(text, match.start()) is not None
-        try:
-            data, _ = decoder.raw_decode(text, match.start())
-        except json.JSONDecodeError:
-            if starts_objects:
-                raise LLMOutputError(
-                    f"{role} output has a truncated or invalid findings array "
-                    f"({len(text)} characters)"
-                ) from None
-            continue
-        except RecursionError:
-            raise LLMOutputError(f"{role} output is nested too deeply to parse") from None
-        if data and _is_findings_array(data):
-            return data
-        if starts_objects:
-            raise LLMOutputError(
-                f"{role} output has an array that is not all finding objects "
-                f"({len(text)} characters)"
-            )
-
-    raise LLMOutputError(
-        f"{role} output could not be parsed as a JSON array of findings "
-        f"({len(text)} characters)"
-    )
-
-
 class LLMService:
     """Security, performance, best-practice and summary calls for a PR review"""
 
@@ -127,6 +71,25 @@ class LLMService:
     def models_by_role(self) -> dict[str, str]:
         """Configured model (with any fallbacks) for each role, for the result record."""
         return {str(role): self.client.model_name(role) for role in Role}
+
+    async def _generate_typed(
+        self,
+        role: Role,
+        prompt: str,
+        system_prompt: str | None,
+        output_type: type[IssueT],
+    ) -> LLMResult[IssueT]:
+        """One structured call through the model layer, with usage logged (never output)."""
+        result: LLMResult[IssueT] = await self.client.generate(
+            role, prompt, instructions=system_prompt or None, output_type=output_type
+        )
+        usage = result.usage
+        logger.info(
+            f"LLM {role} call on {result.model}: {usage.input_tokens} in, "
+            f"{usage.output_tokens} out, {usage.latency_ms:.0f} ms, cost "
+            f"{'unknown' if usage.cost_usd is None else f'${usage.cost_usd:.6f}'}"
+        )
+        return result
 
     async def _generate(self, role: Role, prompt: str, system_prompt: str | None) -> str:
         """One text call through the model layer, with usage logged (never the output)."""
@@ -150,7 +113,7 @@ class LLMService:
             'performance_analysis': 'performance_analysis.txt',
             'summary_generation': 'summary_generation.txt'
         }
-        
+
         for key, filename in prompt_files.items():
             filepath = prompt_dir / filename
             try:
@@ -159,39 +122,8 @@ class LLMService:
             except FileNotFoundError:
                 logger.warning(f"Prompt template not found: {filepath}")
                 prompts[key] = ""
-        
-        return prompts
-    
-    def _parse_findings(
-        self,
-        role: Role,
-        response: str,
-        model: type[IssueT],
-        prepare: Callable[[dict[str, Any]], None] | None = None,
-    ) -> list[IssueT]:
-        """Validate model output into findings, failing closed.
 
-        Unparseable output raises `LLMOutputError`. If only some findings are
-        invalid, the valid ones are kept and `PartialFindingsError` is raised so the
-        review is marked incomplete. Nothing from the output itself is logged:
-        validation errors echo their input, which is PR code.
-        """
-        findings: list[IssueT] = []
-        dropped = 0
-        for raw in extract_findings_array(response, role):
-            try:
-                if prepare is not None:
-                    prepare(raw)
-                findings.append(model(**raw))
-            except Exception:
-                dropped += 1
-        if dropped:
-            logger.warning(f"Dropped {dropped} invalid {role} finding(s) from model output")
-            raise PartialFindingsError(
-                f"{dropped} {role} finding(s) in the model output were invalid", findings
-            )
-        logger.info(f"Found {len(findings)} {role} issues")
-        return findings
+        return prompts
 
     @staticmethod
     def _wrap_error(task: str, error: Exception) -> LLMError:
@@ -205,20 +137,48 @@ class LLMService:
             return error
         logger.error(f"{task} error: {type(error).__name__}")
         return LLMError(f"{task} failed: {type(error).__name__}")
-    
+
+    @staticmethod
+    def _extract_report_findings(role: Role, report: Any) -> list[Any]:
+        """Extract validated findings from a Report, failing closed on bad data.
+
+        If every item in the report was invalid, raises `LLMOutputError` (step failure).
+        If some were invalid, keeps the valid ones and raises `PartialFindingsError`
+        so the review is marked incomplete. Logs counts only, never model output.
+        """
+        if not hasattr(report, "findings") or not isinstance(report.findings, list):
+            raise LLMOutputError(
+                f"{role} output is not a valid report object (got {type(report).__name__})"
+            )
+        dropped = getattr(report, "dropped_count", 0)
+        if dropped:
+            logger.warning(
+                f"Dropped {dropped} invalid {role} finding(s) from model output"
+            )
+            if not report.findings:
+                raise LLMOutputError(
+                    f"All {dropped} {role} finding(s) in the model output were invalid"
+                )
+            raise PartialFindingsError(
+                f"{dropped} {role} finding(s) in the model output were invalid",
+                list(report.findings),
+            )
+        findings = list(report.findings)
+        logger.info(f"Found {len(findings)} {role} issues")
+        return findings
+
     async def analyze_security(
-        self, 
-        diff_content: str, 
+        self,
+        diff_content: str,
         files: list[dict[str, Any]]
     ) -> list[SecurityIssue]:
-        """LLM-powered security analysis"""
+        """LLM-powered security analysis (P2-01: schema-enforced structured output)."""
         try:
-            # Format file context - handle both dict and PullRequestFile objects
             file_list = "\n".join([
-                f"- {f.filename if hasattr(f, 'filename') else f.get('filename', 'unknown')}" 
+                f"- {f.filename if hasattr(f, 'filename') else f.get('filename', 'unknown')}"
                 for f in files[:10]
             ])
-            
+
             prompt = f"""Analyze the following code changes for security vulnerabilities.
 
 Changed Files ({len(files)}):
@@ -229,31 +189,32 @@ Code Diff:
 {diff_content[:MAX_DIFF_CHARS]}
 ```
 
-Return your findings as a JSON array following the specified format."""
-            
-            response = await self._generate(
-                Role.SECURITY, prompt, self.prompts.get('security_analysis', '')
-            )
-            
-            return self._parse_findings(Role.SECURITY, response, SecurityIssue)
+Return your findings in the `findings` field. Use an empty list if there are no issues."""
 
+            result = await self._generate_typed(
+                Role.SECURITY, prompt,
+                self.prompts.get('security_analysis', ''),
+                SecurityReport,
+            )
+            return self._extract_report_findings(Role.SECURITY, result.output)
+
+        except (LLMOutputError, PartialFindingsError):
+            raise
         except Exception as e:
-            # Shared error types (rate limit, auth, timeout, output) reach the caller
             raise self._wrap_error("Security analysis", e) from None
-    
+
     async def analyze_performance(
-        self, 
-        diff_content: str, 
+        self,
+        diff_content: str,
         files: list[dict[str, Any]]
     ) -> list[PerformanceIssue]:
-        """LLM-powered performance analysis"""
+        """LLM-powered performance analysis (P2-01: schema-enforced structured output)."""
         try:
-            # Format file context - handle both dict and PullRequestFile objects
             file_list = "\n".join([
-                f"- {f.filename if hasattr(f, 'filename') else f.get('filename', 'unknown')}" 
+                f"- {f.filename if hasattr(f, 'filename') else f.get('filename', 'unknown')}"
                 for f in files[:10]
             ])
-            
+
             prompt = f"""Analyze the following code changes for performance issues.
 
 Changed Files ({len(files)}):
@@ -264,33 +225,32 @@ Code Diff:
 {diff_content[:MAX_DIFF_CHARS]}
 ```
 
-Return your findings as a JSON array following the specified format."""
-            
-            response = await self._generate(
-                Role.PERFORMANCE, prompt, self.prompts.get('performance_analysis', '')
-            )
-            
-            return self._parse_findings(
-                Role.PERFORMANCE, response, PerformanceIssue, _severity_from_impact
-            )
+Return your findings in the `findings` field. Use an empty list if there are no issues."""
 
+            result = await self._generate_typed(
+                Role.PERFORMANCE, prompt,
+                self.prompts.get('performance_analysis', ''),
+                PerformanceReport,
+            )
+            return self._extract_report_findings(Role.PERFORMANCE, result.output)
+
+        except (LLMOutputError, PartialFindingsError):
+            raise
         except Exception as e:
-            # Shared error types (rate limit, auth, timeout, output) reach the caller
             raise self._wrap_error("Performance analysis", e) from None
-    
+
     async def analyze_best_practices(
-        self, 
-        diff_content: str, 
+        self,
+        diff_content: str,
         files: list[dict[str, Any]]
     ) -> list[BestPracticeIssue]:
-        """LLM-powered best practices analysis"""
+        """LLM-powered best practices analysis (P2-01: schema-enforced structured output)."""
         try:
-            # Format file context - handle both dict and PullRequestFile objects
             file_list = "\n".join([
-                f"- {f.filename if hasattr(f, 'filename') else f.get('filename', 'unknown')}" 
+                f"- {f.filename if hasattr(f, 'filename') else f.get('filename', 'unknown')}"
                 for f in files[:10]
             ])
-            
+
             prompt = f"""Analyze the following code changes for coding best practice violations.
 
 Changed Files ({len(files)}):
@@ -303,28 +263,26 @@ Code Diff:
 
 Focus on: code organization, naming conventions, documentation, error handling, testing, maintainability.
 
-Return your findings as a JSON array with:
+Return your findings in the `findings` field, each with:
 - severity (high/medium/low)
 - category (e.g., "naming", "documentation", "error-handling")
-- title
-- description
-- file
-- line_number (optional)
-- code_snippet (optional)
-- recommendation"""
-            
-            response = await self._generate(
-                Role.BEST_PRACTICES,
-                prompt,
-                "You are a code review expert focused on software engineering best practices.",
-            )
-            
-            return self._parse_findings(Role.BEST_PRACTICES, response, BestPracticeIssue)
+- title, description, file, recommendation
+- line_number and code_snippet are optional
 
+Use an empty list if there are no issues."""
+
+            result = await self._generate_typed(
+                Role.BEST_PRACTICES, prompt,
+                "You are a code review expert focused on software engineering best practices.",
+                BestPracticesReport,
+            )
+            return self._extract_report_findings(Role.BEST_PRACTICES, result.output)
+
+        except (LLMOutputError, PartialFindingsError):
+            raise
         except Exception as e:
-            # Shared error types (rate limit, auth, timeout, output) reach the caller
             raise self._wrap_error("Best practices analysis", e) from None
-    
+
     async def generate_summary(
         self,
         pr_title: str,
@@ -337,13 +295,13 @@ Return your findings as a JSON array with:
         total_deletions: int,
         changed_files: int
     ) -> str:
-        """Generate executive summary for PR review"""
+        """Generate executive summary for PR review (stays free-text; not changed by P2-01)."""
         try:
             # Format findings for context
             critical_security = [s for s in security_issues if s.severity == Severity.CRITICAL]
             high_security = [s for s in security_issues if s.severity == Severity.HIGH]
             high_perf = [p for p in performance_issues if p.severity in (Severity.CRITICAL, Severity.HIGH)]
-            
+
             prompt = f"""Generate an executive summary for this Pull Request review.
 
 PR Details:
@@ -368,29 +326,13 @@ Top Performance Concerns:
 {chr(10).join([f"- {p.title}" for p in high_perf[:3]]) if high_perf else "None"}
 
 Generate the executive summary following the specified format."""
-            
+
             response = await self._generate(
                 Role.SUMMARY, prompt, self.prompts.get('summary_generation', '')
             )
-            
+
             logger.info("Generated executive summary")
             return response.strip()
-            
+
         except Exception as e:
-            # Shared error types (rate limit, auth, timeout, output) reach the caller
             raise self._wrap_error("Summary generation", e) from None
-
-
-def _severity_from_impact(finding: dict[str, Any]) -> None:
-    """Fill in `severity` from free-text `impact` when the model left it out."""
-    if 'severity' in finding or 'impact' not in finding:
-        return
-    impact_upper = str(finding.get('impact', '')).upper()
-    if any(word in impact_upper for word in ['CRITICAL', 'SEVERE', '10X', '100X']):
-        finding['severity'] = 'critical'
-    elif any(word in impact_upper for word in ['HIGH', 'SIGNIFICANT', '2X', '3X']):
-        finding['severity'] = 'high'
-    elif any(word in impact_upper for word in ['MEDIUM', 'MODERATE']):
-        finding['severity'] = 'medium'
-    else:
-        finding['severity'] = 'low'
