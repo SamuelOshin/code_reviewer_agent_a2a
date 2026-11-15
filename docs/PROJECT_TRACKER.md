@@ -14,7 +14,7 @@ read this file alone and continue the work.
 |---|---|
 | **Current phase** | Phase 1: make it honest and working (planning complete) |
 | **Active task** | None. Phase 1 is done (`P1-01` to `P1-27`); `P1-05` closed 2026-11-15 with real reviews on two providers. The follow-up loop converged at `P1-27`; remaining review items are in the `P2-10` backlog |
-| **Next action** | Owner picks a license (the old README claimed MIT; no LICENSE file exists). Then Phase 2, starting with `P2-01`: the real runs showed that whether a review completes depends on the model following the JSON format |
+| **Next action** | Phase 2, starting with `P2-01`: the real runs showed that whether a review completes depends on the model following the JSON format |
 | **Working branch** | `main`. Start each new task on its own branch from `main`. `P1-27` on `chore/p1-27` for one PR |
 | **Blockers** | None. Owner approved running repo code on 2026-11-12. Use `uv` for everything (`uv sync`, `uv run`). If an install fails on a Windows cache file lock, retry or set a different `UV_CACHE_DIR` |
 | **Working rule** | Parallel agents don't edit this file. The coordinating session records their results |
@@ -194,6 +194,7 @@ baselines. Routing ships only if it cuts cost without a meaningful drop in recal
 | D-14 | Add a model routing strategy | Owner's request. Controls cost while keeping risky code on strong models | 2026-11-05 |
 | D-15 | Jev is an optional, replaceable routing classifier, kept only if evals justify it. Call the decision API directly and don't use `typesafe/jev-router` | Owner's choice. Keeps the design provider agnostic and model selection auditable | 2026-11-05 |
 | D-16 | Send only metadata to a third-party classifier by default (paths, sizes, languages, rule hits). Sending diff text is opt-in, and never for private repos without the repo owner's consent | Owner accepted the recommendation | 2026-11-12 |
+| D-17 | License the project under Apache-2.0 (`LICENSE`, copyright 2026 Samuel Oshin) | Owner's choice: permissive, with an explicit patent grant | 2026-11-15 |
 
 ### Proposed: need the owner's answer
 

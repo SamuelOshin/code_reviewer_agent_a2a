@@ -269,9 +269,10 @@ Not built yet; see the [tracker](docs/PROJECT_TRACKER.md):
 - Prompt-injection defences (`P2-06`).
 - Evals with published precision and recall, an MCP server, tracing and cost metrics,
   persisted runs and model routing (Phase 3).
-- Not tested yet: a real review against a live provider, and the push-notification path
-  against a real receiver.
+- Not tested yet: the GitHub webhook path against real GitHub, and the push-notification
+  path against a real receiver. A real review via `/rpc` has run on two providers
+  (Google, and OpenRouter through the `openai-compatible` adapter).
 
 ## License
 
-No license file is present in the repository yet.
+Licensed under the [Apache License 2.0](LICENSE). Copyright 2026 Samuel Oshin.
