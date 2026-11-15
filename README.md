@@ -93,7 +93,7 @@ All settings are environment variables (or `.env`). [`.env.example`](.env.exampl
 | `LLM_MODEL` | yes in practice | `<provider>:<model-id>`; providers `google`, `openai`, `anthropic`, `openai-compatible`. A value without a provider prefix is rejected with an explanatory error |
 | `LLM_MODEL_SECURITY`, `_PERFORMANCE`, `_BEST_PRACTICES`, `_SUMMARY` | no | Per-role model; empty uses `LLM_MODEL` |
 | `LLM_FALLBACK_MODELS` | no | Comma-separated models tried in order when a call fails |
-| `LLM_STRUCTURED_OUTPUT_MODE` | no | `auto` (default), `native`, `tool` or `prompted` |
+| `LLM_STRUCTURED_OUTPUT_MODE` | no | Structured findings mode: `auto` (default), `native`, `tool` or `prompted` |
 | `LLM_TEMPERATURE`, `LLM_MAX_TOKENS`, `LLM_MAX_RETRIES`, `LLM_TIMEOUT_SECONDS` | no | Defaults 0.3, 4000, 2, 120 |
 | `GOOGLE_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` | per provider | Only for the providers your models use |
 | `OPENAI_COMPATIBLE_BASE_URL`, `OPENAI_COMPATIBLE_API_KEY` | for `openai-compatible` | Local models or gateways |
@@ -179,11 +179,14 @@ result unless the webhook stored it before failing. The failure is only in our l
 error id: `Not pushing an error after webhook status <n>`, or `Not pushing an error to an
 unreachable webhook` when the webhook could not be reached. Make the webhook return 2xx once it has the result. A review that fails because GitHub could not be reached or the
 PR could not be read says so, as fixed text plus an error id, never the exception text.
-A model failure, including a rate limit, does not fail the task: it shows in the review
-as a failed analysis step (for example "Security analysis failed (RuntimeError)."). When the
-model was rate-limited, the step says so instead: "the model was rate-limited; wait a few
-minutes and run the review again." If every analysis step failed that way, the review status
-is `failed` and the summary starts by saying the model was rate-limited. PR URLs
+A model failure, including a rate limit or output validation error, does not fail the
+task: it shows in the review as a failed analysis step (for example "Security analysis
+failed (LLMOutputError)."). Findings calls use schema-enforced Report models through the
+model layer (with native schema, tool calling, or prompted fallback), failing closed if
+unparseable and preserving valid items if partial. When the model was rate-limited, the
+step says so instead: "the model was rate-limited; wait a few minutes and run the review
+again." If every analysis step failed that way, the review status is `failed` and the
+summary starts by saying the model was rate-limited. PR URLs
 in message text are accepted as `http://` or `https://`, with `github.com` and `/pull/` in
 any case (and without a scheme), and are rewritten to `https://github.com/.../pull/N`; PR number 0 is
 rejected. On timeout, a GitHub request that has already started
@@ -251,7 +254,7 @@ app/
   llm/        provider-agnostic model layer (the only place provider SDKs are used)
   models/     JSON-RPC, A2A, GitHub and analysis models
   routes/     rpc, a2a tasks, webhooks, health
-  services/   analyzer, GitHub client, LLM prompts and parsing, message handler
+  services/   analyzer, GitHub client, LLM prompts and structured findings, message handler
   utils/      diff parser, security and performance rules, formatters
 config/       agent card and LLM prompts
 tests/
