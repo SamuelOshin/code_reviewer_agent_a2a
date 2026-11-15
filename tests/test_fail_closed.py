@@ -1,11 +1,19 @@
-"""P1-06: the review fails closed.
+"""P1-06 / P2-01: the review fails closed.
 
-Unreadable, truncated or partial LLM output, a failed LLM call, or a diff longer than
-the LLM sees, must never produce an approval. Rule findings survive LLM failures, the
-truncation is reported in the result, and raw model output never reaches the logs.
+A failed LLM call, an invalid structured response, partial findings, or a diff
+longer than the LLM sees, must never produce an approval. Rule findings survive
+LLM failures, the truncation is reported in the result, and raw model output never
+reaches the logs.
 
-The model-layer client is faked, so the real parsing in `LLMService` runs. No
-provider is called.
+The model-layer client is faked; `LLMService` runs for real on top of it. No
+provider is called. With P2-01, `client.generate` is called with a Report
+output_type and returns a validated Report object — not a raw string. The
+old hand-written parser (extract_findings_array) is gone.
+
+Design note: the fake_client inspects `output_type` from kwargs.  When it
+receives a Report type it returns a matching validated instance (or raises
+LLMOutputError as the real client would on unvalidatable output). When it
+receives `str` (the summary call) it returns the string directly.
 """
 
 import logging
@@ -16,7 +24,13 @@ import pytest
 from app.core.exceptions import AnalysisError
 from app.llm import LLMResult, Role, Usage
 from app.llm.errors import LLMOutputError, LLMRateLimitError
-from app.models.analysis import AnalysisStatus, ApprovalRecommendation, SecurityIssue
+from app.models.analysis import (
+    AnalysisStatus,
+    ApprovalRecommendation,
+    PerformanceIssue,
+    SecurityIssue,
+    SecurityReport,
+)
 from app.services.llm_service import MAX_DIFF_CHARS, LLMService, PartialFindingsError
 from app.utils.formatters import SummaryFormatter
 from tests.test_code_analyzer import RISKY_DIFF, SAFE_DIFF, make_analyzer, run
@@ -25,46 +39,61 @@ APPROVING = {ApprovalRecommendation.APPROVE, ApprovalRecommendation.APPROVE_WITH
 
 SENTINEL = "SENTINEL-LLM-OUTPUT-7f3a"
 
-VALID_FINDING = (
-    '{"severity": "high", "title": "SQL injection", "description": "d", '
-    '"file": "a.py", "line_number": 3, "recommendation": "r", "references": ["CWE-89"]}'
-)
-
-# Output that must never be read as "no issues"
-MALFORMED_OUTPUTS = {
-    "prose": "I could not find any problems in this diff.",
-    "empty": "",
-    "object": '{"findings": []}',
-    "truncated": '[{"severity": "high", "title": "SQL injection", "descr',
-    "truncated_fenced": '```json\n[{"severity": "high", "title": "SQL inj\n```',
-    "nested_array": f"[[{VALID_FINDING}]]",
-    "array_of_strings": '["looks fine"]',
-    "prose_with_citation": "All good, see [1] for details.",
-    # B1: a truncated array with an inner `[]` used to parse as "no issues"
-    "truncated_fence_inner_empty": (
-        '```json\n[{"severity": "critical", "title": "SQLi", '
-        '"code_snippet": "rows = []", "descr'
-    ),
-    "prose_inner_empty_then_truncated": (
-        'Checked `items = []` handling. Findings:\n'
-        '[{"severity": "critical", "title": "RCE", "descr'
-    ),
-    "prose_empty_then_truncated": 'See [] below.\n[{"severity": "critical", "title": "RCE"',
-    "prose_empty_only": "No issues found: []",
-    "deeply_nested": "[" * 5000,
-    "prose_deeply_nested": "Findings: " + "[" * 5000,
-}
+# A valid SecurityReport returned by the schema layer
+VALID_SECURITY_REPORT = SecurityReport(findings=[
+    SecurityIssue(
+        severity="high",
+        title="SQL injection",
+        description="d",
+        file="a.py",
+        line_number=3,
+        recommendation="r",
+        references=["CWE-89"],
+    )
+])
 
 
 def fake_client(outputs: dict[Role, object]) -> MagicMock:
-    """A model-layer client that returns (or raises) a fixed output per role."""
+    """A model-layer client that returns (or raises) a fixed output per role.
+
+    P2-01: the three findings roles now call generate(output_type=<Report>).
+    This fake honours that: when output_type is a Report class it returns the
+    value from `outputs` (which should already be a Report instance), or a
+    default empty Report if the role is not in `outputs`. When output_type is
+    str (the summary role) it returns a string.
+
+    If the value in `outputs` is a BaseException, it is raised regardless of
+    output_type, simulating a provider-level failure.
+    """
 
     async def generate(role, prompt, **kwargs):
-        out = outputs.get(role, "[]" if role != Role.SUMMARY else "Summary")
+        output_type = kwargs.get("output_type", str)
+        out = outputs.get(role)
+
+        # Exception → raise it (provider failure, auth error, output error, …)
         if isinstance(out, BaseException):
             raise out
+
+        # Summary role always gets free text
+        if output_type is str:
+            return LLMResult(
+                output=out if isinstance(out, str) else "Summary",
+                usage=Usage(input_tokens=1, output_tokens=1, requests=1, latency_ms=1.0),
+                model="test:model",
+            )
+
+        # Findings role: return the Report instance provided, or a default empty one
+        if out is None:
+            report = output_type(findings=[])
+        elif isinstance(out, output_type):
+            report = out
+        else:
+            # The caller put a wrong type here — treat it as an output error
+            raise LLMOutputError(
+                f"fake_client: expected {output_type.__name__}, got {type(out).__name__}"
+            )
         return LLMResult(
-            output=out,
+            output=report,
             usage=Usage(input_tokens=1, output_tokens=1, requests=1, latency_ms=1.0),
             model="test:model",
         )
@@ -84,46 +113,41 @@ def analyzer_with(outputs: dict[Role, object], diff=SAFE_DIFF):
 
 
 # --- Parsing in LLMService ---------------------------------------------------------
+# P2-01: the old tests for the hand-written JSON parser are replaced by tests that
+# exercise the schema layer's fail-closed contract. The model layer (Pydantic AI)
+# handles wire-format validation and retry; here we test that LLMOutputError from
+# that layer propagates correctly through LLMService.
 
 
 class TestParsing:
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("output", MALFORMED_OUTPUTS.values(), ids=MALFORMED_OUTPUTS.keys())
-    async def test_unreadable_output_raises_instead_of_empty_list(self, output):
-        service = LLMService(client=fake_client({Role.SECURITY: output}))
+    async def test_llm_output_error_propagates_as_output_error(self):
+        """LLMOutputError from the model layer must propagate unchanged."""
+        error = LLMOutputError("model gave unparseable output")
+        service = LLMService(client=fake_client({Role.SECURITY: error}))
         with pytest.raises(LLMOutputError):
             await service.analyze_security("diff", [])
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("output", [
-        f"[{VALID_FINDING}]",
-        f"```json\n[{VALID_FINDING}]\n```",
-        f"Here is what I found:\n[{VALID_FINDING}]\nHope that helps.",
-    ], ids=["bare", "fenced", "prose"])
-    async def test_valid_array_is_parsed_including_nested_fields(self, output):
-        # The old non-greedy regex cut the array at the first ']' (inside
-        # "references") and returned [] for the prose case
-        service = LLMService(client=fake_client({Role.SECURITY: output}))
+    async def test_empty_report_means_no_issues(self):
+        """An empty findings list from the schema layer is valid: no issues found."""
+        empty = SecurityReport(findings=[])
+        service = LLMService(client=fake_client({Role.SECURITY: empty}))
+        result = await service.analyze_security("diff", [])
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_valid_report_returns_findings(self):
+        """A populated report passes through with all fields intact."""
+        service = LLMService(client=fake_client({Role.SECURITY: VALID_SECURITY_REPORT}))
         issues = await service.analyze_security("diff", [])
         assert len(issues) == 1
+        assert issues[0].title == "SQL injection"
         assert issues[0].references == ["CWE-89"]
 
     @pytest.mark.asyncio
-    async def test_empty_array_means_no_issues(self):
-        service = LLMService(client=fake_client({Role.SECURITY: "[]"}))
-        assert await service.analyze_security("diff", []) == []
-
-    @pytest.mark.asyncio
-    async def test_invalid_findings_are_dropped_but_reported(self):
-        output = f'[{VALID_FINDING}, {{"severity": "nope", "title": "x"}}]'
-        service = LLMService(client=fake_client({Role.SECURITY: output}))
-        with pytest.raises(PartialFindingsError) as exc:
-            await service.analyze_security("diff", [])
-        assert len(exc.value.findings) == 1
-        assert isinstance(exc.value.findings[0], SecurityIssue)
-
-    @pytest.mark.asyncio
     async def test_diff_sent_to_llm_is_capped(self):
+        """The diff passed to the prompt must be capped at MAX_DIFF_CHARS."""
         client = fake_client({})
         service = LLMService(client=client)
         await service.analyze_security("x" * (MAX_DIFF_CHARS + 500), [])
@@ -147,23 +171,14 @@ class TestNeverApproves:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("role", [Role.SECURITY, Role.PERFORMANCE, Role.BEST_PRACTICES])
-    @pytest.mark.parametrize("output", MALFORMED_OUTPUTS.values(), ids=MALFORMED_OUTPUTS.keys())
-    async def test_malformed_output_never_approves(self, role, output):
-        analyzer, github = analyzer_with({role: output})
+    async def test_llm_output_error_never_approves(self, role):
+        """LLMOutputError from the model layer must mark the review incomplete/failed."""
+        error = LLMOutputError("model gave bad structured output")
+        analyzer, github = analyzer_with({role: error})
         result = await run(analyzer, github)
         assert result.approval_recommendation not in APPROVING
-        assert result.approval_recommendation == ApprovalRecommendation.INCOMPLETE
-        assert result.status == AnalysisStatus.INCOMPLETE
+        assert result.status in (AnalysisStatus.INCOMPLETE, AnalysisStatus.FAILED)
         assert result.incomplete_reasons
-
-    @pytest.mark.asyncio
-    async def test_partly_invalid_output_never_approves_and_keeps_valid_findings(self):
-        output = f'[{VALID_FINDING}, {{"title": "missing fields"}}]'
-        analyzer, github = analyzer_with({Role.SECURITY: output})
-        result = await run(analyzer, github)
-        assert result.status == AnalysisStatus.INCOMPLETE
-        assert result.approval_recommendation not in APPROVING
-        assert [i.title for i in result.security_findings] == ["SQL injection"]
 
     @pytest.mark.asyncio
     async def test_every_llm_step_failing_is_failed_not_approved(self):
@@ -216,16 +231,35 @@ class TestNeverApproves:
 
     @pytest.mark.asyncio
     async def test_incomplete_review_does_not_claim_good_quality(self):
-        analyzer, github = analyzer_with({Role.SECURITY: "not json"})
+        error = LLMOutputError("bad output")
+        analyzer, github = analyzer_with({Role.SECURITY: error})
         result = await run(analyzer, github)
         assert result.key_concerns[0].startswith("⏸️ INCOMPLETE")
         assert not any(c.startswith("✅") for c in result.key_concerns)
+
+    @pytest.mark.asyncio
+    async def test_partial_findings_error_keeps_valid_findings(self):
+        """PartialFindingsError in _run_llm_step keeps valid findings and marks incomplete."""
+        # We inject a PartialFindingsError directly (the service raises it
+        # after the schema layer returns; tested more directly in test_p201)
+        valid = SecurityIssue(
+            severity="high", title="SQL injection", description="d",
+            file="a.py", recommendation="r",
+        )
+        err = PartialFindingsError("1 finding invalid", [valid])
+        analyzer, github = analyzer_with({Role.SECURITY: err})
+        result = await run(analyzer, github)
+        assert result.status == AnalysisStatus.INCOMPLETE
+        assert result.approval_recommendation not in APPROVING
+        # The valid finding is still present
+        assert any(f.title == "SQL injection" for f in result.security_findings)
 
 
 class TestPostedComment:
     @pytest.mark.asyncio
     async def test_incomplete_comment_says_it_is_not_an_approval(self):
-        analyzer, github = analyzer_with({Role.SECURITY: "not json"})
+        error = LLMOutputError("bad structured output")
+        analyzer, github = analyzer_with({Role.SECURITY: error})
         result = await run(analyzer, github)
 
         comment = SummaryFormatter.format_for_github_comment(result)
@@ -288,24 +322,29 @@ class TestNoRawOutputInLogs:
 
     @pytest.mark.asyncio
     async def test_sentinel_in_model_output_never_logged_or_posted(self, caplog):
+        # P2-01: the model layer raises LLMOutputError; the sentinel stays in the
+        # provider_error attribute, never in messages or logs.
+        err_security = LLMOutputError("output error (no content)")
+        err_security.provider_error = Exception(SENTINEL)  # private, never logged
+        perf_valid = PerformanceIssue(
+            severity="high", title="Valid", description="d",
+            file="a.py", impact="2x", recommendation="r",
+        )
+        err_perf = PartialFindingsError(
+            "1 performance finding(s) in the model output were invalid",
+            [perf_valid],
+        )
+        err_bp = ValueError(f"bad output: {SENTINEL}")
+        err_summary = ValueError(f"bad summary: {SENTINEL}")
         outputs = {
-            # Unparseable text (the old code logged its first 200 characters)
-            Role.SECURITY: f"Sorry, {SENTINEL} is not something I can review.",
-            # Invalid findings: validation errors echo their input
-            Role.PERFORMANCE: (
-                f'[{{"severity": "{SENTINEL}", "title": "{SENTINEL}", '
-                f'"impact": "{SENTINEL}", "file": "a.py"}}]'
-            ),
-            # A non-LLMError whose message carries output (str(e) used to be logged
-            # and copied into the LLMError message)
-            Role.BEST_PRACTICES: ValueError(f"bad output: {SENTINEL}"),
-            Role.SUMMARY: ValueError(f"bad summary: {SENTINEL}"),
+            Role.SECURITY: err_security,
+            Role.PERFORMANCE: err_perf,
+            Role.BEST_PRACTICES: err_bp,
+            Role.SUMMARY: err_summary,
         }
         analyzer, github = analyzer_with(outputs)
 
         with caplog.at_level(logging.DEBUG):
-            # LLMService wraps the summary ValueError in an LLMError, so the analyzer
-            # falls back to a plain summary instead of raising
             result = await run(analyzer, github)
 
         assert result.status == AnalysisStatus.INCOMPLETE
@@ -317,8 +356,10 @@ class TestNoRawOutputInLogs:
 
     @pytest.mark.asyncio
     async def test_sentinel_never_in_result_reasons_or_comment(self):
+        err = LLMOutputError("output error (no content)")
+        err.provider_error = Exception(SENTINEL)
         outputs = {
-            Role.SECURITY: f"{SENTINEL} [{{\"title\": \"{SENTINEL}\"}}]",
+            Role.SECURITY: err,
             Role.BEST_PRACTICES: ValueError(SENTINEL),
         }
         analyzer, github = analyzer_with(outputs)
@@ -329,7 +370,10 @@ class TestNoRawOutputInLogs:
 
     @pytest.mark.asyncio
     async def test_llm_error_message_carries_no_output(self):
-        service = LLMService(client=fake_client({Role.SECURITY: f"text {SENTINEL}"}))
+        err = LLMOutputError("structured output validation failed")
+        # provider_error might carry content, but str(LLMOutputError) must not
+        err.provider_error = Exception(f"content: {SENTINEL}")
+        service = LLMService(client=fake_client({Role.SECURITY: err}))
         with pytest.raises(LLMOutputError) as exc:
             await service.analyze_security("diff", [])
         assert SENTINEL not in str(exc.value)

@@ -99,11 +99,16 @@ async def test_shared_error_type_reaches_the_caller():
 @pytest.mark.asyncio
 async def test_each_analysis_uses_its_own_role():
     service = make_service()
-    service.client.generate = AsyncMock(return_value=LLMResult(
-        output="[]",
-        usage=Usage(input_tokens=1, output_tokens=1, requests=1, latency_ms=1.0),
-        model="test:model",
-    ))
+
+    async def mock_generate(role, prompt, *, output_type=str, **kwargs):
+        out = output_type(findings=[]) if output_type is not str else "[]"
+        return LLMResult(
+            output=out,
+            usage=Usage(input_tokens=1, output_tokens=1, requests=1, latency_ms=1.0),
+            model="test:model",
+        )
+
+    service.client.generate = AsyncMock(side_effect=mock_generate)
 
     await service.analyze_security("diff", [])
     await service.analyze_performance("diff", [])
