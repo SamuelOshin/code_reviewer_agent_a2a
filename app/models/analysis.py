@@ -6,10 +6,12 @@ Pydantic models for code analysis results including security, performance,
 and best practice findings.
 """
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 from enum import StrEnum
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 
 
 class Severity(StrEnum):
@@ -87,6 +89,110 @@ class BestPracticeIssue(BaseModel):
     code_snippet: str | None = None
     recommendation: str
     references: list[str] = []
+
+
+def _severity_from_impact(finding: dict[str, Any]) -> None:
+    """Fill in `severity` from free-text `impact` when the model left it out."""
+    if 'severity' in finding or 'impact' not in finding:
+        return
+    impact_upper = str(finding.get('impact', '')).upper()
+    if any(word in impact_upper for word in ['CRITICAL', 'SEVERE', '10X', '100X']):
+        finding['severity'] = 'critical'
+    elif any(word in impact_upper for word in ['HIGH', 'SIGNIFICANT', '2X', '3X']):
+        finding['severity'] = 'high'
+    elif any(word in impact_upper for word in ['MEDIUM', 'MODERATE']):
+        finding['severity'] = 'medium'
+    else:
+        finding['severity'] = 'low'
+
+
+def _validate_report_findings(
+    data: Any,
+    handler: Any,
+    issue_cls: type,
+    prepare: Callable[[dict[str, Any]], None] | None = None,
+) -> Any:
+    """Validate report findings into typed issues, dropping invalid ones.
+
+    If data is a dict with a 'findings' list, validates each item. Valid items
+    are kept, while invalid items are dropped and counted in `_dropped_count`.
+    This allows partial findings to be preserved and reported while marking the
+    review incomplete (P2-01).
+    """
+    if isinstance(data, dict) and 'findings' in data and isinstance(data['findings'], list):
+        valid = []
+        dropped = 0
+        for item in data['findings']:
+            if isinstance(item, issue_cls):
+                valid.append(item)
+            elif isinstance(item, dict):
+                raw = dict(item)
+                if prepare is not None:
+                    prepare(raw)
+                try:
+                    valid.append(issue_cls(**raw))
+                except Exception:
+                    dropped += 1
+            else:
+                dropped += 1
+        inst = handler({'findings': valid})
+        inst._dropped_count = dropped
+        return inst
+    return handler(data)
+
+
+class SecurityReport(BaseModel):
+    """Schema-enforced wrapper for security findings from the LLM.
+
+    Using an object instead of a bare array makes "no issues" unambiguous: an
+    empty list is a deliberate answer, not prose that the parser can't read (P2-01).
+    """
+
+    findings: list[SecurityIssue] = []
+    _dropped_count: int = PrivateAttr(default=0)
+
+    @property
+    def dropped_count(self) -> int:
+        return self._dropped_count
+
+    @model_validator(mode='wrap')
+    @classmethod
+    def _validate_report(cls, data: Any, handler: Any) -> 'SecurityReport':
+        return _validate_report_findings(data, handler, SecurityIssue)
+
+
+class PerformanceReport(BaseModel):
+    """Schema-enforced wrapper for performance findings from the LLM (P2-01)."""
+
+    findings: list[PerformanceIssue] = []
+    _dropped_count: int = PrivateAttr(default=0)
+
+    @property
+    def dropped_count(self) -> int:
+        return self._dropped_count
+
+    @model_validator(mode='wrap')
+    @classmethod
+    def _validate_report(cls, data: Any, handler: Any) -> 'PerformanceReport':
+        return _validate_report_findings(
+            data, handler, PerformanceIssue, prepare=_severity_from_impact
+        )
+
+
+class BestPracticesReport(BaseModel):
+    """Schema-enforced wrapper for best-practice findings from the LLM (P2-01)."""
+
+    findings: list[BestPracticeIssue] = []
+    _dropped_count: int = PrivateAttr(default=0)
+
+    @property
+    def dropped_count(self) -> int:
+        return self._dropped_count
+
+    @model_validator(mode='wrap')
+    @classmethod
+    def _validate_report(cls, data: Any, handler: Any) -> 'BestPracticesReport':
+        return _validate_report_findings(data, handler, BestPracticeIssue)
 
 
 class CodeAnalysisResult(BaseModel):
