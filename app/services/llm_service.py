@@ -15,8 +15,6 @@ import logging
 from pathlib import Path
 from typing import Any, TypeVar
 
-from pydantic import BaseModel
-
 from app.core.config import settings
 from app.core.exceptions import LLMError
 from app.llm import LLMClient, LLMResult, Role, build_client
@@ -29,10 +27,9 @@ from app.models.analysis import (
     SecurityIssue,
     SecurityReport,
     Severity,
-    _severity_from_impact,
 )
 
-__all__ = ["LLMService", "PartialFindingsError", "MAX_DIFF_CHARS", "_severity_from_impact"]
+__all__ = ["LLMService", "PartialFindingsError", "MAX_DIFF_CHARS"]
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +38,7 @@ logger = logging.getLogger(__name__)
 # never approves it (P1-06).
 MAX_DIFF_CHARS = 8000
 
-IssueT = TypeVar("IssueT", bound=BaseModel)
+T = TypeVar("T")
 
 
 class PartialFindingsError(LLMOutputError):
@@ -72,29 +69,16 @@ class LLMService:
         """Configured model (with any fallbacks) for each role, for the result record."""
         return {str(role): self.client.model_name(role) for role in Role}
 
-    async def _generate_typed(
+    async def _generate(
         self,
         role: Role,
         prompt: str,
         system_prompt: str | None,
-        output_type: type[IssueT],
-    ) -> LLMResult[IssueT]:
-        """One structured call through the model layer, with usage logged (never output)."""
-        result: LLMResult[IssueT] = await self.client.generate(
+        output_type: type[T] = str,  # type: ignore[assignment]
+    ) -> T:
+        """One call through the model layer, with usage logged (never the output)."""
+        result: LLMResult[T] = await self.client.generate(
             role, prompt, instructions=system_prompt or None, output_type=output_type
-        )
-        usage = result.usage
-        logger.info(
-            f"LLM {role} call on {result.model}: {usage.input_tokens} in, "
-            f"{usage.output_tokens} out, {usage.latency_ms:.0f} ms, cost "
-            f"{'unknown' if usage.cost_usd is None else f'${usage.cost_usd:.6f}'}"
-        )
-        return result
-
-    async def _generate(self, role: Role, prompt: str, system_prompt: str | None) -> str:
-        """One text call through the model layer, with usage logged (never the output)."""
-        result: LLMResult[str] = await self.client.generate(
-            role, prompt, instructions=system_prompt or None
         )
         usage = result.usage
         logger.info(
@@ -139,18 +123,17 @@ class LLMService:
         return LLMError(f"{task} failed: {type(error).__name__}")
 
     @staticmethod
-    def _extract_report_findings(role: Role, report: Any) -> list[Any]:
+    def _extract_report_findings(
+        role: Role,
+        report: SecurityReport | PerformanceReport | BestPracticesReport,
+    ) -> list[Any]:
         """Extract validated findings from a Report, failing closed on bad data.
 
         If every item in the report was invalid, raises `LLMOutputError` (step failure).
         If some were invalid, keeps the valid ones and raises `PartialFindingsError`
         so the review is marked incomplete. Logs counts only, never model output.
         """
-        if not hasattr(report, "findings") or not isinstance(report.findings, list):
-            raise LLMOutputError(
-                f"{role} output is not a valid report object (got {type(report).__name__})"
-            )
-        dropped = getattr(report, "dropped_count", 0)
+        dropped = report.dropped_count
         if dropped:
             logger.warning(
                 f"Dropped {dropped} invalid {role} finding(s) from model output"
@@ -189,17 +172,15 @@ Code Diff:
 {diff_content[:MAX_DIFF_CHARS]}
 ```
 
-Return your findings in the `findings` field. Use an empty list if there are no issues."""
+Report your findings in the `findings` field. Use an empty list if there are no issues."""
 
-            result = await self._generate_typed(
+            report = await self._generate(
                 Role.SECURITY, prompt,
                 self.prompts.get('security_analysis', ''),
                 SecurityReport,
             )
-            return self._extract_report_findings(Role.SECURITY, result.output)
+            return self._extract_report_findings(Role.SECURITY, report)
 
-        except (LLMOutputError, PartialFindingsError):
-            raise
         except Exception as e:
             raise self._wrap_error("Security analysis", e) from None
 
@@ -225,17 +206,15 @@ Code Diff:
 {diff_content[:MAX_DIFF_CHARS]}
 ```
 
-Return your findings in the `findings` field. Use an empty list if there are no issues."""
+Report your findings in the `findings` field. Use an empty list if there are no issues."""
 
-            result = await self._generate_typed(
+            report = await self._generate(
                 Role.PERFORMANCE, prompt,
                 self.prompts.get('performance_analysis', ''),
                 PerformanceReport,
             )
-            return self._extract_report_findings(Role.PERFORMANCE, result.output)
+            return self._extract_report_findings(Role.PERFORMANCE, report)
 
-        except (LLMOutputError, PartialFindingsError):
-            raise
         except Exception as e:
             raise self._wrap_error("Performance analysis", e) from None
 
@@ -263,7 +242,7 @@ Code Diff:
 
 Focus on: code organization, naming conventions, documentation, error handling, testing, maintainability.
 
-Return your findings in the `findings` field, each with:
+Report your findings in the `findings` field, each with:
 - severity (high/medium/low)
 - category (e.g., "naming", "documentation", "error-handling")
 - title, description, file, recommendation
@@ -271,15 +250,13 @@ Return your findings in the `findings` field, each with:
 
 Use an empty list if there are no issues."""
 
-            result = await self._generate_typed(
+            report = await self._generate(
                 Role.BEST_PRACTICES, prompt,
                 "You are a code review expert focused on software engineering best practices.",
                 BestPracticesReport,
             )
-            return self._extract_report_findings(Role.BEST_PRACTICES, result.output)
+            return self._extract_report_findings(Role.BEST_PRACTICES, report)
 
-        except (LLMOutputError, PartialFindingsError):
-            raise
         except Exception as e:
             raise self._wrap_error("Best practices analysis", e) from None
 
