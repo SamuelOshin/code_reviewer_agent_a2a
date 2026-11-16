@@ -29,14 +29,18 @@ from pydantic_ai import NativeOutput, PromptedOutput, ToolOutput
 from app.llm import LLMResult, Role, Usage, build_client
 from app.llm.errors import LLMOutputError
 from app.models.analysis import (
+    AnalysisStatus,
+    ApprovalRecommendation,
     BestPracticeIssue,
     BestPracticesReport,
     PerformanceIssue,
     PerformanceReport,
     SecurityIssue,
     SecurityReport,
+    _severity_from_impact,
 )
-from app.services.llm_service import LLMService, PartialFindingsError, _severity_from_impact
+from app.services.llm_service import LLMService, PartialFindingsError
+from tests.test_code_analyzer import SAFE_DIFF, make_analyzer, run
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -589,23 +593,61 @@ class TestNoOutputInLogs:
 
     @pytest.mark.asyncio
     async def test_partial_findings_sentinel_never_in_logs(self, caplog):
-        """The PartialFindingsError message must not contain model output."""
-        valid = SecurityIssue(
-            severity="high", title="X", description="d",
-            file="a.py", recommendation="r",
-        )
-        err = PartialFindingsError("1 finding invalid", [valid])
-        client = make_client({Role.SECURITY: err})
-        service = LLMService(client=client)
+        """An invalid finding item with a sentinel sent through Scripted never leaks to logs."""
+        payload = {
+            "findings": [
+                {
+                    "severity": "high",
+                    "title": "SQL injection",
+                    "description": "d",
+                    "file": "a.py",
+                    "recommendation": "r",
+                },
+                {
+                    "severity": SENTINEL_OUTPUT,
+                    "title": SENTINEL_OUTPUT,
+                    "description": SENTINEL_OUTPUT,
+                    "file": "a.py",
+                    "recommendation": SENTINEL_OUTPUT,
+                },
+            ]
+        }
+        script = Scripted((200, text_body("openai", json.dumps(payload))))
+        llm_client = client_for("openai", script, LLM_STRUCTURED_OUTPUT_MODE="native")
+        service = LLMService(client=llm_client)
 
         with caplog.at_level(logging.DEBUG):
-            with pytest.raises(PartialFindingsError):
+            with pytest.raises(PartialFindingsError) as exc:
                 await service.analyze_security("diff", [])
 
-        # Count and type are logged, never content
+        assert len(exc.value.findings) == 1
+        assert SENTINEL_OUTPUT not in str(exc.value)
         assert SENTINEL_OUTPUT not in caplog.text
         for record in caplog.records:
             assert SENTINEL_OUTPUT not in record.getMessage()
+            assert SENTINEL_OUTPUT not in str(record.exc_info or "")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("mode", ["native", "tool", "prompted"])
+    async def test_non_object_reply_sentinel_never_in_logs(self, mode, caplog):
+        """A non-object reply with a sentinel sent through Scripted never leaks to logs."""
+        raw_reply = f"Sorry, {SENTINEL_OUTPUT} cannot be formatted."
+        script = Scripted(
+            (200, text_body("openai", raw_reply)),
+            (200, text_body("openai", raw_reply)),
+        )
+        llm_client = client_for("openai", script, LLM_STRUCTURED_OUTPUT_MODE=mode)
+        service = LLMService(client=llm_client)
+
+        with caplog.at_level(logging.DEBUG):
+            with pytest.raises(LLMOutputError) as exc:
+                await service.analyze_security("diff", [])
+
+        assert SENTINEL_OUTPUT not in str(exc.value)
+        assert SENTINEL_OUTPUT not in caplog.text
+        for record in caplog.records:
+            assert SENTINEL_OUTPUT not in record.getMessage()
+            assert SENTINEL_OUTPUT not in str(record.exc_info or "")
 
     @pytest.mark.asyncio
     async def test_valid_report_logs_only_counts(self, caplog):
@@ -624,3 +666,171 @@ class TestNoOutputInLogs:
             await service.analyze_security("diff", [])
 
         assert secret not in caplog.text
+
+
+# ===========================================================================
+# 8. Real client fail-closed regression tests (BLOCKER & SHOULD-FIX #1)
+# ===========================================================================
+
+APPROVING = {
+    ApprovalRecommendation.APPROVE,
+    ApprovalRecommendation.APPROVE_WITH_SUGGESTIONS,
+}
+
+VALID_FINDING_DICT = {
+    "severity": "high",
+    "title": "SQL injection",
+    "description": "d",
+    "file": "a.py",
+    "line_number": 3,
+    "recommendation": "r",
+    "references": ["CWE-89"],
+}
+VALID_FINDING_JSON = json.dumps(VALID_FINDING_DICT)
+
+BAD_REPORT_SHAPES = {
+    "empty_object": {},
+    "wrong_key_issues": {"issues": [VALID_FINDING_DICT]},
+    "prose_result_key": {"result": "no issues"},
+    "extra_key_with_findings": {"findings": [VALID_FINDING_DICT], "extra": 1},
+}
+
+MALFORMED_RAW_REPLIES = {
+    "prose": "I could not find any problems in this diff.",
+    "empty": "",
+    "bare_empty_array": "[]",
+    "truncated": '[{"severity": "high", "title": "SQL injection", "descr',
+    "truncated_fenced": '```json\n[{"severity": "high", "title": "SQL inj\n```',
+    "nested_array": f"[[{VALID_FINDING_JSON}]]",
+    "array_of_strings": '["looks fine"]',
+    "prose_with_citation": "All good, see [1] for details.",
+    "truncated_fence_inner_empty": (
+        '```json\n[{"severity": "critical", "title": "SQLi", '
+        '"code_snippet": "rows = []", "descr'
+    ),
+    "prose_inner_empty_then_truncated": (
+        'Checked `items = []` handling. Findings:\n'
+        '[{"severity": "critical", "title": "RCE", "descr'
+    ),
+    "prose_empty_then_truncated": 'See [] below.\n[{"severity": "critical", "title": "RCE"',
+    "prose_empty_only": "No issues found: []",
+    "deeply_nested": "[" * 5000,
+    "prose_deeply_nested": "Findings: " + "[" * 5000,
+}
+
+
+def _mode_reply(provider: str, mode: str, data: dict) -> dict:
+    if mode == "tool":
+        return tool_call_body(provider, "final_result", data)
+    return text_body(provider, json.dumps(data))
+
+
+def _analyzer_with_script(script: Scripted, mode: str):
+    llm_client = client_for("openai", script, LLM_STRUCTURED_OUTPUT_MODE=mode)
+    service = LLMService(client=llm_client)
+    analyzer, github, _ = make_analyzer(diff=SAFE_DIFF)
+    analyzer.llm_service = service
+    return analyzer, github, llm_client
+
+
+class TestRealClientFailClosedRegression:
+    """Real PydanticAIClient + Scripted HTTP transport fail-closed guarantees."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("mode", ["native", "tool", "prompted"])
+    @pytest.mark.parametrize("report_cls", [SecurityReport, PerformanceReport, BestPracticesReport])
+    @pytest.mark.parametrize("payload", BAD_REPORT_SHAPES.values(), ids=BAD_REPORT_SHAPES.keys())
+    async def test_bad_report_shapes_raise_llm_output_error(self, mode, report_cls, payload):
+        """Missing `findings` or extra keys must fail validation and raise LLMOutputError."""
+        reply = _mode_reply("openai", mode, payload)
+        script = Scripted((200, reply), (200, reply))
+        llm_client = client_for("openai", script, LLM_STRUCTURED_OUTPUT_MODE=mode)
+
+        with pytest.raises(LLMOutputError):
+            await llm_client.generate(Role.SECURITY, "Review", output_type=report_cls)
+        assert len(script.requests) == 2
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("mode", ["native", "tool", "prompted"])
+    @pytest.mark.parametrize("payload", BAD_REPORT_SHAPES.values(), ids=BAD_REPORT_SHAPES.keys())
+    async def test_bad_report_shapes_never_approve_through_analyzer(self, mode, payload):
+        """Bad report shapes on security step must never produce an approval."""
+        bad = _mode_reply("openai", mode, payload)
+        empty = _mode_reply("openai", mode, {"findings": []})
+        script = Scripted(
+            (200, bad),
+            (200, bad),
+            (200, empty),
+            (200, empty),
+            (200, text_body("openai", "Summary")),
+        )
+        analyzer, github, _ = _analyzer_with_script(script, mode)
+        result = await run(analyzer, github)
+
+        assert result.status in (AnalysisStatus.FAILED, AnalysisStatus.INCOMPLETE)
+        assert result.approval_recommendation not in APPROVING
+        assert result.approval_recommendation == ApprovalRecommendation.INCOMPLETE
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("mode", ["native", "tool", "prompted"])
+    async def test_explicit_empty_findings_gives_clean_complete_review(self, mode):
+        """Explicit `{"findings": []}` is valid and produces a COMPLETE + APPROVE review."""
+        empty = _mode_reply("openai", mode, {"findings": []})
+        script = Scripted(
+            (200, empty),
+            (200, empty),
+            (200, empty),
+            (200, text_body("openai", "Summary")),
+        )
+        analyzer, github, _ = _analyzer_with_script(script, mode)
+        result = await run(analyzer, github)
+
+        assert result.status == AnalysisStatus.COMPLETE
+        assert result.approval_recommendation == ApprovalRecommendation.APPROVE
+        assert result.security_findings == []
+        assert result.performance_findings == []
+        assert result.best_practice_findings == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("mode", ["native", "tool", "prompted"])
+    @pytest.mark.parametrize(
+        "raw_reply", MALFORMED_RAW_REPLIES.values(), ids=MALFORMED_RAW_REPLIES.keys()
+    )
+    async def test_malformed_raw_replies_never_approve(self, mode, raw_reply):
+        """Every raw malformed reply fails closed through the real client and analyzer."""
+        bad = text_body("openai", raw_reply)
+        empty = _mode_reply("openai", mode, {"findings": []})
+        script = Scripted(
+            (200, bad),
+            (200, bad),
+            (200, empty),
+            (200, empty),
+            (200, text_body("openai", "Summary")),
+        )
+        analyzer, github, _ = _analyzer_with_script(script, mode)
+        result = await run(analyzer, github)
+
+        assert result.status == AnalysisStatus.INCOMPLETE
+        assert result.approval_recommendation not in APPROVING
+        assert result.approval_recommendation == ApprovalRecommendation.INCOMPLETE
+        assert any("Security analysis failed (LLMOutputError)" in r for r in result.incomplete_reasons)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("mode", ["native", "tool", "prompted"])
+    async def test_valid_reply_with_nested_fields_parses_end_to_end(self, mode):
+        """A valid reply with nested fields (references) parses cleanly through the full stack."""
+        sec_reply = _mode_reply("openai", mode, {"findings": [VALID_FINDING_DICT]})
+        empty = _mode_reply("openai", mode, {"findings": []})
+        script = Scripted(
+            (200, sec_reply),
+            (200, empty),
+            (200, empty),
+            (200, text_body("openai", "Summary")),
+        )
+        analyzer, github, _ = _analyzer_with_script(script, mode)
+        result = await run(analyzer, github)
+
+        assert result.status == AnalysisStatus.COMPLETE
+        assert len(result.security_findings) == 1
+        assert result.security_findings[0].title == "SQL injection"
+        assert result.security_findings[0].references == ["CWE-89"]
