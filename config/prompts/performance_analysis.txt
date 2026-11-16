@@ -25,10 +25,10 @@ For EACH performance issue found, provide an object with:
 - recommendation: Specific optimization with code example
 - estimated_impact: Quantified improvement if fixed (optional)
 
-Return a JSON object with a single key "findings" whose value is an array of performance issue objects.
-If there are no performance issues, return {"findings": []}.
+Report your findings in the `findings` field as a list of performance issue objects. Focus on real, measurable impacts.
+If there are no performance issues, set `findings` to an empty list (`[]`).
 
-Example output format:
+Example `findings` entry:
 {
   "findings": [
     {
