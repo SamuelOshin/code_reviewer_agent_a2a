@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError, model_validator
 
 
 class Severity(StrEnum):
@@ -131,11 +131,11 @@ def _validate_report_findings(
                     prepare(raw)
                 try:
                     valid.append(issue_cls(**raw))
-                except Exception:
+                except (ValidationError, TypeError):
                     dropped += 1
             else:
                 dropped += 1
-        inst = handler({'findings': valid})
+        inst = handler({**data, 'findings': valid})
         inst._dropped_count = dropped
         return inst
     return handler(data)
@@ -148,7 +148,9 @@ class SecurityReport(BaseModel):
     empty list is a deliberate answer, not prose that the parser can't read (P2-01).
     """
 
-    findings: list[SecurityIssue] = []
+    model_config = ConfigDict(extra="forbid")
+
+    findings: list[SecurityIssue]
     _dropped_count: int = PrivateAttr(default=0)
 
     @property
@@ -164,7 +166,9 @@ class SecurityReport(BaseModel):
 class PerformanceReport(BaseModel):
     """Schema-enforced wrapper for performance findings from the LLM (P2-01)."""
 
-    findings: list[PerformanceIssue] = []
+    model_config = ConfigDict(extra="forbid")
+
+    findings: list[PerformanceIssue]
     _dropped_count: int = PrivateAttr(default=0)
 
     @property
@@ -182,7 +186,9 @@ class PerformanceReport(BaseModel):
 class BestPracticesReport(BaseModel):
     """Schema-enforced wrapper for best-practice findings from the LLM (P2-01)."""
 
-    findings: list[BestPracticeIssue] = []
+    model_config = ConfigDict(extra="forbid")
+
+    findings: list[BestPracticeIssue]
     _dropped_count: int = PrivateAttr(default=0)
 
     @property
