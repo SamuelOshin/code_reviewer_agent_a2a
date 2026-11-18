@@ -4,7 +4,7 @@ The single source of truth for this project: what we are building, how, what is
 done, what is left, and where to resume. Any person or agent should be able to
 read this file alone and continue the work.
 
-**Last updated:** 2026-11-12
+**Last updated:** 2026-11-18
 
 ---
 
@@ -12,10 +12,10 @@ read this file alone and continue the work.
 
 | | |
 |---|---|
-| **Current phase** | Phase 1: make it honest and working (planning complete) |
-| **Active task** | None. Phase 1 is done (`P1-01` to `P1-27`); `P1-05` closed 2026-11-15 with real reviews on two providers. The follow-up loop converged at `P1-27`; remaining review items are in the `P2-10` backlog |
-| **Next action** | Phase 2, starting with `P2-01`: the real runs showed that whether a review completes depends on the model following the JSON format |
-| **Working branch** | `main`. Start each new task on its own branch from `main`. `P1-27` on `chore/p1-27` for one PR |
+| **Current phase** | Phase 2: modernize the core |
+| **Active task** | None. Phase 1 is done (`P1-01` to `P1-27`); `P2-01` (schema-enforced structured output) is done on `feat/p2-01-structured-output` |
+| **Next action** | Merge `feat/p2-01-structured-output` to `main`, then start `P2-02`, `P2-03`, `P2-04`, `P2-06` or `P2-07` |
+| **Working branch** | `feat/p2-01-structured-output` (ready for PR/merge to `main`). Start each new task on its own branch from `main` |
 | **Blockers** | None. Owner approved running repo code on 2026-11-12. Use `uv` for everything (`uv sync`, `uv run`). If an install fails on a Windows cache file lock, retry or set a different `UV_CACHE_DIR` |
 | **Working rule** | Parallel agents don't edit this file. The coordinating session records their results |
 
@@ -277,7 +277,7 @@ in CI, and the README is accurate.
 
 | ID | Status | Task | Depends on | Acceptance checks |
 |---|---|---|---|---|
-| P2-01 | todo | Use schema-enforced structured output through the model layer, with the validated fallback for models without native support, and remove regex JSON extraction. Evidence from the `P1-05` real runs: the findings calls still ask for plain text and parse it, so `LLM_STRUCTURED_OUTPUT_MODE` has no effect on them; `anthropic/claude-haiku-5-5` (via OpenRouter) twice answered "no security issues" in prose around `[]`, which the parser rightly rejects, so the review stayed incomplete. A `{"findings": [...]}` object through native or tool output would make "no issues" unambiguous | Phase 1 | `_extract_json_from_response` is gone. Invalid output follows the fail-closed path |
+| P2-01 | done | Use schema-enforced structured output through the model layer, with the validated fallback for models without native support, and remove regex JSON extraction. Evidence from the `P1-05` real runs: the findings calls still ask for plain text and parse it, so `LLM_STRUCTURED_OUTPUT_MODE` has no effect on them; `anthropic/claude-haiku-5-5` (via OpenRouter) twice answered "no security issues" in prose around `[]`, which the parser rightly rejects, so the review stayed incomplete. A `{"findings": [...]}` object through native or tool output would make "no issues" unambiguous | Phase 1 | `_extract_json_from_response` is gone. Invalid output follows the fail-closed path |
 | P2-02 | todo | Migrate to the official `a2a-sdk` and A2A v1.0, with a correct agent card and auth scheme | Phase 1 | An independent A2A client can discover the agent and complete a review |
 | P2-03 | todo | Post inline PR review comments through a GitHub Action or App | D-07 | A real PR shows inline comments on the right lines |
 | P2-04 | todo | Fetch PR data once, run LLM calls concurrently, keep references to background tasks | Phase 1 | One fetch per review. Timing before and after recorded |
@@ -310,7 +310,7 @@ Keep this honest. It records what has actually been proven.
 
 | Check | State | Notes |
 |---|---|---|
-| Test suite | Passing 2026-11-14 | After the `P2-10` webhook header fix: **874 passed, 0 xfail** after the `P2-10` webhook fixes. Coverage **90%**. The flaky slot-release test is fixed (0 failures in 1,000 loops under load). LLM, GitHub and push calls are mocked; no real provider was called |
+| Test suite | Passing 2026-11-16 | After `P2-01` structured output and review fixes: **970 passed, 0 xfail**. Coverage **91%**. LLM, GitHub and push calls are mocked; no real provider was called |
 | App startup | Starts in-process | `/`, `/health` (`healthy`), `/ready` and the agent card return 200, with or without `SECRET_KEY`. Real GitHub and LLM calls tested 2026-11-15 through `/rpc` `analyze_pr` on two providers (`P1-05`); the webhook and A2A push paths are still untested against real services |
 | Docker | Passing 2026-11-12 | From `.env.example` copied to `.env`, `docker compose up --build` reached `healthy` (Docker 29.8). `/health` returned 200 from this app. The container runs as `appuser` with no Node.js. Tested on host port 8010, because another local service holds 8000 |
 | CI | Passing 2026-11-13 | Green on GitHub for PR #2 at `549f481` (ruff, pytest with coverage, `pip-audit`). GitGuardian also passed |
@@ -328,6 +328,23 @@ Keep this honest. It records what has actually been proven.
 ## 9. Session log
 
 Newest first. Keep entries short.
+
+### 2026-11-18: `P2-01` schema-enforced structured output built and reviewed
+
+- **Done:** `SecurityReport`, `PerformanceReport` and `BestPracticesReport`
+  (`extra="forbid"`, required `findings` field, per-item wrap validation keeping valid
+  findings on partial failures and running `_severity_from_impact` on performance items);
+  `LLMService` calls `client.generate(..., output_type=<Report>)` and removes
+  `extract_findings_array` and regex helpers; mode-neutral prompts; 151 tests in
+  `tests/test_p201_structured_output.py` covering `native`, `tool` and `prompted` modes,
+  malformed raw replies, bad report shapes and sentinel log safety. 970 passed, 91%
+  coverage, ruff and `pip-audit` clean.
+- **Review:** first round found 1 blocker (`findings` had a `= []` default and
+  `_validate_report_findings` dropped extra keys, letting `{}` or `{"issues": [...]}`
+  pass as clean in native/prompted modes), 3 should-fix (real-client malformed reply
+  regression coverage, real `Scripted` sentinel tests, README accuracy) and 5 low items.
+  All fixed and verified in commits `31e790c`..`6814dd7`.
+- **Not verified:** live LLM provider calls with the new Report schemas.
 
 ### 2026-11-15: `P1-05` closed with real reviews on two providers
 
