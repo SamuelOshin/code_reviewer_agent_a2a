@@ -33,9 +33,9 @@ __all__ = ["LLMService", "PartialFindingsError", "MAX_DIFF_CHARS"]
 
 logger = logging.getLogger(__name__)
 
-# How much of the diff each findings prompt includes. A longer diff is cut here, so
-# the LLM reviews only part of the PR. The analyzer reports that in the result and
-# never approves it (P1-06).
+# Most diff text one findings prompt holds. The analyzer splits a longer diff into
+# chunks of this size (P2-07, app/utils/diff_chunker.py); the slice in each prompt
+# is a backstop that never cuts a chunk.
 MAX_DIFF_CHARS = 8000
 
 T = TypeVar("T")

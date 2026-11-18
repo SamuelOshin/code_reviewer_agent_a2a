@@ -13,7 +13,7 @@ Main service that orchestrates the complete code review process:
 
 import logging
 import time
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any, TypeVar
 
@@ -34,6 +34,7 @@ from app.models.analysis import (
 from app.models.github import PullRequest, PullRequestFile
 from app.services.github_mcp import GitHubMCPService
 from app.services.llm_service import MAX_DIFF_CHARS, LLMService, PartialFindingsError
+from app.utils.diff_chunker import chunk_diff
 from app.utils.diff_parser import DiffParser, FileDiff
 from app.utils.performance_rules import PerformanceChecker
 from app.utils.security_rules import SecurityChecker
@@ -99,27 +100,42 @@ class CodeAnalyzerService:
             # Step 5: Run LLM-powered analysis (slower, comprehensive). A failed step
             # keeps the rule findings and marks the review incomplete (P1-06, F-03).
             incomplete_reasons: list[str] = []
-            diff_chars_total = len(diff_content)
-            diff_truncated = diff_chars_total > MAX_DIFF_CHARS
+            # P2-07: the LLM reviews the whole diff in chunks of MAX_DIFF_CHARS, up to
+            # LLM_MAX_DIFF_CHUNKS; anything past the cap is reported, never dropped quietly
+            chunked = chunk_diff(diff_content, MAX_DIFF_CHARS, settings.LLM_MAX_DIFF_CHUNKS)
+            diff_chars_total = chunked.chars_total
+            diff_truncated = chunked.capped
             if diff_truncated:
                 incomplete_reasons.append(
-                    f"The diff is {diff_chars_total:,} characters; the LLM reviewed only "
-                    f"the first {MAX_DIFF_CHARS:,}. Rule-based checks covered the whole diff."
+                    f"The diff is {chunked.chars_total:,} characters in "
+                    f"{chunked.files_total} file(s); the LLM reviewed "
+                    f"{chunked.chars_reviewed:,} of them ({len(chunked.chunks)} of "
+                    f"{chunked.chunks_needed} parts, the LLM_MAX_DIFF_CHUNKS limit), and "
+                    f"{chunked.files_not_fully_reviewed} file(s) were not fully reviewed "
+                    f"by the LLM. Rule-based checks covered the whole diff."
+                )
+            if len(chunked.chunks) > 1:
+                logger.info(
+                    f"Diff split into {len(chunked.chunks)} parts for the LLM "
+                    f"({chunked.chars_reviewed:,} of {chunked.chars_total:,} characters)"
                 )
 
             llm_security_issues, security_ran, security_limited = await self._run_llm_step(
                 "Security analysis",
-                self.llm_service.analyze_security(diff_content, files),
+                lambda chunk: self.llm_service.analyze_security(chunk, files),
+                chunked.chunks,
                 incomplete_reasons,
             )
             llm_performance_issues, performance_ran, performance_limited = await self._run_llm_step(
                 "Performance analysis",
-                self.llm_service.analyze_performance(diff_content, files),
+                lambda chunk: self.llm_service.analyze_performance(chunk, files),
+                chunked.chunks,
                 incomplete_reasons,
             )
             llm_best_practice_issues, best_practices_ran, best_practices_limited = await self._run_llm_step(
                 "Best practices analysis",
-                self.llm_service.analyze_best_practices(diff_content, files),
+                lambda chunk: self.llm_service.analyze_best_practices(chunk, files),
+                chunked.chunks,
                 incomplete_reasons,
             )
 
@@ -230,7 +246,7 @@ class CodeAnalyzerService:
                 incomplete_reasons=incomplete_reasons,
                 diff_truncated=diff_truncated,
                 diff_chars_total=diff_chars_total,
-                diff_chars_reviewed_by_llm=min(diff_chars_total, MAX_DIFF_CHARS),
+                diff_chars_reviewed_by_llm=chunked.chars_reviewed,
                 key_concerns=recommendations,  # Map recommendations to key_concerns
                 analyzed_at=datetime.now(UTC),
                 analysis_duration_seconds=analysis_duration,
@@ -264,34 +280,63 @@ class CodeAnalyzerService:
     async def _run_llm_step(
         self,
         name: str,
-        call: Awaitable[list[IssueT]],
+        analyze: Callable[[str], Awaitable[list[IssueT]]],
+        chunks: list[str],
         incomplete_reasons: list[str],
     ) -> tuple[list[IssueT], bool, bool]:
-        """Await one LLM findings step without letting its failure end the review.
+        """Run one LLM findings step over every diff chunk without ending the review.
 
-        Returns the findings, whether the step produced usable output (a partial
-        result counts; it is still recorded as incomplete), and whether the step failed
-        because the model was rate-limited (P1-23). Any failure is
-        recorded in `incomplete_reasons` by error type only: exception text can echo
-        the prompt or model output, and the reasons may be posted on the PR.
-        Findings that validated before a partial failure are kept.
+        Returns the findings from all chunks, whether the step produced usable output
+        for at least one chunk (a partial result counts; it is still recorded as
+        incomplete), and whether the step failed outright because the model was
+        rate-limited (P1-23). Failures are recorded in `incomplete_reasons` by error
+        type only: exception text can echo the prompt or model output, and the reasons
+        may be posted on the PR. Findings that validated before a failure are kept.
+        A rate limit stops the step's remaining chunks, which would only be throttled
+        too (P2-07).
         """
-        try:
-            return await call, True, False
-        except PartialFindingsError as e:
-            logger.error(f"{name} returned some invalid findings: {type(e).__name__}")
-            incomplete_reasons.append(f"{name} returned some invalid findings, which were dropped.")
-            return list(e.findings), True, False
-        except LLMRateLimitError as e:
+        findings: list[IssueT] = []
+        succeeded = 0
+        partial = False
+        rate_limited = False
+        error_types: list[str] = []
+        for chunk in chunks:
+            try:
+                findings.extend(await analyze(chunk))
+                succeeded += 1
+            except PartialFindingsError as e:
+                logger.error(f"{name} returned some invalid findings: {type(e).__name__}")
+                findings.extend(e.findings)
+                succeeded += 1
+                partial = True
+            except LLMRateLimitError as e:
+                logger.error(f"{name} failed: {type(e).__name__}")
+                rate_limited = True
+                error_types.append(type(e).__name__)
+                break
+            except Exception as e:
+                logger.error(f"{name} failed: {type(e).__name__}")
+                error_types.append(type(e).__name__)
+
+        failed = len(chunks) - succeeded
+        if not succeeded:
             # P1-22: fixed text, no exception text, so a throttled model reads as
             # "retry later" and not as a bug
-            logger.error(f"{name} failed: {type(e).__name__}")
-            incomplete_reasons.append(f"{name} failed: {RATE_LIMITED_TEXT}")
-            return [], False, True
-        except Exception as e:
-            logger.error(f"{name} failed: {type(e).__name__}")
-            incomplete_reasons.append(f"{name} failed ({type(e).__name__}).")
-            return [], False, False
+            only_limited = rate_limited and len(set(error_types)) == 1
+            if only_limited:
+                incomplete_reasons.append(f"{name} failed: {RATE_LIMITED_TEXT}")
+            else:
+                incomplete_reasons.append(f"{name} failed ({error_types[0]}).")
+            return [], False, only_limited
+
+        if partial:
+            incomplete_reasons.append(f"{name} returned some invalid findings, which were dropped.")
+        if failed:
+            cause = RATE_LIMITED_TEXT if rate_limited else ", ".join(dict.fromkeys(error_types))
+            incomplete_reasons.append(
+                f"{name} failed on {failed} of {len(chunks)} diff parts ({cause})."
+            )
+        return findings, True, False
 
     @staticmethod
     def _fail_closed(
