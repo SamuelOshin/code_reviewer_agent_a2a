@@ -526,6 +526,34 @@ class TestWholePrReview:
         assert result.status == AnalysisStatus.FAILED
 
     @pytest.mark.asyncio
+    async def test_a_rate_limit_stop_on_an_uncapped_diff_reports_the_parts_not_reached(self):
+        # Round 3 review: every step rate-limited at part 2 of an uncapped diff left
+        # diff_truncated False and no coverage reason for the parts never reached
+        diff = "".join(file_diff(f"f{i}.py", 150) for i in range(6))
+        chunked = chunk_diff(diff, MAX_DIFF_CHARS, settings.LLM_MAX_DIFF_CHUNKS)
+        assert not chunked.capped and len(chunked.chunks) > 3
+        error = LLMRateLimitError("rate limited")
+        analyzer, github, prompts = analyzer_over(
+            diff,
+            fail_on={
+                role: (2, error) for role in (Role.SECURITY, Role.PERFORMANCE, Role.BEST_PRACTICES)
+            },
+        )
+
+        result = await run(analyzer, github)
+
+        assert [
+            len(prompts[r]) for r in (Role.SECURITY, Role.PERFORMANCE, Role.BEST_PRACTICES)
+        ] == [2, 2, 2]
+        assert result.diff_truncated is True
+        assert result.diff_chars_reviewed_by_llm == sum(chunked.chunk_chars[:2])
+        reason = next(r for r in result.incomplete_reasons if "diff parts, stopped by" in r)
+        assert f"(2 of {chunked.chunks_needed} diff parts" in reason
+        assert "rate-limited" in reason
+        assert result.status == AnalysisStatus.INCOMPLETE
+        assert result.approval_recommendation not in APPROVING
+
+    @pytest.mark.asyncio
     async def test_parts_run_chunk_by_chunk_through_every_step(self):
         analyzer, github, _ = analyzer_over(LONG_DIFF)
         client = analyzer.llm_service.client

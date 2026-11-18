@@ -192,9 +192,11 @@ class CodeAnalyzerService:
             deadline = _clock() + settings.LLM_REVIEW_BUDGET_SECONDS
             parts_reviewed = 0
             out_of_time = False
+            all_rate_limited = False
             for index, chunk in enumerate(chunked.chunks):
                 if all(step.rate_limited for step in steps):
-                    break  # every step has stopped; their reasons say why
+                    all_rate_limited = True  # every step has stopped
+                    break
                 # The first part always runs; later ones only while the budget lasts
                 if index and _clock() >= deadline:
                     out_of_time = True
@@ -203,12 +205,14 @@ class CodeAnalyzerService:
                     await step.run(chunk)
                 parts_reviewed += 1
             reviewed = sum(chunked.chunk_chars[:parts_reviewed])
-            diff_truncated = chunked.capped or out_of_time
+            diff_truncated = chunked.capped or out_of_time or all_rate_limited
             if diff_truncated:
                 # One statement of coverage, from what actually ran (P2-07)
                 limits = []
                 if chunked.capped:
                     limits.append("the LLM_MAX_DIFF_CHUNKS limit")
+                if all_rate_limited:
+                    limits.append("the model being rate-limited")
                 if out_of_time:
                     limits.append("the review time limit (LLM_REVIEW_BUDGET_SECONDS)")
                     logger.warning(
