@@ -44,7 +44,10 @@ diff in chunks of up to 8,000 characters (split by file, then by hunk), up to
 diff is reviewed up to the cap and marked incomplete: the result sets `diff_truncated`
 and reports how many characters and files the LLM did not cover (the rules still
 cover the whole diff). A chunk that fails keeps the findings from the other chunks
-and marks the review incomplete.
+and marks the review incomplete. Chunks run one after another, so a large PR is slow;
+after `LLM_REVIEW_BUDGET_SECONDS` (default 150) no new chunk starts and the rest is
+reported as not reviewed. Each chunk is reviewed on its own, so the model can't see
+code that sits in another chunk.
 Malformed or truncated model output is never read as "no issues". Raw model output is
 never logged. Tests: `tests/test_fail_closed.py`, `tests/test_p207_diff_chunking.py`.
 
