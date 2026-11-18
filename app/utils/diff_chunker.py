@@ -23,9 +23,17 @@ import re
 from dataclasses import dataclass
 
 _FILE_START = "diff --git "
+# Lines end at "\n" only, as in git. str.splitlines also breaks at U+2028, form
+# feeds and lone "\r", which would shift continuation line numbers (P2-07).
+_LINE_RE = re.compile(r"[^\n]*\n|[^\n]+")
 _HUNK_RE = re.compile(r"^@@ -([0-9]+)(?:,[0-9]+)? \+([0-9]+)(?:,[0-9]+)? @@")
 # Room kept in each piece of a split hunk for its continuation header
 _CONTINUED_RESERVE = 72
+
+
+def _lines(text: str) -> list[str]:
+    """Split text into lines that keep their "\n", breaking at "\n" only."""
+    return _LINE_RE.findall(text)
 
 
 @dataclass(frozen=True)
@@ -41,6 +49,8 @@ class DiffChunks:
     chunks_needed: int
     # Original diff characters in each chunk (repeated headers not counted)
     chunk_chars: list[int]
+    # Files fully reviewed once chunks 0..k have run, for each kept chunk k
+    files_complete_after: list[int]
 
     @property
     def capped(self) -> bool:
@@ -58,7 +68,7 @@ class _Piece:
 
 def _split_files(diff: str) -> list[str]:
     """Split a diff into per-file sections, keeping every character exactly once."""
-    lines = diff.splitlines(keepends=True)
+    lines = _lines(diff)
     files: list[list[str]] = []
     for line in lines:
         if line.startswith(_FILE_START) or not files:
@@ -69,7 +79,7 @@ def _split_files(diff: str) -> list[str]:
 
 def _split_header(section: str) -> tuple[str, list[str]]:
     """Return the file header (before the first hunk) and the hunks, as text."""
-    lines = section.splitlines(keepends=True)
+    lines = _lines(section)
     header: list[str] = []
     hunks: list[list[str]] = []
     for line in lines:
@@ -86,7 +96,7 @@ def _hard_split(text: str, size: int) -> list[str]:
     """Split text into parts of at most `size` chars, at line breaks where possible."""
     parts: list[str] = []
     current = ""
-    for line in text.splitlines(keepends=True):
+    for line in _lines(text):
         if len(line) > size:  # a single line longer than the budget (minified code)
             if current:
                 parts.append(current)
@@ -121,7 +131,7 @@ def _split_hunk(hunk: str, budget: int) -> list[tuple[str, int]]:
     for k, part in enumerate(parts):
         start_old, start_new = old, new
         old_count = new_count = 0
-        for idx, line in enumerate(part.splitlines(keepends=True)):
+        for idx, line in enumerate(_lines(part)):
             if k == 0 and idx == 0:
                 continue  # the hunk's own @@ line
             continues = idx == 0 and open_kind is not None
@@ -198,7 +208,9 @@ def chunk_diff(diff: str, max_chars: int, max_chunks: int) -> DiffChunks:
     sections = _split_files(diff)
     if len(diff) <= max_chars:
         # One prompt holds it all, including an empty diff (reviewed as before)
-        return DiffChunks([diff], len(diff), len(diff), len(sections), 0, 1, [len(diff)])
+        return DiffChunks(
+            [diff], len(diff), len(diff), len(sections), 0, 1, [len(diff)], [len(sections)]
+        )
 
     pieces = [p for i, s in enumerate(sections) for p in _file_pieces(i, s, max_chars)]
 
@@ -213,10 +225,15 @@ def chunk_diff(diff: str, max_chars: int, max_chunks: int) -> DiffChunks:
     kept = packed[:max_chunks]
     reviewed = sum(p.original_chars for chunk in kept for p in chunk)
     seen_chars: dict[int, int] = {}
+    complete = 0
+    complete_after: list[int] = []
     for chunk in kept:
         for p in chunk:
-            seen_chars[p.file_index] = seen_chars.get(p.file_index, 0) + p.original_chars
-    not_fully = sum(1 for i, s in enumerate(sections) if seen_chars.get(i, 0) < len(s))
+            seen = seen_chars.get(p.file_index, 0) + p.original_chars
+            seen_chars[p.file_index] = seen
+            complete += seen == len(sections[p.file_index]) and p.original_chars > 0
+        complete_after.append(complete)
+    not_fully = len(sections) - complete
     return DiffChunks(
         chunks=["".join(p.text for p in chunk) for chunk in kept],
         chars_total=len(diff),
@@ -225,4 +242,5 @@ def chunk_diff(diff: str, max_chars: int, max_chunks: int) -> DiffChunks:
         files_not_fully_reviewed=not_fully,
         chunks_needed=len(packed),
         chunk_chars=[sum(p.original_chars for p in chunk) for chunk in kept],
+        files_complete_after=complete_after,
     )
