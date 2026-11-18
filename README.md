@@ -38,11 +38,15 @@ Every result carries a `status`:
 - `failed`: no LLM findings step succeeded; only rule-based findings are reported.
 
 An `incomplete` or `failed` review gets the recommendation `incomplete` and **never
-approves**. Rule findings are kept when an LLM call fails. The LLM sees only the first
-8,000 characters of the diff; when the diff is longer the result sets `diff_truncated`
-and reports how many characters were reviewed (the rules still cover the whole diff).
+approves**. Rule findings are kept when an LLM call fails. The LLM reviews the whole
+diff in chunks of up to 8,000 characters (split by file, then by hunk), up to
+`LLM_MAX_DIFF_CHUNKS` chunks (default 8). Each chunk costs three model calls. A longer
+diff is reviewed up to the cap and marked incomplete: the result sets `diff_truncated`
+and reports how many characters and files the LLM did not cover (the rules still
+cover the whole diff). A chunk that fails keeps the findings from the other chunks
+and marks the review incomplete.
 Malformed or truncated model output is never read as "no issues". Raw model output is
-never logged. Tests: `tests/test_fail_closed.py`.
+never logged. Tests: `tests/test_fail_closed.py`, `tests/test_p207_diff_chunking.py`.
 
 The status and reasons appear in the PR comment (`app/utils/formatters.py`) and in the
 A2A report text. The `analyze_pr` RPC result carries them as `analysis_status` and
