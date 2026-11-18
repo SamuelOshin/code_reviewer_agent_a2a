@@ -2,7 +2,7 @@
 
 import re
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 # Shortest API key accepted at startup (P1-07). 32 characters of a random token is
@@ -190,6 +190,17 @@ class Settings(BaseSettings):
                     "with no path; '*' is not allowed"
                 )
         return value
+
+    @model_validator(mode="after")
+    def _budget_below_blocking_timeout(self) -> "Settings":
+        # P2-07: a budget at or above the blocking timeout would let every large
+        # blocking review time out with no result at all
+        if self.LLM_REVIEW_BUDGET_SECONDS >= self.A2A_BLOCKING_TIMEOUT_SECONDS:
+            raise ValueError(
+                "LLM_REVIEW_BUDGET_SECONDS must be less than A2A_BLOCKING_TIMEOUT_SECONDS "
+                "(leave room for the last diff chunk and the summary)"
+            )
+        return self
 
     @property
     def push_url_allowed_hosts(self) -> frozenset[str]:

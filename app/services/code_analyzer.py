@@ -176,16 +176,6 @@ class CodeAnalyzerService:
             # LLM_MAX_DIFF_CHUNKS; anything past the cap is reported, never dropped quietly
             chunked = chunk_diff(diff_content, MAX_DIFF_CHARS, settings.LLM_MAX_DIFF_CHUNKS)
             diff_chars_total = chunked.chars_total
-            diff_truncated = chunked.capped
-            if diff_truncated:
-                incomplete_reasons.append(
-                    f"The diff is {chunked.chars_total:,} characters in "
-                    f"{chunked.files_total} file(s); the LLM reviewed "
-                    f"{chunked.chars_reviewed:,} of them ({len(chunked.chunks)} of "
-                    f"{chunked.chunks_needed} parts, the LLM_MAX_DIFF_CHUNKS limit), and "
-                    f"{chunked.files_not_fully_reviewed} file(s) were not fully reviewed "
-                    f"by the LLM. Rule-based checks covered the whole diff."
-                )
             if len(chunked.chunks) > 1:
                 logger.info(
                     f"Diff split into {len(chunked.chunks)} parts for the LLM "
@@ -201,28 +191,38 @@ class CodeAnalyzerService:
             ]
             deadline = _clock() + settings.LLM_REVIEW_BUDGET_SECONDS
             parts_reviewed = 0
+            out_of_time = False
             for index, chunk in enumerate(chunked.chunks):
+                if all(step.rate_limited for step in steps):
+                    break  # every step has stopped; their reasons say why
                 # The first part always runs; later ones only while the budget lasts
                 if index and _clock() >= deadline:
+                    out_of_time = True
                     break
                 for step in steps:
                     await step.run(chunk)
                 parts_reviewed += 1
-            if parts_reviewed < len(chunked.chunks):
-                diff_truncated = True
-                reviewed = sum(chunked.chunk_chars[:parts_reviewed])
-                logger.warning(
-                    f"LLM review time budget ran out after {parts_reviewed} of "
-                    f"{len(chunked.chunks)} diff parts"
-                )
+            reviewed = sum(chunked.chunk_chars[:parts_reviewed])
+            diff_truncated = chunked.capped or out_of_time
+            if diff_truncated:
+                # One statement of coverage, from what actually ran (P2-07)
+                limits = []
+                if chunked.capped:
+                    limits.append("the LLM_MAX_DIFF_CHUNKS limit")
+                if out_of_time:
+                    limits.append("the review time limit (LLM_REVIEW_BUDGET_SECONDS)")
+                    logger.warning(
+                        f"LLM review time budget ran out after {parts_reviewed} of "
+                        f"{len(chunked.chunks)} diff parts"
+                    )
+                not_fully = chunked.files_total - chunked.files_complete_after[parts_reviewed - 1]
                 incomplete_reasons.append(
-                    f"The review time limit (LLM_REVIEW_BUDGET_SECONDS) ran out after "
-                    f"{parts_reviewed} of {len(chunked.chunks)} diff parts; the LLM "
-                    f"reviewed {reviewed:,} of {chunked.chars_total:,} characters. "
-                    f"Rule-based checks covered the whole diff."
+                    f"The diff is {chunked.chars_total:,} characters in "
+                    f"{chunked.files_total} file(s); the LLM reviewed {reviewed:,} of them "
+                    f"({parts_reviewed} of {chunked.chunks_needed} diff parts, stopped by "
+                    f"{' and '.join(limits)}), and {not_fully} file(s) were not fully "
+                    f"reviewed by the LLM. Rule-based checks covered the whole diff."
                 )
-            else:
-                reviewed = chunked.chars_reviewed
             (
                 (llm_security_issues, security_ran, security_limited),
                 (llm_performance_issues, performance_ran, performance_limited),
