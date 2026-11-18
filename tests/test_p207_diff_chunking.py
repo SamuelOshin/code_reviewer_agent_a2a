@@ -7,6 +7,7 @@ to the cap and marked incomplete, with the uncovered part stated in the result.
 """
 
 import random
+import re
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -50,6 +51,15 @@ def header_of(diff: str) -> str:
     return diff[: diff.index("@@")]
 
 
+CONTINUED = re.compile(r"^@@ -([0-9]+),[0-9]+ \+([0-9]+),[0-9]+ @@ \(continued\)\n")
+
+
+def body_of(chunk: str, header: str) -> str:
+    """A chunk's original text: without the repeated file header or continuation line."""
+    body = chunk[len(header) :]
+    return CONTINUED.sub("", body, count=1)
+
+
 # --- The chunker ------------------------------------------------------------------
 
 
@@ -88,8 +98,8 @@ class TestChunker:
             assert len(chunk) <= 8000
             assert chunk.startswith(header)
         # Every hunk appears once, in order
-        bodies = "".join(c[len(header):] for c in result.chunks)
-        assert bodies == diff[len(header):]
+        bodies = "".join(c[len(header) :] for c in result.chunks)
+        assert bodies == diff[len(header) :]
         assert result.chars_reviewed == len(diff)
         assert not result.capped
 
@@ -99,8 +109,8 @@ class TestChunker:
         header = header_of(diff)
         assert len(result.chunks) > 1
         assert all(len(c) <= 8000 and c.startswith(header) for c in result.chunks)
-        bodies = "".join(c[len(header):] for c in result.chunks)
-        assert bodies == diff[len(header):]
+        bodies = "".join(body_of(c, header) for c in result.chunks)
+        assert bodies == diff[len(header) :]
         # Splits fall on line breaks
         assert all(c.endswith("\n") for c in result.chunks)
 
@@ -110,8 +120,8 @@ class TestChunker:
         result = chunk_diff(diff, 8000, 50)
         header = header_of(diff)
         assert all(len(c) <= 8000 for c in result.chunks)
-        bodies = "".join(c[len(header):] for c in result.chunks)
-        assert bodies == diff[len(header):]
+        bodies = "".join(body_of(c, header) for c in result.chunks)
+        assert bodies == diff[len(header) :]
         assert result.chars_reviewed == len(diff)
 
     def test_text_that_is_not_a_git_diff_is_still_covered(self):
@@ -139,6 +149,83 @@ class TestChunker:
         assert result.files_total == 1
         assert result.files_not_fully_reviewed == 1
 
+    # --- S2 from the review: pieces of a split hunk keep real line numbers ---------
+
+    def test_every_piece_of_a_split_hunk_says_where_it_starts(self):
+        lines = "".join(f"+line {i} of the new file, padded to be long\n" for i in range(1, 1001))
+        diff = (
+            "diff --git a/n.py b/n.py\nnew file mode 100644\n--- /dev/null\n+++ b/n.py\n"
+            "@@ -0,0 +1,1000 @@\n" + lines
+        )
+        result = chunk_diff(diff, 8000, 50)
+        header = header_of(diff)
+        assert len(result.chunks) > 2
+        for chunk in result.chunks[1:]:
+            match = CONTINUED.match(chunk[len(header) :])
+            assert match, "a later piece has no hunk header"
+            first_line = chunk[len(header) + match.end() :].split("\n", 1)[0]
+            assert first_line.startswith(f"+line {match[2]} ")
+            assert len(chunk) <= 8000
+        assert result.chars_reviewed == len(diff)
+        assert sum(result.chunk_chars) == len(diff)
+
+    def test_line_numbers_follow_context_and_deleted_lines(self):
+        # Context moves both numbers, + only the new one, - only the old one
+        old_no, new_no = 10, 20
+        body = []
+        for i in range(900):
+            kind = " +-"[i % 3]
+            body.append(f"{kind}old={old_no} new={new_no} padding to make it long enough\n")
+            old_no += kind != "+"
+            new_no += kind != "-"
+        diff = (
+            "diff --git a/m.py b/m.py\n--- a/m.py\n+++ b/m.py\n"
+            "@@ -10,600 +20,600 @@ def handler():\n" + "".join(body)
+        )
+        result = chunk_diff(diff, 8000, 50)
+        header = header_of(diff)
+        assert len(result.chunks) > 2
+        for chunk in result.chunks[1:]:
+            match = CONTINUED.match(chunk[len(header) :])
+            first = chunk[len(header) + match.end() :].split("\n", 1)[0]
+            if first[0] != "+":
+                assert f"old={match[1]} " in first
+            if first[0] != "-":
+                assert f"new={match[2]} " in first
+
+    def test_no_newline_marker_is_not_counted_as_a_line(self):
+        body = "".join(f"+row {i} with padding padding padding\n" for i in range(1, 400))
+        diff = (
+            "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1,1 +1,400 @@\n"
+            "-old\n\\ No newline at end of file\n" + body
+        )
+        result = chunk_diff(diff, 4000, 50)
+        header = header_of(diff)
+        match = CONTINUED.match(result.chunks[1][len(header) :])
+        first = result.chunks[1][len(header) + match.end() :].split("\n", 1)[0]
+        assert first.startswith(f"+row {match[2]} ")
+
+    def test_absurd_hunk_line_numbers_still_fit_the_chunk_size(self):
+        huge = "9" * 80
+        body = "".join(f"+x{i} padding padding padding padding\n" for i in range(800))
+        diff = (
+            f"diff --git a/z.py b/z.py\n--- a/z.py\n+++ b/z.py\n@@ -{huge},1 +{huge},800 @@\n"
+            + body
+        )
+        result = chunk_diff(diff, 8000, 50)
+        assert all(len(c) <= 8000 for c in result.chunks)
+        assert result.chars_reviewed == len(diff)
+
+    def test_a_very_long_line_is_split_in_linear_time(self):
+        # F1 from the review: the old split copied the rest of the line on every pass
+        import time
+
+        diff = file_diff("big.min.js", 1, extra="z" * 8_000_000)
+        started = time.perf_counter()
+        result = chunk_diff(diff, 8000, 10_000)
+        assert time.perf_counter() - started < 5
+        assert result.chars_reviewed == len(diff)
+
     @pytest.mark.parametrize("max_chars,max_chunks", [(0, 1), (8000, 0), (-1, 5)])
     def test_bad_limits_are_refused(self, max_chars, max_chunks):
         with pytest.raises(ValueError):
@@ -149,8 +236,14 @@ class TestChunker:
         for _ in range(60):
             files = []
             for i in range(rng.randint(1, 8)):
-                files.append(file_diff(f"dir/f{i}.py", rng.randint(1, 200), hunks=rng.randint(1, 6),
-                                       extra="y" * rng.choice([0, 0, 50, 9000])))
+                files.append(
+                    file_diff(
+                        f"dir/f{i}.py",
+                        rng.randint(1, 200),
+                        hunks=rng.randint(1, 6),
+                        extra="y" * rng.choice([0, 0, 50, 9000]),
+                    )
+                )
             diff = "".join(files)
             size = rng.choice([500, 2000, 8000])
             result = chunk_diff(diff, size, 10_000)
@@ -185,9 +278,16 @@ def recording_client(fail_on: dict[Role, object] | None = None):
             return LLMResult(output="Summary", usage=usage, model="test:model")
         findings = []
         if output_type is SecurityReport and BUG_MARKER in prompt:
-            findings = [SecurityIssue(severity="critical", title="eval of request body",
-                                      description="d", file="late.py", line_number=1,
-                                      recommendation="r")]
+            findings = [
+                SecurityIssue(
+                    severity="critical",
+                    title="eval of request body",
+                    description="d",
+                    file="late.py",
+                    line_number=1,
+                    recommendation="r",
+                )
+            ]
         return LLMResult(output=output_type(findings=findings), usage=usage, model="test:model")
 
     client = MagicMock()
@@ -264,8 +364,10 @@ class TestWholePrReview:
         assert any(i.title == "eval of request body" for i in result.security_findings)
         assert result.status == AnalysisStatus.INCOMPLETE
         assert result.approval_recommendation not in APPROVING
-        assert any("Security analysis failed on 1 of" in r and "LLMOutputError" in r
-                   for r in result.incomplete_reasons)
+        assert any(
+            "Security analysis failed on 1 of" in r and "LLMOutputError" in r
+            for r in result.incomplete_reasons
+        )
 
     @pytest.mark.asyncio
     async def test_a_rate_limit_stops_the_rest_of_that_step(self):
@@ -316,6 +418,47 @@ class TestWholePrReview:
         assert "Security analysis failed (LLMOutputError)." in result.incomplete_reasons
         assert result.status == AnalysisStatus.INCOMPLETE
 
+    # --- S1 from the review: a time budget so a big PR still returns a result -------
+
+    @pytest.mark.asyncio
+    async def test_the_time_budget_stops_new_parts_and_reports_coverage(self, monkeypatch):
+        import itertools
+
+        import app.services.code_analyzer as code_analyzer
+
+        monkeypatch.setattr(settings, "LLM_REVIEW_BUDGET_SECONDS", 10.0)
+        ticks = itertools.count(0, 100)  # each reading is 100 s later than the last
+        monkeypatch.setattr(code_analyzer, "_clock", lambda: next(ticks))
+        analyzer, github, prompts = analyzer_over(LONG_DIFF)
+
+        result = await run(analyzer, github)
+
+        chunked = chunk_diff(LONG_DIFF, MAX_DIFF_CHARS, settings.LLM_MAX_DIFF_CHUNKS)
+        assert len(chunked.chunks) > 1
+        # The first part always runs, through every step; nothing after it
+        for role in (Role.SECURITY, Role.PERFORMANCE, Role.BEST_PRACTICES):
+            assert len(prompts[role]) == 1
+        assert len(prompts[Role.SUMMARY]) == 1
+        assert result.diff_truncated is True
+        assert result.diff_chars_reviewed_by_llm == chunked.chunk_chars[0]
+        assert result.status == AnalysisStatus.INCOMPLETE
+        assert result.approval_recommendation == ApprovalRecommendation.INCOMPLETE
+        reason = next(r for r in result.incomplete_reasons if "LLM_REVIEW_BUDGET_SECONDS" in r)
+        assert f"after 1 of {len(chunked.chunks)} diff parts" in reason
+        # A budget stop is not reported as a failed step
+        assert not any("failed on" in r for r in result.incomplete_reasons)
+
+    @pytest.mark.asyncio
+    async def test_parts_run_chunk_by_chunk_through_every_step(self):
+        analyzer, github, _ = analyzer_over(LONG_DIFF)
+        client = analyzer.llm_service.client
+        await run(analyzer, github)
+        roles = [call.args[0] for call in client.generate.call_args_list]
+        findings_roles = [r for r in roles if r != Role.SUMMARY]
+        n = len(findings_roles) // 3
+        assert n > 1
+        assert findings_roles == [Role.SECURITY, Role.PERFORMANCE, Role.BEST_PRACTICES] * n
+
     @pytest.mark.asyncio
     async def test_no_prompt_holds_more_than_one_chunk_of_diff(self):
         analyzer, github, prompts = analyzer_over(file_diff("huge.py", 900))
@@ -329,13 +472,41 @@ class TestConfig:
     def test_default_cap(self):
         assert settings.LLM_MAX_DIFF_CHUNKS >= 1
 
+    def test_default_budget_leaves_room_inside_the_blocking_timeout(self):
+        from app.core.config import Settings
+
+        fields = Settings.model_fields
+        assert (
+            fields["LLM_REVIEW_BUDGET_SECONDS"].default
+            < fields["A2A_BLOCKING_TIMEOUT_SECONDS"].default
+        )
+
+    @pytest.mark.parametrize("value", [0, -1, 3601])
+    def test_out_of_range_budgets_are_refused(self, value):
+        from pydantic import ValidationError
+
+        from app.core.config import Settings
+
+        with pytest.raises(ValidationError):
+            Settings(
+                GITHUB_TOKEN="t",
+                GITHUB_WEBHOOK_SECRET="s" * 40,
+                API_KEY="k" * 40,
+                LLM_REVIEW_BUDGET_SECONDS=value,
+                _env_file=None,
+            )
+
     @pytest.mark.parametrize("value", [0, -1, 51])
     def test_out_of_range_caps_are_refused(self, value):
         from pydantic import ValidationError
 
         from app.core.config import Settings
+
         with pytest.raises(ValidationError):
             Settings(
-                GITHUB_TOKEN="t", GITHUB_WEBHOOK_SECRET="s" * 40, API_KEY="k" * 40,
-                LLM_MAX_DIFF_CHUNKS=value, _env_file=None,
+                GITHUB_TOKEN="t",
+                GITHUB_WEBHOOK_SECRET="s" * 40,
+                API_KEY="k" * 40,
+                LLM_MAX_DIFF_CHUNKS=value,
+                _env_file=None,
             )
