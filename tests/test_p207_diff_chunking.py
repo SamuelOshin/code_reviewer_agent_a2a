@@ -205,6 +205,38 @@ class TestChunker:
         first = result.chunks[1][len(header) + match.end() :].split("\n", 1)[0]
         assert first.startswith(f"+row {match[2]} ")
 
+    @pytest.mark.parametrize("sep", ["\u2028", "\u2029", "\x0c", "\x85", "\x1c", "\r"])
+    def test_only_newline_ends_a_line_for_continuation_numbers(self, sep):
+        # Round 2 review: str.splitlines broke "+s = 'a<sep>b'" into two lines, so the
+        # old-side number of every later piece was one too high
+        body = [f"+s = 'a{sep}b'\n"]
+        old_no, new_no = 1, 2
+        for _ in range(60):
+            body.append(f" ctx old={old_no} new={new_no} padding padding\n")
+            old_no += 1
+            new_no += 1
+        diff = "diff --git a/s.js b/s.js\n--- a/s.js\n+++ b/s.js\n@@ -1,60 +1,61 @@\n" + "".join(
+            body
+        )
+        result = chunk_diff(diff, 600, 50)
+        header = header_of(diff)
+        assert len(result.chunks) > 2
+        for chunk in result.chunks[1:]:
+            match = CONTINUED.match(chunk[len(header) :])
+            first = chunk[len(header) + match.end() :].split("\n", 1)[0]
+            assert f"old={match[1]} new={match[2]} " in first
+        assert result.chars_reviewed == len(diff)
+
+    def test_a_line_separator_in_content_is_not_a_new_file(self):
+        diff = file_diff("a.js", 3, extra="x = 'a\u2028diff --git b'") + file_diff("b.js", 3)
+        assert chunk_diff(diff, 8000, 8).files_total == 2
+
+    def test_files_complete_after_counts_each_file_once(self):
+        diff = "".join(file_diff(f"f{i}.py", 150) for i in range(6))
+        result = chunk_diff(diff, 8000, 50)
+        assert result.files_complete_after[-1] == 6
+        assert result.files_complete_after == sorted(result.files_complete_after)
+
     def test_absurd_hunk_line_numbers_still_fit_the_chunk_size(self):
         huge = "9" * 80
         body = "".join(f"+x{i} padding padding padding padding\n" for i in range(800))
@@ -444,9 +476,54 @@ class TestWholePrReview:
         assert result.status == AnalysisStatus.INCOMPLETE
         assert result.approval_recommendation == ApprovalRecommendation.INCOMPLETE
         reason = next(r for r in result.incomplete_reasons if "LLM_REVIEW_BUDGET_SECONDS" in r)
-        assert f"after 1 of {len(chunked.chunks)} diff parts" in reason
+        assert f"(1 of {chunked.chunks_needed} diff parts" in reason
         # A budget stop is not reported as a failed step
         assert not any("failed on" in r for r in result.incomplete_reasons)
+
+    @pytest.mark.asyncio
+    async def test_cap_and_budget_together_give_one_true_coverage_reason(self, monkeypatch):
+        import itertools
+
+        import app.services.code_analyzer as code_analyzer
+
+        diff = "".join(file_diff(f"f{i}.py", 150) for i in range(10))
+        monkeypatch.setattr(settings, "LLM_MAX_DIFF_CHUNKS", 3)
+        monkeypatch.setattr(settings, "LLM_REVIEW_BUDGET_SECONDS", 10.0)
+        ticks = itertools.count(0, 100)
+        monkeypatch.setattr(code_analyzer, "_clock", lambda: next(ticks))
+        analyzer, github, _ = analyzer_over(diff)
+
+        result = await run(analyzer, github)
+
+        chunked = chunk_diff(diff, MAX_DIFF_CHARS, 3)
+        reasons = [r for r in result.incomplete_reasons if "diff parts" in r]
+        assert len(reasons) == 1
+        reason = reasons[0]
+        assert f"reviewed {chunked.chunk_chars[0]:,} of them" in reason
+        assert f"(1 of {chunked.chunks_needed} diff parts" in reason
+        assert "LLM_MAX_DIFF_CHUNKS" in reason and "LLM_REVIEW_BUDGET_SECONDS" in reason
+        not_fully = chunked.files_total - chunked.files_complete_after[0]
+        assert f"and {not_fully} file(s) were not fully reviewed" in reason
+        assert result.diff_chars_reviewed_by_llm == chunked.chunk_chars[0]
+
+    @pytest.mark.asyncio
+    async def test_all_steps_rate_limited_stops_the_loop(self):
+        error = LLMRateLimitError("rate limited")
+        analyzer, github, prompts = analyzer_over(
+            LONG_DIFF,
+            fail_on={Role.SECURITY: error, Role.PERFORMANCE: error, Role.BEST_PRACTICES: error},
+        )
+
+        result = await run(analyzer, github)
+
+        chunked = chunk_diff(LONG_DIFF, MAX_DIFF_CHARS, settings.LLM_MAX_DIFF_CHUNKS)
+        assert len(chunked.chunks) > 1
+        assert [
+            len(prompts[r]) for r in (Role.SECURITY, Role.PERFORMANCE, Role.BEST_PRACTICES)
+        ] == [1, 1, 1]
+        # Only the part that was sent counts towards coverage
+        assert result.diff_chars_reviewed_by_llm == chunked.chunk_chars[0]
+        assert result.status == AnalysisStatus.FAILED
 
     @pytest.mark.asyncio
     async def test_parts_run_chunk_by_chunk_through_every_step(self):
@@ -480,6 +557,35 @@ class TestConfig:
             fields["LLM_REVIEW_BUDGET_SECONDS"].default
             < fields["A2A_BLOCKING_TIMEOUT_SECONDS"].default
         )
+
+    @pytest.mark.parametrize("budget,blocking", [(300, 300), (400, 300), (150, 120)])
+    def test_a_budget_not_below_the_blocking_timeout_is_refused(self, budget, blocking):
+        from pydantic import ValidationError
+
+        from app.core.config import Settings
+
+        with pytest.raises(ValidationError, match="LLM_REVIEW_BUDGET_SECONDS must be less"):
+            Settings(
+                GITHUB_TOKEN="t",
+                GITHUB_WEBHOOK_SECRET="s" * 40,
+                API_KEY="k" * 40,
+                LLM_REVIEW_BUDGET_SECONDS=budget,
+                A2A_BLOCKING_TIMEOUT_SECONDS=blocking,
+                _env_file=None,
+            )
+
+    def test_a_budget_below_the_blocking_timeout_is_accepted(self):
+        from app.core.config import Settings
+
+        s = Settings(
+            GITHUB_TOKEN="t",
+            GITHUB_WEBHOOK_SECRET="s" * 40,
+            API_KEY="k" * 40,
+            LLM_REVIEW_BUDGET_SECONDS=60,
+            A2A_BLOCKING_TIMEOUT_SECONDS=120,
+            _env_file=None,
+        )
+        assert s.LLM_REVIEW_BUDGET_SECONDS == 60
 
     @pytest.mark.parametrize("value", [0, -1, 3601])
     def test_out_of_range_budgets_are_refused(self, value):
