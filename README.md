@@ -106,7 +106,9 @@ All settings are environment variables (or `.env`). [`.env.example`](.env.exampl
 | `OPENAI_COMPATIBLE_BASE_URL`, `OPENAI_COMPATIBLE_API_KEY` | for `openai-compatible` | Local models or gateways |
 | `PUSH_URL_ALLOWED_HOSTS` | no | Comma-separated bare hostnames allowed to receive push notifications. Empty (default) disables them |
 | `PUSH_URL_ALLOWED_PORTS` | no | Extra ports push URLs may use, comma-separated. Empty (default) allows only 443 |
-| `A2A_BLOCKING_TIMEOUT_SECONDS` | no | Longest a blocking `message/send` may run, default 300, max 3600. On timeout it returns JSON-RPC error `-32004` |
+| `A2A_BLOCKING_TIMEOUT_SECONDS` | no | Longest a blocking `message/send` may run, default 300, max 3600. On timeout it returns JSON-RPC error `-32004`. Must be above `LLM_REVIEW_BUDGET_SECONDS`, or startup fails |
+| `LLM_MAX_DIFF_CHUNKS` | no | Most 8,000-character diff chunks the LLM reviews per PR, 1-50, default 8. Each chunk costs three model calls |
+| `LLM_REVIEW_BUDGET_SECONDS` | no | Seconds after which no new diff chunk starts, default 150, max 3600. Must be below `A2A_BLOCKING_TIMEOUT_SECONDS`; leave room for the last chunk's calls and the summary (on a slow model they can still run past the blocking timeout). Applies to webhook reviews too |
 | `CORS_ALLOWED_ORIGINS` | no | Comma-separated `scheme://host[:port]`, lowercased. Empty sends no CORS headers; `*` is refused |
 | `JSONRPC_MAX_BATCH_SIZE` | no | Most calls per JSON-RPC batch, 1-100, default 10 |
 | `PUBLIC_BASE_URL` | no | Optional external `scheme://host[:port]` advertised in agent card interfaces behind a reverse proxy |
