@@ -20,7 +20,15 @@ from app.core.errors import ClientInputError, RequestTimeoutError, new_error_id,
 from app.core.exceptions import GitHubMCPError
 from app.core.push_url import validate_push_url
 from app.llm.errors import LLMRateLimitError
-from app.models.a2a import A2AArtifact, A2AMessage, A2ATask, ArtifactPart, MessagePart, TaskStatus
+from app.models.a2a import (
+    A2AArtifact,
+    A2AMessage,
+    A2ATask,
+    ArtifactPart,
+    MessagePart,
+    TaskStatus,
+    task_dict_to_v1_response,
+)
 from app.services.code_analyzer import CodeAnalyzerService
 from app.utils.formatters import SummaryFormatter
 
@@ -108,6 +116,28 @@ def _user_message(category: str, error_id: str) -> str:
     )
 
 
+def _apply_push_auth(headers: dict[str, str], push_config: dict[str, Any]) -> None:
+    """Attach Bearer authentication for either v0.3 (`schemes`) or v1.0 (`scheme`) push configs."""
+    auth = push_config.get("authentication")
+    auth_dict = auth if isinstance(auth, dict) else {}
+    schemes = auth_dict.get("schemes", [])
+    scheme = auth_dict.get("scheme")
+    token = push_config.get("token") or auth_dict.get("credentials")
+    has_bearer = (
+        isinstance(schemes, list) and any(str(s).lower() == "bearer" for s in schemes)
+    ) or (isinstance(scheme, str) and scheme.lower() == "bearer")
+    if has_bearer and token:
+        headers["Authorization"] = f"Bearer {token}"
+
+
+def _is_text_part(part: dict[str, Any]) -> bool:
+    return part.get("kind") == "text" or ("kind" not in part and "text" in part)
+
+
+def _is_data_part(part: dict[str, Any]) -> bool:
+    return part.get("kind") == "data" or ("kind" not in part and "data" in part)
+
+
 def _check_message_shape(message_id: Any, task_id: Any, context_id: Any, parts: Any) -> None:
     """Reject message fields of the wrong type before they are used (P2-10).
 
@@ -124,7 +154,7 @@ def _check_message_shape(message_id: Any, task_id: Any, context_id: Any, parts: 
     for part in parts[:2]:
         if not isinstance(part, dict):
             raise ClientInputError("each message part must be an object")
-    if parts and parts[0].get("kind") == "text" and not isinstance(parts[0].get("text", ""), str):
+    if parts and _is_text_part(parts[0]) and not isinstance(parts[0].get("text", ""), str):
         raise ClientInputError("a text part's text must be a string")
 
 
@@ -175,11 +205,15 @@ class MessageHandler:
         # Client-supplied ids: !r and a cap, so a newline can't forge a log line (P1-26)
         logger.info(f"Handling message/send: {message.get('messageId')!r:.100}")
         if configuration:
+            has_push = bool(
+                configuration.get("pushNotificationConfig")
+                or configuration.get("taskPushNotificationConfig")
+            )
             # Never log the configuration itself: pushNotificationConfig carries a bearer token
             logger.info(
                 "Configuration received: keys=%s, has_push_config=%s",
                 sorted(str(k) for k in configuration.keys()),
-                bool(configuration.get("pushNotificationConfig")),
+                has_push,
             )
         
         # Parse message
@@ -195,14 +229,14 @@ class MessageHandler:
         # an internal error from calling .get or .strip on the wrong type
         _check_message_shape(message_id, task_id, message.get("contextId"), parts)
 
-        # Extract interpreted text from parts[0]
+        # Extract interpreted text from parts[0] (v0.3 kind="text" or v1.0 {"text": ...})
         interpreted_text = None
-        if len(parts) > 0 and parts[0].get("kind") == "text":
+        if len(parts) > 0 and _is_text_part(parts[0]):
             interpreted_text = parts[0].get("text", "").strip()
 
-        # Extract conversation history from parts[1]
+        # Extract conversation history from parts[1] (v0.3 kind="data" or v1.0 {"data": ...})
         conversation_history = []
-        if len(parts) > 1 and parts[1].get("kind") == "data":
+        if len(parts) > 1 and _is_data_part(parts[1]):
             # A2A allows any JSON value in a data part; only an array is a history
             data = parts[1].get("data", [])
             conversation_history = data if isinstance(data, list) else []
@@ -221,9 +255,25 @@ class MessageHandler:
                 prompt="Please provide a GitHub Pull Request URL to analyze (e.g., https://github.com/owner/repo/pull/123)"
             )
         
-        # Honor the client's blocking setting
-        is_blocking = configuration.get("blocking", True) if configuration else True
-        push_config = configuration.get("pushNotificationConfig") if configuration else None
+        # Honor the client's blocking / returnImmediately setting and push config (v0.3 and v1.0)
+        if configuration:
+            if "blocking" in configuration:
+                is_blocking = configuration.get("blocking", True)
+            elif "returnImmediately" in configuration:
+                return_imm = configuration.get("returnImmediately", False)
+                if not isinstance(return_imm, bool):
+                    raise ClientInputError("configuration.returnImmediately must be a boolean")
+                is_blocking = not return_imm
+            else:
+                is_blocking = True
+            push_config = (
+                configuration.get("pushNotificationConfig")
+                if "pushNotificationConfig" in configuration
+                else configuration.get("taskPushNotificationConfig")
+            )
+        else:
+            is_blocking = True
+            push_config = None
         
         logger.info(f"Request mode: blocking={is_blocking}, has_webhook={push_config is not None}")
         
@@ -292,6 +342,21 @@ class MessageHandler:
                 "request with blocking=false and a pushNotificationConfig to get the "
                 "result when it is ready."
             ) from None
+
+    async def handle_v1_send_message(
+        self,
+        message: dict[str, Any],
+        configuration: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+        tenant: str | None = None,
+    ) -> dict[str, Any]:
+        """Handle A2A v1.0 SendMessage method and return a SendMessageResponse dict."""
+        del metadata, tenant  # accepted per A2A v1.0 SendMessageRequest schema
+        v03_result = await self.handle_message_send(
+            message=message,
+            configuration=configuration,
+        )
+        return task_dict_to_v1_response(v03_result)
 
     async def _process_and_push_safe(
         self,
@@ -404,12 +469,9 @@ class MessageHandler:
         
         # Push to webhook
         webhook_url = push_config.get("url")
-        token = push_config.get("token")
-        
+
         headers = {"Content-Type": "application/json"}
-        auth_schemes = push_config.get("authentication", {}).get("schemes", [])
-        if "Bearer" in auth_schemes and token:
-            headers["Authorization"] = f"Bearer {token}"
+        _apply_push_auth(headers, push_config)
         
         # Build JSON-RPC RESPONSE (not request!) for the push webhook
         # Expected shape: {"jsonrpc": "2.0", "result": {...task...}, "id": "..."}
@@ -583,6 +645,13 @@ class MessageHandler:
                 logger.warning(f"Artifact text too long ({len(artifact_text)} chars), truncating to {MAX_ARTIFACT_LENGTH}")
                 artifact_text = artifact_text[:MAX_ARTIFACT_LENGTH] + "\n\n...[Analysis truncated due to size limits]"
             
+            review_metadata = {
+                "analysis_status": analysis_result.status.value,
+                "incomplete_reasons": list(analysis_result.incomplete_reasons),
+                "approval_recommendation": analysis_result.approval_recommendation.value,
+                "risk_level": analysis_result.risk_level.value,
+            }
+
             artifact = A2AArtifact(
                 artifactId=str(uuid.uuid4()),
                 name=f"PR #{analysis_result.pr_number} Analysis",
@@ -591,7 +660,8 @@ class MessageHandler:
                         kind="text",
                         text=artifact_text
                     )
-                ]
+                ],
+                metadata=review_metadata,
             )
             
             # Create completed task
@@ -606,7 +676,8 @@ class MessageHandler:
                 ),
                 artifacts=[artifact],
                 history=[response_msg],
-                kind="task"
+                kind="task",
+                metadata=review_metadata,
             )
             
             # Serialize properly with Pydantic v2 (handles datetime -> ISO string)
@@ -696,7 +767,6 @@ class MessageHandler:
             
             # Push to webhook
             webhook_url = push_config.get("url")
-            token = push_config.get("token")
             
             if not webhook_url:
                 logger.error("No webhook URL in pushNotificationConfig")
@@ -707,9 +777,7 @@ class MessageHandler:
             }
             
             # Add authentication if provided
-            auth_schemes = push_config.get("authentication", {}).get("schemes", [])
-            if "Bearer" in auth_schemes and token:
-                headers["Authorization"] = f"Bearer {token}"
+            _apply_push_auth(headers, push_config)
             
             # Webhook expects JSON-RPC 2.0 RESPONSE (not request!)
             # Format: {"jsonrpc": "2.0", "result": {...task...}, "id": "..."}

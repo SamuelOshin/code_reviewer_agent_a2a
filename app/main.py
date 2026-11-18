@@ -16,12 +16,14 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI
+from a2a.utils.constants import AGENT_CARD_WELL_KNOWN_PATH
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.core.config import settings
 from app.core.logging import setup_logging
+from app.models.a2a import build_v1_agent_card
 from app.routes import a2a_tasks, health, jsonrpc, webhooks
 from app.services.code_analyzer import CodeAnalyzerService
 from app.services.jsonrpc_handler import JSONRPCHandler
@@ -182,20 +184,45 @@ async def handle_message_send(message: dict[str, Any], configuration: dict[str, 
     return result
 
 
+async def handle_v1_send_message(
+    message: dict[str, Any],
+    configuration: dict[str, Any] | None = None,
+    metadata: dict[str, Any] | None = None,
+    tenant: str | None = None,
+) -> dict[str, Any]:
+    """JSON-RPC method: SendMessage (A2A v1.0)."""
+    logger.info("RPC: SendMessage called")
+    message_handler: MessageHandler = app.state.message_handler
+    return await message_handler.handle_v1_send_message(
+        message=message,
+        configuration=configuration,
+        metadata=metadata,
+        tenant=tenant,
+    )
+
+
 def message_send_needs_reply(params: dict[str, Any]) -> bool:
-    """True unless message/send is non-blocking with a push config (P1-24).
+    """True unless message/send or SendMessage is non-blocking with a push config (P1-24).
 
     Mirrors MessageHandler.handle_message_send: blocking defaults to true, and only
-    a falsy "blocking" plus a pushNotificationConfig delivers the result by push.
+    non-blocking (`blocking=false` or `returnImmediately=true`) plus a push config
+    delivers the result by push.
     """
     configuration = params.get("configuration") if isinstance(params, dict) else None
     if not isinstance(configuration, dict):
         return True
-    # Same test as the handler: `not is_blocking and push_config`, so any falsy
-    # "blocking" (false, 0, null, "") with a push config pushes (P1-24 review)
-    pushes = not configuration.get("blocking", True) and bool(
+    if "blocking" in configuration:
+        is_blocking = bool(configuration.get("blocking", True))
+    elif "returnImmediately" in configuration:
+        is_blocking = not bool(configuration.get("returnImmediately", False))
+    else:
+        is_blocking = True
+    push = (
         configuration.get("pushNotificationConfig")
+        if "pushNotificationConfig" in configuration
+        else configuration.get("taskPushNotificationConfig")
     )
+    pushes = not is_blocking and bool(push)
     return not pushes
 
 
@@ -207,8 +234,8 @@ async def register_rpc_methods(handler: JSONRPCHandler):
         handler: JSONRPCHandler instance
     """
     # P1-24: a review whose result only comes back in the reply must not be sent as a
-    # notification. analyze_pr always replies with the result; message/send does unless
-    # it is non-blocking with a push config (the result is pushed instead).
+    # notification. analyze_pr always replies with the result; message/send and
+    # SendMessage do unless non-blocking with a push config (the result is pushed instead).
     handler.register_method("analyze_pr", handle_analyze_pr, reply_required=lambda _p: True)
     handler.register_method("introspect", handle_introspect)
     handler.register_method(
@@ -217,24 +244,30 @@ async def register_rpc_methods(handler: JSONRPCHandler):
         reply_required=message_send_needs_reply,
         reply_hint="Or send it non-blocking (\"blocking\": false) with a pushNotificationConfig.",
     )
+    handler.register_method(
+        "SendMessage",
+        handle_v1_send_message,
+        reply_required=message_send_needs_reply,
+        reply_hint=(
+            "Or send it non-blocking (\"returnImmediately\": true) "
+            "with a taskPushNotificationConfig."
+        ),
+    )
 
 
 # ============================================================================
 # Agent Card Endpoint
 # ============================================================================
 
+@app.get(AGENT_CARD_WELL_KNOWN_PATH)
 @app.get("/.well-known/agent.json")
-def get_agent_card():
-    """
-    Serve the A2A agent card
-    
-    Returns:
-        Agent card JSON
-    """
+def get_agent_card(request: Request):
+    """Serve the A2A v1.0 agent card for discovery."""
     try:
         with open(AGENT_CARD_PATH) as f:
-            agent_card = json.load(f)
-        
+            raw_card = json.load(f)
+        base_url = str(request.base_url).rstrip("/")
+        agent_card = build_v1_agent_card(raw_card, base_url=base_url)
         return JSONResponse(content=agent_card)
     except Exception as e:
         logger.error(f"Failed to load agent card: {type(e).__name__}")
@@ -265,12 +298,12 @@ async def root():
             "a2a_tasks": "/a2a/tasks",
             "webhooks": "/webhooks/github",
             "health": "/health",
-            "agent_card": "/.well-known/agent.json",
+            "agent_card": AGENT_CARD_WELL_KNOWN_PATH,
             "docs": "/docs" if settings.ENVIRONMENT == "development" else None
         },
         "protocols": {
             "jsonrpc": "2.0",
-            "a2a": "supported"
+            "a2a": "1.0"
         },
         "status": "running"
     }
