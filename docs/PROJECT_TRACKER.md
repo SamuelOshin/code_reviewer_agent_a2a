@@ -4,7 +4,7 @@ The single source of truth for this project: what we are building, how, what is
 done, what is left, and where to resume. Any person or agent should be able to
 read this file alone and continue the work.
 
-**Last updated:** 2026-11-12
+**Last updated:** 2026-11-18
 
 ---
 
@@ -12,10 +12,10 @@ read this file alone and continue the work.
 
 | | |
 |---|---|
-| **Current phase** | Phase 1: make it honest and working (planning complete) |
-| **Active task** | None. Phase 1 is done (`P1-01` to `P1-27`); `P1-05` closed 2026-11-15 with real reviews on two providers. The follow-up loop converged at `P1-27`; remaining review items are in the `P2-10` backlog |
-| **Next action** | Phase 2, starting with `P2-01`: the real runs showed that whether a review completes depends on the model following the JSON format |
-| **Working branch** | `main`. Start each new task on its own branch from `main`. `P1-27` on `chore/p1-27` for one PR |
+| **Current phase** | Phase 2: modernize the core |
+| **Active task** | None. Phase 1 is done (`P1-01` to `P1-27`); `P2-01` (schema-enforced structured output) is done on `feat/p2-01-structured-output` |
+| **Next action** | Merge `feat/p2-01-structured-output` to `main`, then start `P2-02`, `P2-03`, `P2-04`, `P2-06` or `P2-07` |
+| **Working branch** | `feat/p2-01-structured-output` (ready for PR/merge to `main`). Start each new task on its own branch from `main` |
 | **Blockers** | None. Owner approved running repo code on 2026-11-12. Use `uv` for everything (`uv sync`, `uv run`). If an install fails on a Windows cache file lock, retry or set a different `UV_CACHE_DIR` |
 | **Working rule** | Parallel agents don't edit this file. The coordinating session records their results |
 
@@ -277,7 +277,7 @@ in CI, and the README is accurate.
 
 | ID | Status | Task | Depends on | Acceptance checks |
 |---|---|---|---|---|
-| P2-01 | todo | Use schema-enforced structured output through the model layer, with the validated fallback for models without native support, and remove regex JSON extraction. Evidence from the `P1-05` real runs: the findings calls still ask for plain text and parse it, so `LLM_STRUCTURED_OUTPUT_MODE` has no effect on them; `anthropic/claude-haiku-5-5` (via OpenRouter) twice answered "no security issues" in prose around `[]`, which the parser rightly rejects, so the review stayed incomplete. A `{"findings": [...]}` object through native or tool output would make "no issues" unambiguous | Phase 1 | `_extract_json_from_response` is gone. Invalid output follows the fail-closed path |
+| P2-01 | done | Use schema-enforced structured output through the model layer, with the validated fallback for models without native support, and remove regex JSON extraction. Evidence from the `P1-05` real runs: the findings calls still ask for plain text and parse it, so `LLM_STRUCTURED_OUTPUT_MODE` has no effect on them; `anthropic/claude-haiku-5-5` (via OpenRouter) twice answered "no security issues" in prose around `[]`, which the parser rightly rejects, so the review stayed incomplete. A `{"findings": [...]}` object through native or tool output would make "no issues" unambiguous | Phase 1 | `_extract_json_from_response` is gone. Invalid output follows the fail-closed path |
 | P2-02 | todo | Migrate to the official `a2a-sdk` and A2A v1.0, with a correct agent card and auth scheme | Phase 1 | An independent A2A client can discover the agent and complete a review |
 | P2-03 | todo | Post inline PR review comments through a GitHub Action or App | D-07 | A real PR shows inline comments on the right lines |
 | P2-04 | todo | Fetch PR data once, run LLM calls concurrently, keep references to background tasks | Phase 1 | One fetch per review. Timing before and after recorded |
@@ -286,7 +286,7 @@ in CI, and the README is accurate.
 | P2-07 | todo | Review whole PRs by chunking large diffs per file, and state any coverage limit in the result | P2-01 | Test: a bug past the old 8,000-character limit is reviewed |
 | P2-08 | todo | Tune the remaining noisy performance rules (`inefficient_list_operations`, `synchronous_in_async`, `loading_all_records`) | P3-01 | Eval shows fewer false positives without lower recall |
 | P2-09 | todo | Fix the 55 mypy errors (mostly in `message_handler.py`, `performance_rules.py`, `health.py` and `security_rules.py`), add mypy to CI, and add `ruff format --check` once the code is formatted | Phase 1 | CI runs mypy and the format check, both green |
-| P2-10 | todo | Review backlog (follow-ups triaged out of Phase 1 by the convergence rule; promote any to Phase 1 if needed). From `P1-26`: ~~bad shapes inside an object `message` get `-32603`~~ (done 2026-11-14: `-32602`, and `contextId` is checked before the review); a lone surrogate (U+D800) in a method name or id gives `-32603` because the response can't be encoded (already on `main`); ~~`test_slot_is_released_after_a_timed_out_wait` is flaky~~ (done 2026-11-14, rewritten to force a real timed-out wait); a README line in the JSON-RPC paragraph runs to 130 characters. From `P1-27`: ~~the `X-GitHub-Event` header is logged and echoed raw and uncapped~~ (done 2026-11-14, escaped and capped in the log and the ignored-event reply); ~~`_pr_ref` is copied in `github_mcp.py` and `code_analyzer.py`~~ (done 2026-11-14, one `pr_ref` in `app/core/errors.py`); values cut by `!r:.200` give no sign they were cut, so add an ellipsis; `README.md` line 165 is 109 characters; ~~11 test files cite "Bobby Review" in comments~~ (done 2026-11-14, they cite task ids). From the header fix's review: ~~`action` and `pull_request.number` logged raw; no `X-GitHub-Event` header gets 200~~ (done 2026-11-14: `action` escaped, a non-integer number or a non-object `pull_request` is a 400, a missing event header is a 400). From that fix's review: a whitespace-only event header gets 200 under TestClient (a real server likely strips it); a PR number with thousands of digits, `0` or a negative number is accepted (length only, signed body). From the flaky-test fix's review: the two busy-slot tests in `test_p121_followups.py` hang instead of failing if the slot wait loses its timeout (wrap the waiting call in `asyncio.wait_for(..., 5)`); the rewritten test reads the private `asyncio.Semaphore._value`. From the message-shape fix's review: history items whose `text` isn't a string get the generic "Invalid method parameters" (skip them instead); the input-required reply makes a new `contextId` instead of echoing the client's; `handle_message_send` pops a null `contextId` from the caller's dict (use a local variable); `tests/test_p210_message_shape.py` imports a helper from `tests/test_webhooks.py` (move it to `conftest.py`); `test_security_p107.py` startup tests can hit their 120 s subprocess timeout on a busy machine. From the `P1-05` real runs: the Google SDK logs the whole 429 response body at INFO (huge lines, no secrets); pydantic-ai prints a startup banner (set `PYDANTIC_AI_NO_BANNER=1`); a provider that reports a quota of 0 or a retry delay of hours is still retried 3 times per call; the Google SDK retries on its own inside each app-level attempt, so a hung provider costs minutes per step (cap the total time per step); a GitHub 404 (PR missing or not visible to the token) reaches the caller as a generic `-32603`; two `/rpc` reviews of the same PR can run at once; `openai-compatible` calls log "cost unknown"; reasoning models can spend the whole `LLM_MAX_TOKENS` budget before answering; `MAX_DIFF_CHARS = 8000` marks most real PRs incomplete (see `P2-07`) | P1-26, P1-27 | Each item has a test or is closed with a reason |
+| P2-10 | todo | Review backlog (follow-ups triaged out of Phase 1 by the convergence rule; promote any to Phase 1 if needed). From `P1-26`: ~~bad shapes inside an object `message` get `-32603`~~ (done 2026-11-14: `-32602`, and `contextId` is checked before the review); a lone surrogate (U+D800) in a method name or id gives `-32603` because the response can't be encoded (already on `main`); ~~`test_slot_is_released_after_a_timed_out_wait` is flaky~~ (done 2026-11-14, rewritten to force a real timed-out wait); a README line in the JSON-RPC paragraph runs to 130 characters. From `P1-27`: ~~the `X-GitHub-Event` header is logged and echoed raw and uncapped~~ (done 2026-11-14, escaped and capped in the log and the ignored-event reply); ~~`_pr_ref` is copied in `github_mcp.py` and `code_analyzer.py`~~ (done 2026-11-14, one `pr_ref` in `app/core/errors.py`); values cut by `!r:.200` give no sign they were cut, so add an ellipsis; `README.md` line 165 is 109 characters; ~~11 test files cite "Bobby Review" in comments~~ (done 2026-11-14, they cite task ids). From the header fix's review: ~~`action` and `pull_request.number` logged raw; no `X-GitHub-Event` header gets 200~~ (done 2026-11-14: `action` escaped, a non-integer number or a non-object `pull_request` is a 400, a missing event header is a 400). From that fix's review: a whitespace-only event header gets 200 under TestClient (a real server likely strips it); a PR number with thousands of digits, `0` or a negative number is accepted (length only, signed body). From the flaky-test fix's review: the two busy-slot tests in `test_p121_followups.py` hang instead of failing if the slot wait loses its timeout (wrap the waiting call in `asyncio.wait_for(..., 5)`); the rewritten test reads the private `asyncio.Semaphore._value`. From the message-shape fix's review: history items whose `text` isn't a string get the generic "Invalid method parameters" (skip them instead); the input-required reply makes a new `contextId` instead of echoing the client's; `handle_message_send` pops a null `contextId` from the caller's dict (use a local variable); `tests/test_p210_message_shape.py` imports a helper from `tests/test_webhooks.py` (move it to `conftest.py`); `test_security_p107.py` startup tests can hit their 120 s subprocess timeout on a busy machine. From the `P1-05` real runs: the Google SDK logs the whole 429 response body at INFO (huge lines, no secrets); pydantic-ai prints a startup banner (set `PYDANTIC_AI_NO_BANNER=1`); a provider that reports a quota of 0 or a retry delay of hours is still retried 3 times per call; the Google SDK retries on its own inside each app-level attempt, so a hung provider costs minutes per step (cap the total time per step); a GitHub 404 (PR missing or not visible to the token) reaches the caller as a generic `-32603`; two `/rpc` reviews of the same PR can run at once; `openai-compatible` calls log "cost unknown"; reasoning models can spend the whole `LLM_MAX_TOKENS` budget before answering; `MAX_DIFF_CHARS = 8000` marks most real PRs incomplete (see `P2-07`). From the `P2-01` review: provider SDK loggers (`anthropic`, probably `openai` and `google_genai`) log full request bodies at DEBUG, which include the diff and, on retries, the model's earlier output (clamp them to INFO as `P1-19` did for `github` and `urllib3`); no cap on the number of findings (100,000 validated in under 2 s and would all go into the PR comment); OpenAI runs the report schema non-strict because nested optional fields aren't strict-compatible; the real-client fail-closed tests cover only the openai provider and the security role, and one analyzer test accepts `FAILED or INCOMPLETE` where it could assert `INCOMPLETE`; the sentinel tests would not catch a provider whose error text echoes the output | P1-26, P1-27, P2-01 | Each item has a test or is closed with a reason |
 
 ### Phase 3: the portfolio piece
 
@@ -310,7 +310,7 @@ Keep this honest. It records what has actually been proven.
 
 | Check | State | Notes |
 |---|---|---|
-| Test suite | Passing 2026-11-14 | After the `P2-10` webhook header fix: **874 passed, 0 xfail** after the `P2-10` webhook fixes. Coverage **90%**. The flaky slot-release test is fixed (0 failures in 1,000 loops under load). LLM, GitHub and push calls are mocked; no real provider was called |
+| Test suite | Passing 2026-11-18 | After `P2-01` structured output and review fixes: **970 passed, 0 xfail**. Coverage **91%**. LLM, GitHub and push calls are mocked; no real provider was called |
 | App startup | Starts in-process | `/`, `/health` (`healthy`), `/ready` and the agent card return 200, with or without `SECRET_KEY`. Real GitHub and LLM calls tested 2026-11-15 through `/rpc` `analyze_pr` on two providers (`P1-05`); the webhook and A2A push paths are still untested against real services |
 | Docker | Passing 2026-11-12 | From `.env.example` copied to `.env`, `docker compose up --build` reached `healthy` (Docker 29.8). `/health` returned 200 from this app. The container runs as `appuser` with no Node.js. Tested on host port 8010, because another local service holds 8000 |
 | CI | Passing 2026-11-13 | Green on GitHub for PR #2 at `549f481` (ruff, pytest with coverage, `pip-audit`). GitGuardian also passed |
@@ -328,6 +328,30 @@ Keep this honest. It records what has actually been proven.
 ## 9. Session log
 
 Newest first. Keep entries short.
+
+### 2026-11-18: `P2-01` schema-enforced structured output built and reviewed
+
+- **Done:** `SecurityReport`, `PerformanceReport` and `BestPracticesReport`
+  (`extra="forbid"`, required `findings` field, per-item wrap validation keeping valid
+  findings on partial failures and running `_severity_from_impact` on performance items);
+  `LLMService` calls `client.generate(..., output_type=<Report>)` and removes
+  `extract_findings_array` and regex helpers; mode-neutral prompts; 151 tests in
+  `tests/test_p201_structured_output.py` covering `native`, `tool` and `prompted` modes,
+  malformed raw replies, bad report shapes and sentinel log safety. 970 passed, 91%
+  coverage, ruff and `pip-audit` clean.
+- **Review:** first round found 1 blocker (`findings` had a `= []` default and
+  `_validate_report_findings` dropped extra keys, letting `{}` or `{"issues": [...]}`
+  pass as clean in native/prompted modes), 3 should-fix (real-client malformed reply
+  regression coverage, real `Scripted` sentinel tests, README accuracy) and 5 low items.
+  Fixed in `31e790c`..`6814dd7`. Second round (Bobby Review): "ready with follow-ups"
+  (0 blocking, 0 should-fix, 3 low). 180 end-to-end runs through the real client and
+  `CodeAnalyzerService` (4 providers x native/tool/prompted x 5 bad shapes x 3 roles)
+  never ended COMPLETE or APPROVE; reverting the model fix makes 45 of the new tests
+  fail. One low item (prompt label) fixed; the rest and the round-1 follow-ups are in
+  `P2-10`.
+- **Not verified:** live LLM provider calls with the new Report schemas (a real run of
+  PR #16 on OpenRouter `claude-haiku-5-5`, which failed with the old parser, would
+  confirm it).
 
 ### 2026-11-15: `P1-05` closed with real reviews on two providers
 
