@@ -119,11 +119,13 @@ def test_non_object_configuration_is_invalid_params(configuration):
 def test_real_app_registers_reply_rules_and_hints():
     handler = JSONRPCHandler()
     asyncio.run(register_rpc_methods(handler))
-    assert set(handler._reply_required) == {"analyze_pr", "message/send"}
+    assert set(handler._reply_required) == {"analyze_pr", "message/send", "SendMessage"}
     assert "analyze_pr" not in handler._reply_hints
     assert "pushNotificationConfig" in handler._reply_hints["message/send"]
+    assert "taskPushNotificationConfig" in handler._reply_hints["SendMessage"]
     assert handler._reply_required["analyze_pr"]({}) is True
     assert handler._reply_required["message/send"]({"message": {}}) is True
+    assert handler._reply_required["SendMessage"]({"message": {}}) is True
 
 
 def test_batch_survives_a_failing_precheck_with_a_malformed_id(monkeypatch):
