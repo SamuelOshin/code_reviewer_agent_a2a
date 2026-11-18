@@ -65,8 +65,9 @@ class Settings(BaseSettings):
     PUSH_URL_ALLOWED_PORTS: str = ""
 
     # Longest a blocking A2A message/send may run before it returns a JSON-RPC error
-    # (P1-15). A review makes four sequential model calls, each bounded by
-    # LLM_TIMEOUT_SECONDS, so keep this above that unless you want early cut-offs.
+    # (P1-15). A review makes three findings calls per diff chunk (see
+    # LLM_MAX_DIFF_CHUNKS) plus a summary call, one after another and each bounded by
+    # LLM_TIMEOUT_SECONDS, so a large PR can take several minutes.
     A2A_BLOCKING_TIMEOUT_SECONDS: float = Field(300.0, gt=0, le=3600)
 
     # Browser origins allowed by CORS, comma-separated (e.g. https://app.example.com).
@@ -96,6 +97,10 @@ class Settings(BaseSettings):
     # Retries for transient provider errors, applied the same way for every provider
     LLM_MAX_RETRIES: int = Field(2, ge=0)
     LLM_TIMEOUT_SECONDS: float = Field(120.0, gt=0)
+    # Most diff chunks (MAX_DIFF_CHARS each) the LLM reviews per PR (P2-07). Each
+    # chunk costs three model calls. A diff needing more chunks is reviewed up to this
+    # cap and marked incomplete, with the uncovered part stated in the result.
+    LLM_MAX_DIFF_CHUNKS: int = Field(8, ge=1, le=50)
 
     # Provider credentials (only the ones your models use are needed)
     OPENAI_API_KEY: str = ""
