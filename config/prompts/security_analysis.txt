@@ -28,7 +28,7 @@ For EACH security issue found, provide an object with:
 Report your findings in the `findings` field as a list of security issue objects.
 If there are no security issues, set `findings` to an empty list (`[]`).
 
-Example `findings` entry:
+Example:
 {
   "findings": [
     {

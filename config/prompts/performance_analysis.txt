@@ -28,7 +28,7 @@ For EACH performance issue found, provide an object with:
 Report your findings in the `findings` field as a list of performance issue objects. Focus on real, measurable impacts.
 If there are no performance issues, set `findings` to an empty list (`[]`).
 
-Example `findings` entry:
+Example:
 {
   "findings": [
     {
