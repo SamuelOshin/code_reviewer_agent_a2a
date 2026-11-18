@@ -67,7 +67,8 @@ class Settings(BaseSettings):
     # Longest a blocking A2A message/send may run before it returns a JSON-RPC error
     # (P1-15). A review makes three findings calls per diff chunk (see
     # LLM_MAX_DIFF_CHUNKS) plus a summary call, one after another and each bounded by
-    # LLM_TIMEOUT_SECONDS, so a large PR can take several minutes.
+    # LLM_TIMEOUT_SECONDS. LLM_REVIEW_BUDGET_SECONDS stops new chunks in time; keep
+    # this above it with room for the last chunk's calls and the summary.
     A2A_BLOCKING_TIMEOUT_SECONDS: float = Field(300.0, gt=0, le=3600)
 
     # Browser origins allowed by CORS, comma-separated (e.g. https://app.example.com).
@@ -101,6 +102,11 @@ class Settings(BaseSettings):
     # chunk costs three model calls. A diff needing more chunks is reviewed up to this
     # cap and marked incomplete, with the uncovered part stated in the result.
     LLM_MAX_DIFF_CHUNKS: int = Field(8, ge=1, le=50)
+    # Time after which the review starts no new diff chunk (P2-07). The chunk in
+    # progress finishes, then the summary runs; unreviewed chunks are reported and the
+    # review is marked incomplete. The default leaves the 300 s blocking A2A timeout
+    # room for the last chunk and the summary.
+    LLM_REVIEW_BUDGET_SECONDS: float = Field(150.0, gt=0, le=3600)
 
     # Provider credentials (only the ones your models use are needed)
     OPENAI_API_KEY: str = ""

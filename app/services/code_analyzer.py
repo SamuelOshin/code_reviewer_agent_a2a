@@ -15,7 +15,7 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
-from typing import Any, TypeVar
+from typing import Any, Generic, TypeVar
 
 from app.core.config import settings
 from app.core.errors import new_error_id, pr_ref
@@ -46,6 +46,78 @@ IssueT = TypeVar("IssueT")
 # Fixed texts for a throttled model (P1-22). No exception text, no provider name.
 RETRY_LATER_TEXT = "wait a few minutes and run the review again."
 RATE_LIMITED_TEXT = f"the model was rate-limited; {RETRY_LATER_TEXT}"
+# Clock for the review time budget (P2-07); tests replace it
+_clock = time.monotonic
+
+
+class _LLMStep(Generic[IssueT]):
+    """One LLM findings step run over the diff chunks without ending the review.
+
+    Failures are recorded in `incomplete_reasons` by error type only: exception text
+    can echo the prompt or model output, and the reasons may be posted on the PR.
+    Findings that validated before a failure are kept. A rate limit stops the step's
+    remaining chunks, which would only be throttled too (P2-07).
+    """
+
+    def __init__(self, name: str, analyze: Callable[[str], Awaitable[list[IssueT]]]):
+        self.name = name
+        self.analyze = analyze
+        self.findings: list[IssueT] = []
+        self.succeeded = 0
+        self.partial = False
+        self.rate_limited = False
+        self.error_types: list[str] = []
+
+    async def run(self, chunk: str) -> None:
+        if self.rate_limited:
+            return
+        try:
+            self.findings.extend(await self.analyze(chunk))
+            self.succeeded += 1
+        except PartialFindingsError as e:
+            logger.error(f"{self.name} returned some invalid findings: {type(e).__name__}")
+            self.findings.extend(e.findings)
+            self.succeeded += 1
+            self.partial = True
+        except LLMRateLimitError as e:
+            logger.error(f"{self.name} failed: {type(e).__name__}")
+            self.rate_limited = True
+            self.error_types.append(type(e).__name__)
+        except Exception as e:
+            logger.error(f"{self.name} failed: {type(e).__name__}")
+            self.error_types.append(type(e).__name__)
+
+    def finish(self, parts: int, incomplete_reasons: list[str]) -> tuple[list[IssueT], bool, bool]:
+        """Record the outcome over `parts` chunks.
+
+        Returns the findings, whether the step produced usable output for at least one
+        chunk (a partial result counts; it is still recorded as incomplete), and
+        whether it failed outright because the model was rate-limited (P1-23).
+        """
+        if not self.succeeded:
+            # P1-22: fixed text, no exception text, so a throttled model reads as
+            # "retry later" and not as a bug
+            only_limited = self.rate_limited and len(set(self.error_types)) == 1
+            if only_limited:
+                incomplete_reasons.append(f"{self.name} failed: {RATE_LIMITED_TEXT}")
+            else:
+                incomplete_reasons.append(f"{self.name} failed ({self.error_types[0]}).")
+            return [], False, only_limited
+
+        if self.partial:
+            incomplete_reasons.append(
+                f"{self.name} returned some invalid findings, which were dropped."
+            )
+        failed = parts - self.succeeded
+        if failed:
+            cause = (
+                RATE_LIMITED_TEXT if self.rate_limited
+                else ", ".join(dict.fromkeys(self.error_types))
+            )
+            incomplete_reasons.append(
+                f"{self.name} failed on {failed} of {parts} diff parts ({cause})."
+            )
+        return self.findings, True, False
 
 
 class CodeAnalyzerService:
@@ -120,24 +192,42 @@ class CodeAnalyzerService:
                     f"({chunked.chars_reviewed:,} of {chunked.chars_total:,} characters)"
                 )
 
-            llm_security_issues, security_ran, security_limited = await self._run_llm_step(
-                "Security analysis",
-                lambda chunk: self.llm_service.analyze_security(chunk, files),
-                chunked.chunks,
-                incomplete_reasons,
-            )
-            llm_performance_issues, performance_ran, performance_limited = await self._run_llm_step(
-                "Performance analysis",
-                lambda chunk: self.llm_service.analyze_performance(chunk, files),
-                chunked.chunks,
-                incomplete_reasons,
-            )
-            llm_best_practice_issues, best_practices_ran, best_practices_limited = await self._run_llm_step(
-                "Best practices analysis",
-                lambda chunk: self.llm_service.analyze_best_practices(chunk, files),
-                chunked.chunks,
-                incomplete_reasons,
-            )
+            # Chunk by chunk, each through all three steps, so a time-budget stop leaves
+            # every step at the same coverage (P2-07)
+            steps = [
+                _LLMStep("Security analysis", lambda c: self.llm_service.analyze_security(c, files)),
+                _LLMStep("Performance analysis", lambda c: self.llm_service.analyze_performance(c, files)),
+                _LLMStep("Best practices analysis", lambda c: self.llm_service.analyze_best_practices(c, files)),
+            ]
+            deadline = _clock() + settings.LLM_REVIEW_BUDGET_SECONDS
+            parts_reviewed = 0
+            for index, chunk in enumerate(chunked.chunks):
+                # The first part always runs; later ones only while the budget lasts
+                if index and _clock() >= deadline:
+                    break
+                for step in steps:
+                    await step.run(chunk)
+                parts_reviewed += 1
+            if parts_reviewed < len(chunked.chunks):
+                diff_truncated = True
+                reviewed = sum(chunked.chunk_chars[:parts_reviewed])
+                logger.warning(
+                    f"LLM review time budget ran out after {parts_reviewed} of "
+                    f"{len(chunked.chunks)} diff parts"
+                )
+                incomplete_reasons.append(
+                    f"The review time limit (LLM_REVIEW_BUDGET_SECONDS) ran out after "
+                    f"{parts_reviewed} of {len(chunked.chunks)} diff parts; the LLM "
+                    f"reviewed {reviewed:,} of {chunked.chars_total:,} characters. "
+                    f"Rule-based checks covered the whole diff."
+                )
+            else:
+                reviewed = chunked.chars_reviewed
+            (
+                (llm_security_issues, security_ran, security_limited),
+                (llm_performance_issues, performance_ran, performance_limited),
+                (llm_best_practice_issues, best_practices_ran, best_practices_limited),
+            ) = (step.finish(parts_reviewed, incomplete_reasons) for step in steps)
 
             logger.info(f"LLM analysis: {len(llm_security_issues)} security, {len(llm_performance_issues)} performance, {len(llm_best_practice_issues)} best practice issues")
             
@@ -246,7 +336,7 @@ class CodeAnalyzerService:
                 incomplete_reasons=incomplete_reasons,
                 diff_truncated=diff_truncated,
                 diff_chars_total=diff_chars_total,
-                diff_chars_reviewed_by_llm=chunked.chars_reviewed,
+                diff_chars_reviewed_by_llm=reviewed,
                 key_concerns=recommendations,  # Map recommendations to key_concerns
                 analyzed_at=datetime.now(UTC),
                 analysis_duration_seconds=analysis_duration,
@@ -277,67 +367,6 @@ class CodeAnalyzerService:
                 f"Analysis failed ({type(e).__name__}, error id: {error_id})"
             ) from None
     
-    async def _run_llm_step(
-        self,
-        name: str,
-        analyze: Callable[[str], Awaitable[list[IssueT]]],
-        chunks: list[str],
-        incomplete_reasons: list[str],
-    ) -> tuple[list[IssueT], bool, bool]:
-        """Run one LLM findings step over every diff chunk without ending the review.
-
-        Returns the findings from all chunks, whether the step produced usable output
-        for at least one chunk (a partial result counts; it is still recorded as
-        incomplete), and whether the step failed outright because the model was
-        rate-limited (P1-23). Failures are recorded in `incomplete_reasons` by error
-        type only: exception text can echo the prompt or model output, and the reasons
-        may be posted on the PR. Findings that validated before a failure are kept.
-        A rate limit stops the step's remaining chunks, which would only be throttled
-        too (P2-07).
-        """
-        findings: list[IssueT] = []
-        succeeded = 0
-        partial = False
-        rate_limited = False
-        error_types: list[str] = []
-        for chunk in chunks:
-            try:
-                findings.extend(await analyze(chunk))
-                succeeded += 1
-            except PartialFindingsError as e:
-                logger.error(f"{name} returned some invalid findings: {type(e).__name__}")
-                findings.extend(e.findings)
-                succeeded += 1
-                partial = True
-            except LLMRateLimitError as e:
-                logger.error(f"{name} failed: {type(e).__name__}")
-                rate_limited = True
-                error_types.append(type(e).__name__)
-                break
-            except Exception as e:
-                logger.error(f"{name} failed: {type(e).__name__}")
-                error_types.append(type(e).__name__)
-
-        failed = len(chunks) - succeeded
-        if not succeeded:
-            # P1-22: fixed text, no exception text, so a throttled model reads as
-            # "retry later" and not as a bug
-            only_limited = rate_limited and len(set(error_types)) == 1
-            if only_limited:
-                incomplete_reasons.append(f"{name} failed: {RATE_LIMITED_TEXT}")
-            else:
-                incomplete_reasons.append(f"{name} failed ({error_types[0]}).")
-            return [], False, only_limited
-
-        if partial:
-            incomplete_reasons.append(f"{name} returned some invalid findings, which were dropped.")
-        if failed:
-            cause = RATE_LIMITED_TEXT if rate_limited else ", ".join(dict.fromkeys(error_types))
-            incomplete_reasons.append(
-                f"{name} failed on {failed} of {len(chunks)} diff parts ({cause})."
-            )
-        return findings, True, False
-
     @staticmethod
     def _fail_closed(
         status: AnalysisStatus, recommendation: ApprovalRecommendation
