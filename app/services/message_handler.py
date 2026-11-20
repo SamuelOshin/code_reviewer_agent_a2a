@@ -862,7 +862,11 @@ class MessageHandler:
             await validate_push_url(webhook_url)
             logger.info(f"Pushing full task result to webhook: {safe_webhook_target(webhook_url)}")
             logger.info(f"Task state: {result_lightweight.get('status', {}).get('state')}")
-            logger.info("Sending JSON-RPC response with complete task result")
+            logger.info(
+                "Sending A2A v1.0 StreamResponse with complete task result"
+                if v1_format
+                else "Sending JSON-RPC response with complete task result"
+            )
             
             # Use a longer read timeout for push webhooks (they can be slow)
             # Connect: 10s, Read: 60s

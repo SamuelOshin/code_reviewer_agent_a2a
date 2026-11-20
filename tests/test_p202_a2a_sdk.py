@@ -514,6 +514,14 @@ async def test_agent_card_strict_v1_and_v03_compat_and_public_base_url(monkeypat
         assert tricky.status_code == 200
         assert tricky.json()["supportedInterfaces"][0]["url"] == "http://localhost:8000/a2a/tasks"
 
+        # IPv6 Host literal preserves brackets
+        ipv6 = await client.get(
+            AGENT_CARD_WELL_KNOWN_PATH,
+            headers={"Host": "[::1]:8000"},
+        )
+        assert ipv6.status_code == 200
+        assert ipv6.json()["supportedInterfaces"][0]["url"] == "http://[::1]:8000/a2a/tasks"
+
         # Invalid/spoofed Host is ignored when PUBLIC_BASE_URL is configured
         monkeypatch.setattr(config.settings, "PUBLIC_BASE_URL", "https://prrover.example.com")
         spoofed = await client.get(

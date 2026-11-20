@@ -10,6 +10,7 @@ Main FastAPI application with:
 - Agent card serving
 """
 
+import ipaddress
 import json
 import logging
 import re
@@ -258,7 +259,7 @@ async def register_rpc_methods(handler: JSONRPCHandler):
 # Agent Card Endpoint
 # ============================================================================
 
-_CARD_HOST_RE = re.compile(r"^[a-z0-9.-]+$|^\[[0-9a-f:]+\]$")
+_CARD_HOST_RE = re.compile(r"^[a-z0-9.-]+$")
 
 
 def _agent_card_base_url(request: Request) -> str:
@@ -285,10 +286,20 @@ def _agent_card_base_url(request: Request) -> str:
     except ValueError:
         hostname = ""
         port = None
-    if not hostname or not _CARD_HOST_RE.match(hostname):
+    host_display = ""
+    if hostname:
+        try:
+            if isinstance(ipaddress.ip_address(hostname), ipaddress.IPv6Address):
+                host_display = f"[{hostname}]"
+            else:
+                host_display = hostname
+        except ValueError:
+            if _CARD_HOST_RE.match(hostname):
+                host_display = hostname
+    if not host_display:
         return f"{scheme}://localhost:{settings.PORT}"
     default_port = 443 if scheme == "https" else 80
-    host_part = f"{hostname}:{port}" if port is not None and port != default_port else hostname
+    host_part = f"{host_display}:{port}" if port is not None and port != default_port else host_display
     return f"{scheme}://{host_part}"
 
 

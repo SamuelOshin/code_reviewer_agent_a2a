@@ -280,7 +280,8 @@ def task_dict_to_v1_response(result: dict[str, Any]) -> dict[str, Any]:
         return MessageToDict(resp, preserving_proto_field_name=False)
 
     context_id = str(result.get("contextId") or result.get("context_id") or "")
-    status_raw = result.get("status") if isinstance(result.get("status"), dict) else {}
+    raw_status = result.get("status")
+    status_raw: dict[str, Any] = raw_status if isinstance(raw_status, dict) else {}
     state_str = str(status_raw.get("state", "completed")).lower()
     sdk_state = _TASK_STATE_MAP.get(state_str, a2a_types.TaskState.TASK_STATE_UNSPECIFIED)
 
