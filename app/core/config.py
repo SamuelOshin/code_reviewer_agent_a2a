@@ -208,4 +208,18 @@ class Settings(BaseSettings):
         provider, sep, _ = self.LLM_MODEL.partition(":")
         return provider.strip().lower() if sep else ""
 
+    # Optional public base URL (scheme://host[:port], no path) advertised in the A2A
+    # agent card when running behind a reverse proxy. Empty falls back to the request
+    # base URL with Cache-Control: no-store.
+    PUBLIC_BASE_URL: str = ""
+
+    @field_validator("PUBLIC_BASE_URL")
+    @classmethod
+    def _valid_public_base_url(cls, value: str) -> str:
+        cleaned = value.strip().rstrip("/")
+        if cleaned and not _ORIGIN_RE.match(cleaned.lower()):
+            raise ValueError("PUBLIC_BASE_URL must be scheme://host[:port] with no path")
+        return cleaned
+
+
 settings = Settings()

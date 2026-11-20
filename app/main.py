@@ -12,6 +12,7 @@ Main FastAPI application with:
 
 import json
 import logging
+import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -23,7 +24,7 @@ from fastapi.responses import JSONResponse
 
 from app.core.config import settings
 from app.core.logging import setup_logging
-from app.models.a2a import build_v1_agent_card
+from app.models.a2a import build_v03_agent_card, build_v1_agent_card
 from app.routes import a2a_tasks, health, jsonrpc, webhooks
 from app.services.code_analyzer import CodeAnalyzerService
 from app.services.jsonrpc_handler import JSONRPCHandler
@@ -217,10 +218,8 @@ def message_send_needs_reply(params: dict[str, Any]) -> bool:
         is_blocking = not bool(configuration.get("returnImmediately", False))
     else:
         is_blocking = True
-    push = (
-        configuration.get("pushNotificationConfig")
-        if "pushNotificationConfig" in configuration
-        else configuration.get("taskPushNotificationConfig")
+    push = configuration.get("pushNotificationConfig") or configuration.get(
+        "taskPushNotificationConfig"
     )
     pushes = not is_blocking and bool(push)
     return not pushes
@@ -259,22 +258,67 @@ async def register_rpc_methods(handler: JSONRPCHandler):
 # Agent Card Endpoint
 # ============================================================================
 
-@app.get(AGENT_CARD_WELL_KNOWN_PATH)
-@app.get("/.well-known/agent.json")
-def get_agent_card(request: Request):
-    """Serve the A2A v1.0 agent card for discovery."""
+_CARD_HOST_RE = re.compile(r"^[a-z0-9.-]+$|^\[[0-9a-f:]+\]$")
+
+
+def _agent_card_base_url(request: Request) -> str:
+    """Resolve the base URL advertised in agent card interfaces.
+
+    Uses configured `PUBLIC_BASE_URL` when set so spoofed Host headers or missing
+    proxy-header forwarding cannot alter the card URL.
+    """
+    if settings.PUBLIC_BASE_URL:
+        return settings.PUBLIC_BASE_URL
+    url_scheme = request.url.scheme
+    raw_scheme = (
+        request.headers.get("x-forwarded-proto", url_scheme)
+        .split(",")[0]
+        .strip()
+        .lower()
+    )
+    scheme = raw_scheme if raw_scheme in ("http", "https") else url_scheme
+    if settings.ENVIRONMENT != "development" and scheme != "https":
+        scheme = "https"
     try:
-        with open(AGENT_CARD_PATH) as f:
+        hostname = (request.url.hostname or "").lower()
+        port = request.url.port
+    except ValueError:
+        hostname = ""
+        port = None
+    if not hostname or not _CARD_HOST_RE.match(hostname):
+        return f"{scheme}://localhost:{settings.PORT}"
+    default_port = 443 if scheme == "https" else 80
+    host_part = f"{hostname}:{port}" if port is not None and port != default_port else hostname
+    return f"{scheme}://{host_part}"
+
+
+def _serve_agent_card(request: Request, *, v1: bool) -> JSONResponse:
+    try:
+        with open(AGENT_CARD_PATH, encoding="utf-8") as f:
             raw_card = json.load(f)
-        base_url = str(request.base_url).rstrip("/")
-        agent_card = build_v1_agent_card(raw_card, base_url=base_url)
-        return JSONResponse(content=agent_card)
+        base_url = _agent_card_base_url(request)
+        builder = build_v1_agent_card if v1 else build_v03_agent_card
+        agent_card = builder(raw_card, base_url=base_url)
+        headers = None if settings.PUBLIC_BASE_URL else {"Cache-Control": "no-store"}
+        return JSONResponse(content=agent_card, headers=headers)
     except Exception as e:
         logger.error(f"Failed to load agent card: {type(e).__name__}")
         return JSONResponse(
             content={"error": "Failed to load agent card"},
-            status_code=500
+            status_code=500,
         )
+
+
+@app.get(AGENT_CARD_WELL_KNOWN_PATH)
+def get_agent_card(request: Request):
+    """Serve the strict A2A v1.0 agent card for discovery."""
+    return _serve_agent_card(request, v1=True)
+
+
+@app.get("/.well-known/agent.json")
+def get_legacy_agent_card(request: Request):
+    """Serve a v0.3-compatible agent card alias for legacy clients."""
+    return _serve_agent_card(request, v1=False)
 
 
 # ============================================================================

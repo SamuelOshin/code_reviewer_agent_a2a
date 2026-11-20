@@ -117,17 +117,30 @@ def _user_message(category: str, error_id: str) -> str:
 
 
 def _apply_push_auth(headers: dict[str, str], push_config: dict[str, Any]) -> None:
-    """Attach Bearer authentication for either v0.3 (`schemes`) or v1.0 (`scheme`) push configs."""
+    """Attach push notification headers for A2A v1.0 and v0.3 configs.
+
+    In A2A v1.0 (`TaskPushNotificationConfig`), `token` is sent in
+    `X-A2A-Notification-Token` and `authentication.credentials` holds the
+    credential for `Authorization`. In v0.3, `authentication.schemes` lists
+    `["Bearer"]` and `token` supplies the Bearer credential when `credentials` is unset.
+    """
+    raw_token = push_config.get("token")
+    token = raw_token if isinstance(raw_token, str) and raw_token else None
+    if token:
+        headers["X-A2A-Notification-Token"] = token
+
     auth = push_config.get("authentication")
     auth_dict = auth if isinstance(auth, dict) else {}
+    raw_creds = auth_dict.get("credentials")
+    credentials = raw_creds if isinstance(raw_creds, str) and raw_creds else None
     schemes = auth_dict.get("schemes", [])
     scheme = auth_dict.get("scheme")
-    token = push_config.get("token") or auth_dict.get("credentials")
     has_bearer = (
         isinstance(schemes, list) and any(str(s).lower() == "bearer" for s in schemes)
     ) or (isinstance(scheme, str) and scheme.lower() == "bearer")
-    if has_bearer and token:
-        headers["Authorization"] = f"Bearer {token}"
+    bearer_secret = credentials or token
+    if has_bearer and bearer_secret:
+        headers["Authorization"] = f"Bearer {bearer_secret}"
 
 
 def _is_text_part(part: dict[str, Any]) -> bool:
@@ -143,7 +156,9 @@ def _check_message_shape(message_id: Any, task_id: Any, context_id: Any, parts: 
 
     Fixed messages only: they go back to the caller, so never echo the values.
     """
-    if not isinstance(message_id, str) or not isinstance(task_id, str):
+    if (message_id is not None and not isinstance(message_id, str)) or (
+        task_id is not None and not isinstance(task_id, str)
+    ):
         raise ClientInputError("messageId and taskId must be strings")
     # Checked before any review runs: a bad contextId used to fail only when the task
     # was built, after the review (P2-10 review)
@@ -151,11 +166,11 @@ def _check_message_shape(message_id: Any, task_id: Any, context_id: Any, parts: 
         raise ClientInputError("contextId must be a string")
     if not isinstance(parts, list):
         raise ClientInputError("message.parts must be an array")
-    for part in parts[:2]:
+    for part in parts:
         if not isinstance(part, dict):
             raise ClientInputError("each message part must be an object")
-    if parts and _is_text_part(parts[0]) and not isinstance(parts[0].get("text", ""), str):
-        raise ClientInputError("a text part's text must be a string")
+        if _is_text_part(part) and not isinstance(part.get("text", ""), str):
+            raise ClientInputError("a text part's text must be a string")
 
 
 class MessageHandler:
@@ -166,7 +181,13 @@ class MessageHandler:
         self.formatter = SummaryFormatter()
         self._background_tasks: set[asyncio.Task] = set()
     
-    async def handle_message_send(self, message: dict[str, Any], configuration: dict[str, Any] | None = None) -> dict[str, Any]:
+    async def handle_message_send(
+        self,
+        message: dict[str, Any],
+        configuration: dict[str, Any] | None = None,
+        *,
+        v1_format: bool = False,
+    ) -> dict[str, Any]:
         """
         Handle message/send JSON-RPC method
         
@@ -209,38 +230,48 @@ class MessageHandler:
                 configuration.get("pushNotificationConfig")
                 or configuration.get("taskPushNotificationConfig")
             )
+            logged_keys = [str(k)[:60] for k in sorted(configuration.keys(), key=str)[:20]]
             # Never log the configuration itself: pushNotificationConfig carries a bearer token
             logger.info(
                 "Configuration received: keys=%s, has_push_config=%s",
-                sorted(str(k) for k in configuration.keys()),
+                logged_keys,
                 has_push,
             )
-        
-        # Parse message
-        message_id = message.get("messageId", str(uuid.uuid4()))
-        # taskId and contextId are optional in A2A; a null from a serializer means unset
-        task_id = message.get("taskId")
-        if task_id is None:
-            task_id = str(uuid.uuid4())
-        if message.get("contextId") is None:
-            message.pop("contextId", None)
+
+        # Parse message without mutating caller's dict
+        raw_message_id = message.get("messageId")
+        raw_task_id = message.get("taskId")
+        raw_context_id = message.get("contextId")
         parts = message.get("parts", [])
         # P2-10: wrong shapes are the caller's mistake, so Invalid params (-32602), not
         # an internal error from calling .get or .strip on the wrong type
-        _check_message_shape(message_id, task_id, message.get("contextId"), parts)
+        _check_message_shape(raw_message_id, raw_task_id, raw_context_id, parts)
+        message_id = (
+            raw_message_id if isinstance(raw_message_id, str) and raw_message_id else str(uuid.uuid4())
+        )
+        task_id = (
+            raw_task_id if isinstance(raw_task_id, str) and raw_task_id else str(uuid.uuid4())
+        )
+        context_id = (
+            raw_context_id if isinstance(raw_context_id, str) and raw_context_id else str(uuid.uuid4())
+        )
 
-        # Extract interpreted text from parts[0] (v0.3 kind="text" or v1.0 {"text": ...})
-        interpreted_text = None
-        if len(parts) > 0 and _is_text_part(parts[0]):
-            interpreted_text = parts[0].get("text", "").strip()
+        # Extract text and data across all parts (v0.3 kind=... or v1.0 flat part fields)
+        text_parts = [
+            part.get("text", "").strip()
+            for part in parts
+            if _is_text_part(part) and part.get("text", "").strip()
+        ]
+        interpreted_text = "\n".join(text_parts) if text_parts else None
 
-        # Extract conversation history from parts[1] (v0.3 kind="data" or v1.0 {"data": ...})
-        conversation_history = []
-        if len(parts) > 1 and _is_data_part(parts[1]):
-            # A2A allows any JSON value in a data part; only an array is a history
-            data = parts[1].get("data", [])
-            conversation_history = data if isinstance(data, list) else []
-        
+        conversation_history: list[dict[str, Any]] = []
+        for part in parts:
+            if _is_data_part(part):
+                data = part.get("data", [])
+                if isinstance(data, list):
+                    conversation_history = data
+                    break
+
         logger.info(f"Interpreted text length: {len(interpreted_text or '')} chars")
         logger.info(f"Conversation history length: {len(conversation_history)}")
         
@@ -252,7 +283,8 @@ class MessageHandler:
             return await self._create_input_required_response(
                 task_id=task_id,
                 message_id=message_id,
-                prompt="Please provide a GitHub Pull Request URL to analyze (e.g., https://github.com/owner/repo/pull/123)"
+                prompt="Please provide a GitHub Pull Request URL to analyze (e.g., https://github.com/owner/repo/pull/123)",
+                context_id=context_id,
             )
         
         # Honor the client's blocking / returnImmediately setting and push config (v0.3 and v1.0)
@@ -266,16 +298,16 @@ class MessageHandler:
                 is_blocking = not return_imm
             else:
                 is_blocking = True
-            push_config = (
-                configuration.get("pushNotificationConfig")
-                if "pushNotificationConfig" in configuration
-                else configuration.get("taskPushNotificationConfig")
+            push_config = configuration.get("pushNotificationConfig") or configuration.get(
+                "taskPushNotificationConfig"
             )
         else:
             is_blocking = True
             push_config = None
         
         logger.info(f"Request mode: blocking={is_blocking}, has_webhook={push_config is not None}")
+
+        msg_with_context = {**message, "contextId": context_id}
         
         # WEBHOOK MODE: Non-blocking mode with real PR analysis
         if not is_blocking and push_config:
@@ -285,9 +317,6 @@ class MessageHandler:
             await validate_push_url(push_config.get("url") if isinstance(push_config, dict) else None)
             logger.info(f"Non-blocking mode: analyzing {pr_url!r:.200} in background, result will be pushed to webhook")
             
-            # Create task ID upfront
-            message_id = message.get("messageId", str(uuid.uuid4()))
-            
             # Start background task for real analysis
             # Keep a strong reference: the event loop holds tasks weakly, so an
             # unreferenced task can be garbage-collected before it finishes.
@@ -296,8 +325,9 @@ class MessageHandler:
                     pr_url=pr_url,
                     task_id=task_id,
                     message_id=message_id,
-                    message=message,
-                    push_config=push_config
+                    message=msg_with_context,
+                    push_config=push_config,
+                    v1_format=v1_format,
                 )
             )
             self._background_tasks.add(bg_task)
@@ -315,6 +345,7 @@ class MessageHandler:
                 ],
                 kind="message",
                 taskId=task_id,
+                contextId=context_id,
                 timestamp=datetime.now(UTC).isoformat()
             )
             
@@ -333,14 +364,19 @@ class MessageHandler:
         limit = settings.A2A_BLOCKING_TIMEOUT_SECONDS
         try:
             return await asyncio.wait_for(
-                self._analyze_and_return(pr_url, task_id, message_id, message), timeout=limit
+                self._analyze_and_return(pr_url, task_id, message_id, msg_with_context),
+                timeout=limit,
             )
         except TimeoutError:
             logger.warning(f"Blocking review timed out after {limit:g}s")
+            retry_hint = (
+                "returnImmediately=true and a taskPushNotificationConfig"
+                if v1_format
+                else "blocking=false and a pushNotificationConfig"
+            )
             raise RequestTimeoutError(
                 f"The review did not finish within {limit:g} seconds. Retry, or send the "
-                "request with blocking=false and a pushNotificationConfig to get the "
-                "result when it is ready."
+                f"request with {retry_hint} to get the result when it is ready."
             ) from None
 
     async def handle_v1_send_message(
@@ -351,10 +387,14 @@ class MessageHandler:
         tenant: str | None = None,
     ) -> dict[str, Any]:
         """Handle A2A v1.0 SendMessage method and return a SendMessageResponse dict."""
-        del metadata, tenant  # accepted per A2A v1.0 SendMessageRequest schema
+        if metadata is not None and not isinstance(metadata, dict):
+            raise ClientInputError("metadata must be an object")
+        if tenant is not None and not isinstance(tenant, str):
+            raise ClientInputError("tenant must be a string")
         v03_result = await self.handle_message_send(
             message=message,
             configuration=configuration,
+            v1_format=True,
         )
         return task_dict_to_v1_response(v03_result)
 
@@ -364,7 +404,9 @@ class MessageHandler:
         task_id: str,
         message_id: str,
         message: dict[str, Any],
-        push_config: dict[str, Any]
+        push_config: dict[str, Any],
+        *,
+        v1_format: bool = False,
     ):
         """Wrapper for _process_and_push with comprehensive error handling"""
         logger.info(f"🚀 _process_and_push_safe STARTED for PR: {pr_url!r:.200}")
@@ -373,7 +415,14 @@ class MessageHandler:
             logger.info(f"Task details - ID: {task_id!r:.100}, Message: {message_id!r:.100}")
             logger.info(f"Push config available: {bool(push_config)}")
             
-            await self._process_and_push(pr_url, task_id, message_id, message, push_config)
+            await self._process_and_push(
+                pr_url,
+                task_id,
+                message_id,
+                message,
+                push_config,
+                v1_format=v1_format,
+            )
             logger.info(f"Background task completed successfully for PR: {pr_url!r:.200}")
         except Exception as e:
             error_id = new_error_id()
@@ -383,7 +432,15 @@ class MessageHandler:
             )
             # Try to push the error to the client's webhook
             try:
-                await self._push_error(task_id, message_id, message, push_config, e, error_id)
+                await self._push_error(
+                    task_id,
+                    message_id,
+                    message,
+                    push_config,
+                    e,
+                    error_id,
+                    v1_format=v1_format,
+                )
             except Exception as push_error:
                 logger.error(f"Failed to push error to webhook: {type(push_error).__name__}")
 
@@ -394,7 +451,9 @@ class MessageHandler:
         message: dict[str, Any],
         push_config: dict[str, Any],
         error: BaseException | None,
-        error_id: str | None = None
+        error_id: str | None = None,
+        *,
+        v1_format: bool = False,
     ):
         """Push error result to the client's push notification webhook
 
@@ -428,6 +487,7 @@ class MessageHandler:
                 return
         user_message = _user_message(category, error_id)
 
+        resolved_context_id = message.get("contextId") or str(uuid.uuid4())
         error_msg = A2AMessage(
             messageId=str(uuid.uuid4()),
             role="agent",
@@ -439,6 +499,7 @@ class MessageHandler:
             ],
             kind="message",
             taskId=task_id,
+            contextId=resolved_context_id,
             timestamp=datetime.now(UTC)
         )
         
@@ -456,7 +517,7 @@ class MessageHandler:
         
         task_obj = A2ATask(
             id=task_id,
-            contextId=message.get("contextId", str(uuid.uuid4())),
+            contextId=resolved_context_id,
             status=TaskStatus(
                 state="failed",
                 timestamp=datetime.now(UTC),
@@ -473,15 +534,16 @@ class MessageHandler:
         headers = {"Content-Type": "application/json"}
         _apply_push_auth(headers, push_config)
         
-        # Build JSON-RPC RESPONSE (not request!) for the push webhook
-        # Expected shape: {"jsonrpc": "2.0", "result": {...task...}, "id": "..."}
         task_result = task_obj.model_dump(mode="json", exclude_none=True)
-        
-        webhook_payload = {
-            "jsonrpc": "2.0",
-            "result": task_result,
-            "id": str(uuid.uuid4())
-        }
+        webhook_payload = (
+            task_dict_to_v1_response(task_result)
+            if v1_format
+            else {
+                "jsonrpc": "2.0",
+                "result": task_result,
+                "id": str(uuid.uuid4()),
+            }
+        )
         
         # Check again right before sending: DNS may have changed since the request
         await validate_push_url(webhook_url)
@@ -620,6 +682,8 @@ class MessageHandler:
             summary_text = self.formatter.format_short(analysis_result)
             logger.info(f"Summary formatted, length: {len(summary_text)} chars")
             
+            resolved_context_id = message.get("contextId") or str(uuid.uuid4())
+
             # Create response message
             response_msg = A2AMessage(
                 messageId=str(uuid.uuid4()),
@@ -632,6 +696,7 @@ class MessageHandler:
                 ],
                 kind="message",
                 taskId=task_id,
+                contextId=resolved_context_id,
                 timestamp=datetime.now(UTC).isoformat()
             )
             
@@ -667,7 +732,7 @@ class MessageHandler:
             # Create completed task
             task = A2ATask(
                 id=task_id,
-                contextId=message.get("contextId", str(uuid.uuid4())),
+                contextId=resolved_context_id,
                 status=TaskStatus(
                     state="completed",
                     timestamp=datetime.now(UTC).isoformat(),
@@ -703,6 +768,7 @@ class MessageHandler:
                 failure_text = _user_message(category, error_id)
             else:
                 failure_text = f"Failed to analyze PR. Please try again later. (error id: {error_id})"
+            resolved_context_id = message.get("contextId") or str(uuid.uuid4())
             error_msg = A2AMessage(
                 messageId=str(uuid.uuid4()),
                 role="agent",
@@ -714,12 +780,13 @@ class MessageHandler:
                 ],
                 kind="message",
                 taskId=task_id,
+                contextId=resolved_context_id,
                 timestamp=datetime.now(UTC).isoformat()
             )
             
             task = A2ATask(
                 id=task_id,
-                contextId=message.get("contextId", str(uuid.uuid4())),
+                contextId=resolved_context_id,
                 status=TaskStatus(
                     state="failed",
                     timestamp=datetime.now(UTC).isoformat(),
@@ -738,7 +805,9 @@ class MessageHandler:
         task_id: str,
         message_id: str,
         message: dict[str, Any],
-        push_config: dict[str, Any]
+        push_config: dict[str, Any],
+        *,
+        v1_format: bool = False,
     ):
         """Process PR analysis and push result to the push notification webhook (non-blocking mode)"""
         try:
@@ -779,16 +848,15 @@ class MessageHandler:
             # Add authentication if provided
             _apply_push_auth(headers, push_config)
             
-            # Webhook expects JSON-RPC 2.0 RESPONSE (not request!)
-            # Format: {"jsonrpc": "2.0", "result": {...task...}, "id": "..."}
-            # Use lightweight version to avoid HTTP 413 (payload too large)
-            
-            # Build JSON-RPC response with task as result
-            webhook_payload = {
-                "jsonrpc": "2.0",
-                "result": result_lightweight,
-                "id": str(uuid.uuid4())
-            }
+            webhook_payload = (
+                task_dict_to_v1_response(result_lightweight)
+                if v1_format
+                else {
+                    "jsonrpc": "2.0",
+                    "result": result_lightweight,
+                    "id": str(uuid.uuid4()),
+                }
+            )
             
             # Check again right before sending: DNS may have changed since the request
             await validate_push_url(webhook_url)
@@ -826,7 +894,15 @@ class MessageHandler:
             )
             # Try to push the error to the client's webhook
             try:
-                await self._push_error(task_id, message_id, message, push_config, e, error_id)
+                await self._push_error(
+                    task_id,
+                    message_id,
+                    message,
+                    push_config,
+                    e,
+                    error_id,
+                    v1_format=v1_format,
+                )
             except Exception as push_error:
                 logger.error(f"Failed to push error to webhook: {type(push_error).__name__}")
     
@@ -877,6 +953,8 @@ class MessageHandler:
         for msg in reversed(conversation_history):
             if isinstance(msg, dict):
                 text = msg.get("text", "")
+                if not isinstance(text, str):
+                    continue
                 for pattern in url_patterns:
                     match = re.search(pattern, text, re.IGNORECASE)
                     if match:
@@ -909,7 +987,10 @@ class MessageHandler:
             "kind": full_result["kind"],
             "history": full_result["history"],
         }
-        
+
+        if full_result.get("metadata"):
+            lightweight["metadata"] = full_result["metadata"]
+
         # For text artifacts, just include them as-is (they're already optimized)
         if full_result.get("artifacts"):
             lightweight["artifacts"] = full_result["artifacts"]
@@ -920,7 +1001,8 @@ class MessageHandler:
         self,
         task_id: str,
         message_id: str,
-        prompt: str
+        prompt: str,
+        context_id: str | None = None,
     ) -> dict[str, Any]:
         """
         Create an input-required response to ask user for more info
@@ -929,10 +1011,12 @@ class MessageHandler:
             task_id: Task ID
             message_id: Original message ID
             prompt: Question to ask the user
+            context_id: Optional conversation context ID to preserve
             
         Returns:
             A2A Task with input-required status
         """
+        resolved_context_id = context_id or str(uuid.uuid4())
         response_msg = A2AMessage(
             messageId=str(uuid.uuid4()),
             role="agent",
@@ -944,12 +1028,13 @@ class MessageHandler:
             ],
             kind="message",
             taskId=task_id,
+            contextId=resolved_context_id,
             timestamp=datetime.now(UTC).isoformat()
         )
         
         task = A2ATask(
             id=task_id,
-            contextId=str(uuid.uuid4()),
+            contextId=resolved_context_id,
             status=TaskStatus(
                 state="input-required",
                 timestamp=datetime.now(UTC).isoformat(),

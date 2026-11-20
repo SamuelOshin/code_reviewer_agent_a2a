@@ -26,6 +26,7 @@ __all__ = [
     "MessagePart",
     "TaskStatus",
     "a2a_types",
+    "build_v03_agent_card",
     "build_v1_agent_card",
     "task_dict_to_v1_response",
 ]
@@ -49,6 +50,7 @@ class A2AMessage(BaseModel):
     parts: list[MessagePart]
     kind: str = "message"
     taskId: str
+    contextId: str | None = None
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
@@ -198,13 +200,12 @@ def _dict_to_struct(data: dict[str, Any]) -> Struct:
 
 
 def build_v1_agent_card(raw_card: dict[str, Any], base_url: str | None = None) -> dict[str, Any]:
-    """Validate an agent card JSON object against the v1.0 `a2a.types.AgentCard` schema.
+    """Validate an agent card JSON object strictly against `a2a.types.AgentCard`.
 
     When `base_url` is given, updates the first JSONRPC interface URL to point at
-    `<base_url>/a2a/tasks` and exposes legacy top-level `url` and `protocolVersion`
-    alongside `supportedInterfaces`.
+    `<base_url>/a2a/tasks`. Emits strict A2A v1.0 ProtoJSON (no extra v0.3 fields).
     """
-    card = ParseDict(raw_card, a2a_types.AgentCard(), ignore_unknown_fields=True)
+    card = ParseDict(raw_card, a2a_types.AgentCard(), ignore_unknown_fields=False)
     if base_url:
         interface_url = f"{base_url.rstrip('/')}/a2a/tasks"
         if card.supported_interfaces:
@@ -218,11 +219,57 @@ def build_v1_agent_card(raw_card: dict[str, Any], base_url: str | None = None) -
                 )
             )
 
-    card_dict = MessageToDict(card, preserving_proto_field_name=False)
-    if card.supported_interfaces:
-        card_dict["url"] = card.supported_interfaces[0].url
-        card_dict["protocolVersion"] = card.supported_interfaces[0].protocol_version or "1.0"
-    return card_dict
+    return MessageToDict(card, preserving_proto_field_name=False)
+
+
+def build_v03_agent_card(raw_card: dict[str, Any], base_url: str | None = None) -> dict[str, Any]:
+    """Build a v0.3-compatible agent card for `/.well-known/agent.json`.
+
+    Starts from the strictly validated v1.0 card so discovery via `A2ACardResolver`
+    still succeeds, while formatting top-level `url`, `capabilities`, `securitySchemes`
+    (`type: "http", scheme: "bearer"`), and `security` to satisfy A2A v0.3 Pydantic
+    clients without misclassifying `bearerAuth` as `mutualTLS`.
+    """
+    card_dict = build_v1_agent_card(raw_card, base_url=base_url)
+    interfaces = card_dict.get("supportedInterfaces") or []
+    iface_url = interfaces[0].get("url", "") if interfaces else ""
+
+    v03_card = dict(card_dict)
+    v03_card["url"] = iface_url
+    v03_card["preferredTransport"] = "JSONRPC"
+    v03_card["protocolVersion"] = "0.3.0"
+    v03_card["supportsAuthenticatedExtendedCard"] = bool(
+        card_dict.get("capabilities", {}).get("extendedAgentCard", False)
+    )
+    caps = dict(card_dict.get("capabilities") or {})
+    caps.pop("extendedAgentCard", None)
+    v03_card["capabilities"] = caps
+
+    v03_schemes: dict[str, Any] = {}
+    for name, scheme in (card_dict.get("securitySchemes") or {}).items():
+        if isinstance(scheme, dict) and "httpAuthSecurityScheme" in scheme:
+            http_scheme = dict(scheme["httpAuthSecurityScheme"])
+            http_scheme["type"] = "http"
+            v03_schemes[name] = http_scheme
+        else:
+            v03_schemes[name] = scheme
+    if v03_schemes:
+        v03_card["securitySchemes"] = v03_schemes
+
+    v1_reqs = v03_card.pop("securityRequirements", None)
+    if isinstance(v1_reqs, list):
+        v03_card["security"] = [
+            {
+                scheme_name: (
+                    scope_val.get("list", []) if isinstance(scope_val, dict) else []
+                )
+                for scheme_name, scope_val in (req.get("schemes") or {}).items()
+            }
+            for req in v1_reqs
+            if isinstance(req, dict)
+        ]
+
+    return v03_card
 
 
 def task_dict_to_v1_response(result: dict[str, Any]) -> dict[str, Any]:
