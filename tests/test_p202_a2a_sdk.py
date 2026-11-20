@@ -23,22 +23,26 @@ from a2a.client import (
     create_client,
 )
 from a2a.client.auth import AuthInterceptor, InMemoryContextCredentialStore
-from a2a.helpers.proto_helpers import get_artifact_text
+from a2a.compat.v0_3 import types as compat_v03_types
+from a2a.helpers.proto_helpers import get_artifact_text, new_data_part
 from a2a.types import (
+    AgentCard,
+    AuthenticationInfo,
     InvalidParamsError,
     Message,
     Part,
     Role,
     SendMessageConfiguration,
     SendMessageRequest,
+    StreamResponse,
     TaskPushNotificationConfig,
     TaskState,
     UnsupportedOperationError,
 )
 from a2a.utils.constants import AGENT_CARD_WELL_KNOWN_PATH
-from a2a.utils.proto_utils import warn_on_missing_required_fields
+from a2a.utils.proto_utils import validate_proto_required_fields, warn_on_missing_required_fields
 from fastapi.testclient import TestClient
-from google.protobuf.json_format import MessageToDict
+from google.protobuf.json_format import MessageToDict, ParseDict
 
 from app.core.exceptions import GitHubMCPError
 from app.llm import Role as LLMRole
@@ -457,3 +461,277 @@ def test_send_message_notification_and_discovery_routes():
                 },
             )
             assert ok.status_code == 204
+
+
+# ---------------------------------------------------------------------------
+# Bobby Review regression tests (v1.0 push auth/payload, cards, context, multi-part)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_agent_card_strict_v1_and_v03_compat_and_public_base_url(monkeypatch):
+    from pydantic import ValidationError
+
+    from app.core import config
+    from app.core.config import Settings
+
+    # Invalid PUBLIC_BASE_URL (e.g. with a path) is refused at startup
+    with pytest.raises(ValidationError, match="PUBLIC_BASE_URL"):
+        Settings(
+            _env_file=None,
+            GITHUB_TOKEN="x",
+            GITHUB_WEBHOOK_SECRET="s" * 32,
+            API_KEY="k" * 32,
+            PUBLIC_BASE_URL="https://prrover.example.com/with-path",
+        )
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url=BASE_URL,
+    ) as client:
+        v1_resp = await client.get(AGENT_CARD_WELL_KNOWN_PATH)
+        assert v1_resp.status_code == 200
+        assert v1_resp.headers.get("cache-control") == "no-store"
+        v1_data = v1_resp.json()
+        assert "url" not in v1_data
+        assert "protocolVersion" not in v1_data
+        parsed_v1 = ParseDict(v1_data, AgentCard(), ignore_unknown_fields=False)
+        assert parsed_v1.supported_interfaces[0].url == "http://testserver/a2a/tasks"
+
+        v03_resp = await client.get("/.well-known/agent.json")
+        assert v03_resp.status_code == 200
+        v03_model = compat_v03_types.AgentCard.model_validate(v03_resp.json())
+        scheme = v03_model.security_schemes["bearerAuth"].root
+        assert isinstance(scheme, compat_v03_types.HTTPAuthSecurityScheme)
+        assert scheme.type == "http"
+        assert scheme.scheme == "bearer"
+
+        # Malformed Host header does not 500 and falls back safely
+        tricky = await client.get(
+            AGENT_CARD_WELL_KNOWN_PATH,
+            headers={"Host": "user@evil.example/path#frag"},
+        )
+        assert tricky.status_code == 200
+        assert tricky.json()["supportedInterfaces"][0]["url"] == "http://localhost:8000/a2a/tasks"
+
+        # Invalid/spoofed Host is ignored when PUBLIC_BASE_URL is configured
+        monkeypatch.setattr(config.settings, "PUBLIC_BASE_URL", "https://prrover.example.com")
+        spoofed = await client.get(
+            AGENT_CARD_WELL_KNOWN_PATH,
+            headers={"Host": "evil.attacker.example"},
+        )
+        assert spoofed.status_code == 200
+        assert (
+            spoofed.json()["supportedInterfaces"][0]["url"]
+            == "https://prrover.example.com/a2a/tasks"
+        )
+        assert "cache-control" not in spoofed.headers
+
+
+@pytest.mark.asyncio
+async def test_v1_non_blocking_push_delivers_v1_payload_and_headers(monkeypatch):
+    from app.core import push_url
+    from app.services import message_handler as mh
+
+    monkeypatch.setattr(push_url.settings, "PUSH_URL_ALLOWED_HOSTS", "hooks.example.test")
+
+    async def resolve(host, port):
+        return ["8.8.8.8"]
+
+    monkeypatch.setattr(push_url, "_resolve", resolve)
+
+    posted: list[dict[str, object]] = []
+
+    class FakePushClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def post(self, url, json=None, headers=None):
+            posted.append({"url": url, "json": json, "headers": headers})
+            return httpx.Response(200, request=httpx.Request("POST", url))
+
+    fake_outputs = {
+        LLMRole.SECURITY: SecurityReport(findings=[]),
+        LLMRole.PERFORMANCE: PerformanceReport(findings=[]),
+        LLMRole.BEST_PRACTICES: BestPracticesReport(findings=[]),
+        LLMRole.SUMMARY: "Push review clean.",
+    }
+    github = _fake_github()
+
+    async with _sdk_client(authenticated=True) as (a2a_client, ctx):
+        app.state.message_handler.analyzer = _analyzer_with_fake_llm(fake_outputs)
+        with (
+            patch("app.services.code_analyzer.GitHubMCPService", return_value=github),
+            patch.object(mh.httpx, "AsyncClient", FakePushClient),
+        ):
+            req = SendMessageRequest(
+                message=Message(
+                    message_id="msg-push-1",
+                    context_id="ctx-push-1",
+                    role=Role.ROLE_USER,
+                    parts=[Part(text=f"Review {PR_URL}")],
+                ),
+                configuration=SendMessageConfiguration(
+                    return_immediately=True,
+                    task_push_notification_config=TaskPushNotificationConfig(
+                        url="https://hooks.example.test/push",
+                        token="notif-verify-token-AAA",
+                        authentication=AuthenticationInfo(
+                            scheme="Bearer",
+                            credentials="webhook-bearer-secret-BBB",
+                        ),
+                    ),
+                ),
+            )
+            resp = await _send_single(a2a_client, req, context=ctx)
+            assert resp.HasField("message")
+            assert resp.message.context_id == "ctx-push-1"
+            await asyncio.gather(*list(app.state.message_handler._background_tasks))
+
+            # Token-only config should send X-A2A-Notification-Token and no Authorization
+            posted_len_before = len(posted)
+            req_token_only = SendMessageRequest(
+                message=Message(
+                    message_id="msg-push-2",
+                    context_id="ctx-push-2",
+                    role=Role.ROLE_USER,
+                    parts=[Part(text=f"Review {PR_URL}")],
+                ),
+                configuration=SendMessageConfiguration(
+                    return_immediately=True,
+                    task_push_notification_config=TaskPushNotificationConfig(
+                        url="https://hooks.example.test/push",
+                        token="only-token",
+                    ),
+                ),
+            )
+            await _send_single(a2a_client, req_token_only, context=ctx)
+            await asyncio.gather(*list(app.state.message_handler._background_tasks))
+
+    assert len(posted) == posted_len_before + 1 == 2
+    first_headers = posted[0]["headers"]
+    assert first_headers["X-A2A-Notification-Token"] == "notif-verify-token-AAA"
+    assert first_headers["Authorization"] == "Bearer webhook-bearer-secret-BBB"
+
+    stream_resp = ParseDict(posted[0]["json"], StreamResponse(), ignore_unknown_fields=False)
+    assert stream_resp.HasField("task")
+    validate_proto_required_fields(stream_resp.task)
+    assert stream_resp.task.status.state == TaskState.TASK_STATE_COMPLETED
+    assert stream_resp.task.context_id == "ctx-push-1"
+    meta = MessageToDict(stream_resp.task.metadata)
+    assert meta["analysis_status"] == "complete"
+    assert meta["approval_recommendation"] == "approve"
+
+    second_headers = posted[1]["headers"]
+    assert second_headers["X-A2A-Notification-Token"] == "only-token"
+    assert "Authorization" not in second_headers
+
+
+@pytest.mark.asyncio
+async def test_context_id_preserved_and_empty_ids_and_multipart_and_null_shadow(monkeypatch):
+    from app.core import push_url
+
+    monkeypatch.setattr(push_url.settings, "PUSH_URL_ALLOWED_HOSTS", "hooks.example.com")
+
+    fake_outputs = {
+        LLMRole.SECURITY: SecurityReport(findings=[]),
+        LLMRole.PERFORMANCE: PerformanceReport(findings=[]),
+        LLMRole.BEST_PRACTICES: BestPracticesReport(findings=[]),
+        LLMRole.SUMMARY: "Multi-part clean.",
+    }
+    github = _fake_github()
+
+    async with _sdk_client(authenticated=True) as (a2a_client, ctx):
+        # 1. input-required preserves contextId
+        req_no_url = SendMessageRequest(
+            message=Message(
+                message_id="m-ctx",
+                context_id="ctx-preserved-2",
+                role=Role.ROLE_USER,
+                parts=[Part(text="hello")],
+            )
+        )
+        resp_input = await _send_single(a2a_client, req_no_url, context=ctx)
+        assert resp_input.task.status.state == TaskState.TASK_STATE_INPUT_REQUIRED
+        assert resp_input.task.context_id == "ctx-preserved-2"
+        validate_proto_required_fields(resp_input.task)
+
+        # 2. Multi-part [DataPart, TextPart] finds PR URL in parts[1]
+        app.state.message_handler.analyzer = _analyzer_with_fake_llm(fake_outputs)
+        with patch("app.services.code_analyzer.GitHubMCPService", return_value=github):
+            req_multi = SendMessageRequest(
+                message=Message(
+                    message_id="m-multi",
+                    role=Role.ROLE_USER,
+                    parts=[new_data_part([{"text": "hi"}]), Part(text=f"Review {PR_URL}")],
+                )
+            )
+            resp_multi = await _send_single(a2a_client, req_multi, context=ctx)
+        assert resp_multi.task.status.state == TaskState.TASK_STATE_COMPLETED
+        validate_proto_required_fields(resp_multi.task)
+
+    # 3. Raw JSON-RPC edge cases: empty IDs, null pushNotificationConfig shadowing, bad metadata/tenant
+    with TestClient(app, headers=AUTH_HEADERS) as client:
+        # Empty string taskId/messageId gets fresh UUID and passes proto validation
+        res_empty_ids = client.post(
+            "/a2a/tasks",
+            json={
+                "jsonrpc": "2.0",
+                "id": "e1",
+                "method": "SendMessage",
+                "params": {
+                    "message": {
+                        "messageId": "",
+                        "taskId": "",
+                        "contextId": "",
+                        "role": "ROLE_USER",
+                        "parts": [{"text": "hello"}],
+                    }
+                },
+            },
+        ).json()
+        parsed_task = ParseDict(res_empty_ids["result"], StreamResponse(), ignore_unknown_fields=False).task
+        assert parsed_task.id != ""
+        assert parsed_task.context_id != ""
+        validate_proto_required_fields(parsed_task)
+
+        # Null pushNotificationConfig must not shadow taskPushNotificationConfig SSRF check
+        res_shadow = client.post(
+            "/a2a/tasks",
+            json={
+                "jsonrpc": "2.0",
+                "id": "s1",
+                "method": "SendMessage",
+                "params": {
+                    "message": {"parts": [{"text": f"Review {PR_URL}"}]},
+                    "configuration": {
+                        "returnImmediately": True,
+                        "pushNotificationConfig": None,
+                        "taskPushNotificationConfig": {"url": "https://127.0.0.1/evil"},
+                    },
+                },
+            },
+        ).json()
+        assert res_shadow["error"]["code"] == -32602
+
+        # Invalid metadata / tenant types rejected with -32602
+        for bad_extra in ({"metadata": "not-an-object"}, {"tenant": 123}):
+            res_bad = client.post(
+                "/a2a/tasks",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": "b1",
+                    "method": "SendMessage",
+                    "params": {
+                        "message": {"parts": [{"text": "hi"}]},
+                        **bad_extra,
+                    },
+                },
+            ).json()
+            assert res_bad["error"]["code"] == -32602

@@ -102,6 +102,7 @@ All settings are environment variables (or `.env`). [`.env.example`](.env.exampl
 | `A2A_BLOCKING_TIMEOUT_SECONDS` | no | Longest a blocking `message/send` may run, default 300, max 3600. On timeout it returns JSON-RPC error `-32004` |
 | `CORS_ALLOWED_ORIGINS` | no | Comma-separated `scheme://host[:port]`, lowercased. Empty sends no CORS headers; `*` is refused |
 | `JSONRPC_MAX_BATCH_SIZE` | no | Most calls per JSON-RPC batch, 1-100, default 10 |
+| `PUBLIC_BASE_URL` | no | Optional external `scheme://host[:port]` advertised in agent card interfaces behind a reverse proxy |
 | `ENVIRONMENT`, `PORT`, `LOG_LEVEL`, `LOG_FORMAT`, `HOST_PORT` | no | See `.env.example` |
 
 Switching provider is a configuration change only, for example
