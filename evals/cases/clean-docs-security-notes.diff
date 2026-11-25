@@ -1,0 +1,9 @@
+diff --git a/docs/contributing.md b/docs/contributing.md
+--- a/docs/contributing.md
++++ b/docs/contributing.md
+@@ -30,2 +30,5 @@
+ ## Code rules
+ 
++- Never call eval() or exec() on input; use a parser instead.
++- Never assign to innerHTML; use textContent.
++- Load YAML with yaml.safe_load, not yaml.load(data).

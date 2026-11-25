@@ -1,0 +1,15 @@
+{
+  "id": "clean-js-regex-exec",
+  "type": "clean",
+  "language": "javascript",
+  "title": "Parse version strings",
+  "description": "",
+  "tags": [
+    "rule-fp-trap",
+    "F-08"
+  ],
+  "forbidden_verdicts": [
+    "reject"
+  ],
+  "expected": []
+}

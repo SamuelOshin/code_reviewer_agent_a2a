@@ -1,0 +1,29 @@
+diff --git a/internal/export/orders.go b/internal/export/orders.go
+--- a/internal/export/orders.go
++++ b/internal/export/orders.go
+@@ -0,0 +1,25 @@
++package export
++
++import "database/sql"
++
++func LineItems(db *sql.DB, orderIDs []int64) (map[int64][]string, error) {
++    items := make(map[int64][]string)
++    for _, id := range orderIDs {
++        rows, err := db.Query("SELECT sku FROM line_items WHERE order_id = $1", id)
++        if err != nil {
++            return nil, err
++        }
++        for rows.Next() {
++            var sku string
++            if err := rows.Scan(&sku); err != nil {
++                rows.Close()
++                return nil, err
++            }
++            items[id] = append(items[id], sku)
++        }
++        if err := rows.Close(); err != nil {
++            return nil, err
++        }
++    }
++    return items, nil
++}

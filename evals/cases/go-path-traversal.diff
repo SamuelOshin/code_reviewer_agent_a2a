@@ -1,0 +1,24 @@
+diff --git a/internal/files/handler.go b/internal/files/handler.go
+--- a/internal/files/handler.go
++++ b/internal/files/handler.go
+@@ -0,0 +1,20 @@
++package files
++
++import (
++    "net/http"
++    "os"
++    "path/filepath"
++)
++
++const root = "/var/lib/app/attachments"
++
++func Download(w http.ResponseWriter, r *http.Request) {
++    name := r.URL.Query().Get("name")
++    target := filepath.Join(root, name)
++    data, err := os.ReadFile(target)
++    if err != nil {
++        http.NotFound(w, r)
++        return
++    }
++    w.Write(data)
++}

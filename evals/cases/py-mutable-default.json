@@ -1,0 +1,29 @@
+{
+  "id": "py-mutable-default",
+  "type": "bug",
+  "language": "python",
+  "title": "Add tag helper",
+  "description": "",
+  "tags": [],
+  "forbidden_verdicts": [],
+  "expected": [
+    {
+      "id": "mutable",
+      "category": "best_practice",
+      "severity": "medium",
+      "title": "Mutable default argument is shared",
+      "file": "catalog/tags.py",
+      "lines": [
+        1,
+        1
+      ],
+      "keywords": [
+        "mutable",
+        "default argument",
+        "default value",
+        "default parameter",
+        "shared between"
+      ]
+    }
+  ]
+}

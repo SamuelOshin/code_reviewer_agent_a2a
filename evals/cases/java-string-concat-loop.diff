@@ -1,0 +1,17 @@
+diff --git a/src/main/java/shop/CsvExport.java b/src/main/java/shop/CsvExport.java
+--- a/src/main/java/shop/CsvExport.java
++++ b/src/main/java/shop/CsvExport.java
+@@ -0,0 +1,13 @@
++package shop;
++
++import java.util.List;
++
++public class CsvExport {
++    public String render(List<String[]> rows) {
++        String csv = "";
++        for (String[] row : rows) {
++            csv += String.join(",", row) + "\n";
++        }
++        return csv;
++    }
++}

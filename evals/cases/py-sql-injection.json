@@ -1,0 +1,29 @@
+{
+  "id": "py-sql-injection",
+  "type": "bug",
+  "language": "python",
+  "title": "Add user search endpoint",
+  "description": "Lets support staff search users by name.",
+  "tags": [],
+  "forbidden_verdicts": [
+    "approve",
+    "approve_with_suggestions"
+  ],
+  "expected": [
+    {
+      "id": "sqli",
+      "category": "security",
+      "severity": "critical",
+      "title": "SQL injection through the search term",
+      "file": "shop/users/search.py",
+      "lines": [
+        7,
+        7
+      ],
+      "keywords": [
+        "sql",
+        "CWE-89"
+      ]
+    }
+  ]
+}

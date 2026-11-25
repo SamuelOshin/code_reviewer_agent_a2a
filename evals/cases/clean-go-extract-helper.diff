@@ -1,0 +1,15 @@
+diff --git a/internal/shop/price.go b/internal/shop/price.go
+--- a/internal/shop/price.go
++++ b/internal/shop/price.go
+@@ -3,5 +3,10 @@
+ import "fmt"
+ 
+ func Label(cents int64) string {
+-    return fmt.Sprintf("Price: %d.%02d", cents/100, cents%100)
++    return "Price: " + Format(cents)
++}
++
++// Format renders a non-negative amount in cents.
++func Format(cents int64) string {
++    return fmt.Sprintf("%d.%02d", cents/100, cents%100)
+ }

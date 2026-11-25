@@ -1,0 +1,15 @@
+{
+  "id": "clean-py-open-config-path",
+  "type": "clean",
+  "language": "python",
+  "title": "Load settings from the install folder",
+  "description": "",
+  "tags": [
+    "rule-fp-trap",
+    "F-08"
+  ],
+  "forbidden_verdicts": [
+    "reject"
+  ],
+  "expected": []
+}

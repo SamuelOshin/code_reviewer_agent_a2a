@@ -1,0 +1,14 @@
+{
+  "id": "clean-docs-security-notes",
+  "type": "clean",
+  "language": "markdown",
+  "title": "Document why eval is banned",
+  "description": "",
+  "tags": [
+    "rule-fp-trap"
+  ],
+  "forbidden_verdicts": [
+    "reject"
+  ],
+  "expected": []
+}

@@ -1,0 +1,31 @@
+{
+  "id": "py-n-plus-one",
+  "type": "bug",
+  "language": "python",
+  "title": "Add author names to the post list",
+  "description": "",
+  "tags": [],
+  "forbidden_verdicts": [],
+  "expected": [
+    {
+      "id": "nplus1",
+      "category": "performance",
+      "severity": "high",
+      "title": "One author query per post",
+      "file": "blog/views.py",
+      "lines": [
+        24,
+        24
+      ],
+      "keywords": [
+        "n+1",
+        "n + 1",
+        "queries",
+        "query in",
+        "inside the loop",
+        "in a loop",
+        "select_related"
+      ]
+    }
+  ]
+}

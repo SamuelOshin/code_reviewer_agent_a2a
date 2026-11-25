@@ -1,0 +1,12 @@
+{
+  "id": "clean-py-parameterized-query",
+  "type": "clean",
+  "language": "python",
+  "title": "Use bound parameters in order lookup",
+  "description": "",
+  "tags": [],
+  "forbidden_verdicts": [
+    "reject"
+  ],
+  "expected": []
+}

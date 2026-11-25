@@ -1,0 +1,29 @@
+{
+  "id": "py-swallowed-exception",
+  "type": "bug",
+  "language": "python",
+  "title": "Make the sync job resilient",
+  "description": "",
+  "tags": [],
+  "forbidden_verdicts": [],
+  "expected": [
+    {
+      "id": "swallow",
+      "category": "best_practice",
+      "severity": "medium",
+      "title": "Bare except hides every failure",
+      "file": "sync/runner.py",
+      "lines": [
+        8,
+        9
+      ],
+      "keywords": [
+        "except",
+        "swallow",
+        "error handling",
+        "silent",
+        "exception"
+      ]
+    }
+  ]
+}

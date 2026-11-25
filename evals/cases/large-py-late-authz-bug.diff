@@ -1,0 +1,376 @@
+diff --git a/reports/columns.py b/reports/columns.py
+--- a/reports/columns.py
++++ b/reports/columns.py
+@@ -0,0 +1,358 @@
++def format_column_1(row: dict) -> str:
++    """Render column 1 of the monthly report."""
++    value = row.get("column_1")
++    if value is None:
++        return "-"
++    return f"{value:>12}"
++
++
++def format_column_2(row: dict) -> str:
++    """Render column 2 of the monthly report."""
++    value = row.get("column_2")
++    if value is None:
++        return "-"
++    return f"{value:>12}"
++
++
++def format_column_3(row: dict) -> str:
++    """Render column 3 of the monthly report."""
++    value = row.get("column_3")
++    if value is None:
++        return "-"
++    return f"{value:>12}"
++
++
++def format_column_4(row: dict) -> str:
++    """Render column 4 of the monthly report."""
++    value = row.get("column_4")
++    if value is None:
++        return "-"
++    return f"{value:>12}"
++
++
++def format_column_5(row: dict) -> str:
++    """Render column 5 of the monthly report."""
++    value = row.get("column_5")
++    if value is None:
++        return "-"
++    return f"{value:>12}"
++
++
++def format_column_6(row: dict) -> str:
++    """Render column 6 of the monthly report."""
++    value = row.get("column_6")
++    if value is None:
++        return "-"
++    return f"{value:>12}"
++
++
++def format_column_7(row: dict) -> str:
++    """Render column 7 of the monthly report."""
++    value = row.get("column_7")
++    if value is None:
++        return "-"
++    return f"{value:>12}"
++
++
++def format_column_8(row: dict) -> str:
++    """Render column 8 of the monthly report."""
++    value = row.get("column_8")
++    if value is None:
++        return "-"
++    return f"{value:>12}"
++
++
++def format_column_9(row: dict) -> str:
++    """Render column 9 of the monthly report."""
++    value = row.get("column_9")
++    if value is None:
++        return "-"
++    return f"{value:>12}"
++
++
++def format_column_10(row: dict) -> str:
++    """Render column 10 of the monthly report."""
++    value = row.get("column_10")
++    if value is None:
++        return "-"
++    return f"{value:>12}"
++
++
++def format_column_11(row: dict) -> str:
++    """Render column 11 of the monthly report."""
++    value = row.get("column_11")
++    if value is None:
++        return "-"
++    return f"{value:>12}"
++
++
++def format_column_12(row: dict) -> str:
++    """Render column 12 of the monthly report."""
++    value = row.get("column_12")
++    if value is None:
++        return "-"
++    return f"{value:>12}"
++
++
++def format_column_13(row: dict) -> str:
++    """Render column 13 of the monthly report."""
++    value = row.get("column_13")
++    if value is None:
++        return "-"
++    return f"{value:>12}"
++
++
++def format_column_14(row: dict) -> str:
++    """Render column 14 of the monthly report."""
++    value = row.get("column_14")
++    if value is None:
++        return "-"
++    return f"{value:>12}"
++
++
++def format_column_15(row: dict) -> str:
++    """Render column 15 of the monthly report."""
++    value = row.get("column_15")
++    if value is None:
++        return "-"
++    return f"{value:>12}"
++
++
++def format_column_16(row: dict) -> str:
++    """Render column 16 of the monthly report."""
++    value = row.get("column_16")
++    if value is None:
++        return "-"
++    return f"{value:>12}"
++
++
++def format_column_17(row: dict) -> str:
++    """Render column 17 of the monthly report."""
++    value = row.get("column_17")
++    if value is None:
++        return "-"
++    return f"{value:>12}"
++
++
++def format_column_18(row: dict) -> str:
++    """Render column 18 of the monthly report."""
++    value = row.get("column_18")
++    if value is None:
++        return "-"
++    return f"{value:>12}"
++
++
++def format_column_19(row: dict) -> str:
++    """Render column 19 of the monthly report."""
++    value = row.get("column_19")
++    if value is None:
++        return "-"
++    return f"{value:>12}"
++
++
++def format_column_20(row: dict) -> str:
++    """Render column 20 of the monthly report."""
++    value = row.get("column_20")
++    if value is None:
++        return "-"
++    return f"{value:>12}"
++
++
++def format_column_21(row: dict) -> str:
++    """Render column 21 of the monthly report."""
++    value = row.get("column_21")
++    if value is None:
++        return "-"
++    return f"{value:>12}"
++
++
++def format_column_22(row: dict) -> str:
++    """Render column 22 of the monthly report."""
++    value = row.get("column_22")
++    if value is None:
++        return "-"
++    return f"{value:>12}"
++
++
++def format_column_23(row: dict) -> str:
++    """Render column 23 of the monthly report."""
++    value = row.get("column_23")
++    if value is None:
++        return "-"
++    return f"{value:>12}"
++
++
++def format_column_24(row: dict) -> str:
++    """Render column 24 of the monthly report."""
++    value = row.get("column_24")
++    if value is None:
++        return "-"
++    return f"{value:>12}"
++
++
++def format_column_25(row: dict) -> str:
++    """Render column 25 of the monthly report."""
++    value = row.get("column_25")
++    if value is None:
++        return "-"
++    return f"{value:>12}"
++
++
++def format_column_26(row: dict) -> str:
++    """Render column 26 of the monthly report."""
++    value = row.get("column_26")
++    if value is None:
++        return "-"
++    return f"{value:>12}"
++
++
++def format_column_27(row: dict) -> str:
++    """Render column 27 of the monthly report."""
++    value = row.get("column_27")
++    if value is None:
++        return "-"
++    return f"{value:>12}"
++
++
++def format_column_28(row: dict) -> str:
++    """Render column 28 of the monthly report."""
++    value = row.get("column_28")
++    if value is None:
++        return "-"
++    return f"{value:>12}"
++
++
++def format_column_29(row: dict) -> str:
++    """Render column 29 of the monthly report."""
++    value = row.get("column_29")
++    if value is None:
++        return "-"
++    return f"{value:>12}"
++
++
++def format_column_30(row: dict) -> str:
++    """Render column 30 of the monthly report."""
++    value = row.get("column_30")
++    if value is None:
++        return "-"
++    return f"{value:>12}"
++
++
++def format_column_31(row: dict) -> str:
++    """Render column 31 of the monthly report."""
++    value = row.get("column_31")
++    if value is None:
++        return "-"
++    return f"{value:>12}"
++
++
++def format_column_32(row: dict) -> str:
++    """Render column 32 of the monthly report."""
++    value = row.get("column_32")
++    if value is None:
++        return "-"
++    return f"{value:>12}"
++
++
++def format_column_33(row: dict) -> str:
++    """Render column 33 of the monthly report."""
++    value = row.get("column_33")
++    if value is None:
++        return "-"
++    return f"{value:>12}"
++
++
++def format_column_34(row: dict) -> str:
++    """Render column 34 of the monthly report."""
++    value = row.get("column_34")
++    if value is None:
++        return "-"
++    return f"{value:>12}"
++
++
++def format_column_35(row: dict) -> str:
++    """Render column 35 of the monthly report."""
++    value = row.get("column_35")
++    if value is None:
++        return "-"
++    return f"{value:>12}"
++
++
++def format_column_36(row: dict) -> str:
++    """Render column 36 of the monthly report."""
++    value = row.get("column_36")
++    if value is None:
++        return "-"
++    return f"{value:>12}"
++
++
++def format_column_37(row: dict) -> str:
++    """Render column 37 of the monthly report."""
++    value = row.get("column_37")
++    if value is None:
++        return "-"
++    return f"{value:>12}"
++
++
++def format_column_38(row: dict) -> str:
++    """Render column 38 of the monthly report."""
++    value = row.get("column_38")
++    if value is None:
++        return "-"
++    return f"{value:>12}"
++
++
++def format_column_39(row: dict) -> str:
++    """Render column 39 of the monthly report."""
++    value = row.get("column_39")
++    if value is None:
++        return "-"
++    return f"{value:>12}"
++
++
++def format_column_40(row: dict) -> str:
++    """Render column 40 of the monthly report."""
++    value = row.get("column_40")
++    if value is None:
++        return "-"
++    return f"{value:>12}"
++
++
++def format_column_41(row: dict) -> str:
++    """Render column 41 of the monthly report."""
++    value = row.get("column_41")
++    if value is None:
++        return "-"
++    return f"{value:>12}"
++
++
++def format_column_42(row: dict) -> str:
++    """Render column 42 of the monthly report."""
++    value = row.get("column_42")
++    if value is None:
++        return "-"
++    return f"{value:>12}"
++
++
++def format_column_43(row: dict) -> str:
++    """Render column 43 of the monthly report."""
++    value = row.get("column_43")
++    if value is None:
++        return "-"
++    return f"{value:>12}"
++
++
++def format_column_44(row: dict) -> str:
++    """Render column 44 of the monthly report."""
++    value = row.get("column_44")
++    if value is None:
++        return "-"
++    return f"{value:>12}"
++
++
++def format_column_45(row: dict) -> str:
++    """Render column 45 of the monthly report."""
++    value = row.get("column_45")
++    if value is None:
++        return "-"
++    return f"{value:>12}"
+diff --git a/reports/admin_actions.py b/reports/admin_actions.py
+--- a/reports/admin_actions.py
++++ b/reports/admin_actions.py
+@@ -0,0 +1,10 @@
++from reports.store import reports
++
++
++def delete_report(current_user, report_id):
++    """Delete a report on behalf of the signed-in user."""
++    report = reports.get(report_id)
++    if current_user is None:
++        raise PermissionError("sign in first")
++    reports.delete(report.id)
++    return {"deleted": report.id}

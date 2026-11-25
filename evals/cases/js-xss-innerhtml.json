@@ -1,0 +1,28 @@
+{
+  "id": "js-xss-innerhtml",
+  "type": "bug",
+  "language": "javascript",
+  "title": "Show the search term above results",
+  "description": "",
+  "tags": [],
+  "forbidden_verdicts": [],
+  "expected": [
+    {
+      "id": "xss",
+      "category": "security",
+      "severity": "high",
+      "title": "Reflected XSS from the query string",
+      "file": "web/search.js",
+      "lines": [
+        13,
+        13
+      ],
+      "keywords": [
+        "xss",
+        "cross-site",
+        "innerhtml",
+        "CWE-79"
+      ]
+    }
+  ]
+}

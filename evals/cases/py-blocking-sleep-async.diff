@@ -1,0 +1,15 @@
+diff --git a/notify/delivery.py b/notify/delivery.py
+--- a/notify/delivery.py
++++ b/notify/delivery.py
+@@ -0,0 +1,11 @@
++import time
++
++
++async def deliver(client, url, payload):
++    """Post the payload, retrying twice."""
++    for attempt in range(3):
++        response = await client.post(url, json=payload)
++        if response.status_code < 500:
++            return response
++        time.sleep(2 ** attempt)
++    return response

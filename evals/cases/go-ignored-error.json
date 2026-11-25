@@ -1,0 +1,31 @@
+{
+  "id": "go-ignored-error",
+  "type": "bug",
+  "language": "go",
+  "title": "Persist settings to disk",
+  "description": "",
+  "tags": [],
+  "forbidden_verdicts": [],
+  "expected": [
+    {
+      "id": "ignored",
+      "category": "best_practice",
+      "severity": "medium",
+      "title": "Write error is discarded",
+      "file": "internal/settings/save.go",
+      "lines": [
+        10,
+        10
+      ],
+      "keywords": [
+        "ignored",
+        "unchecked",
+        "discard",
+        "unhandled",
+        "not handled",
+        "error handling",
+        "swallow"
+      ]
+    }
+  ]
+}

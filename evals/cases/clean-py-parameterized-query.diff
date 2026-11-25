@@ -1,0 +1,11 @@
+diff --git a/shop/orders.py b/shop/orders.py
+--- a/shop/orders.py
++++ b/shop/orders.py
+@@ -8,2 +8,6 @@
+ def find_order(cursor, reference):
+-    return None
++    cursor.execute(
++        "SELECT id, total FROM orders WHERE reference = %s",
++        (reference,),
++    )
++    return cursor.fetchone()

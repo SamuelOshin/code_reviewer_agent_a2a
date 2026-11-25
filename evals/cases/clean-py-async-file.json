@@ -1,0 +1,15 @@
+{
+  "id": "clean-py-async-file",
+  "type": "clean",
+  "language": "python",
+  "title": "Read templates without blocking",
+  "description": "",
+  "tags": [
+    "rule-fp-trap",
+    "P2-08"
+  ],
+  "forbidden_verdicts": [
+    "reject"
+  ],
+  "expected": []
+}

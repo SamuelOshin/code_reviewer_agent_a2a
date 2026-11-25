@@ -1,0 +1,29 @@
+{
+  "id": "py-blocking-sleep-async",
+  "type": "bug",
+  "language": "python",
+  "title": "Retry the webhook delivery",
+  "description": "",
+  "tags": [],
+  "forbidden_verdicts": [],
+  "expected": [
+    {
+      "id": "sleep",
+      "category": "performance",
+      "severity": "high",
+      "title": "time.sleep blocks the event loop",
+      "file": "notify/delivery.py",
+      "lines": [
+        10,
+        10
+      ],
+      "keywords": [
+        "sleep",
+        "blocking",
+        "blocks",
+        "event loop",
+        "synchronous"
+      ]
+    }
+  ]
+}

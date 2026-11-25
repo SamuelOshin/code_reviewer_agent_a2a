@@ -1,0 +1,15 @@
+{
+  "id": "clean-py-model-eval",
+  "type": "clean",
+  "language": "python",
+  "title": "Switch the model to inference mode",
+  "description": "",
+  "tags": [
+    "rule-fp-trap",
+    "F-08"
+  ],
+  "forbidden_verdicts": [
+    "reject"
+  ],
+  "expected": []
+}
