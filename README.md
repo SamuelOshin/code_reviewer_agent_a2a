@@ -295,8 +295,9 @@ uv run python -m evals.run --from-cases evals/results/a.cases.jsonl   # a stoppe
   does not label.
 - Duplicates: the review posts a bug twice when the rules and the model title it
   differently. The strict precision and pass numbers count the second report as a false
-  positive. A second set leaves out any unmatched finding in the same category and file,
-  within the line tolerance of a matched finding, even if it is about something else.
+  positive. A second set leaves it out, but only when it also matches the same label and
+  its line is within the tolerance of the matched finding's line. A different finding
+  nearby stays a false positive, unless its text hits one of that label's keywords.
 - Severity does not weigh the scores. False positives of high or critical severity are
   also reported on their own: overall, per category, and as a clean-case rate.
 - Runs with a model also report what it adds: recall and passes from its findings alone

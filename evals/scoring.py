@@ -24,12 +24,13 @@ Each matched pair is a true positive (TP). Every other finding is a false positi
 (FP). Each unmatched label is a false negative (FN). A real problem that a case does
 not label is counted as an FP, so precision is "precision against the labels".
 
-An FP is also a `duplicate` when it has the same category and file as a matched finding
-and its line is within `line_tolerance` of that finding's line. The review posts both
-when the rules and the model title one bug differently. The strict numbers count
-duplicates as FPs; the "excluding duplicates" numbers leave them out. The rule looks
-only at position, so a different problem right next to a matched one is also left out
-there. A finding or match without a line makes no duplicate.
+An FP is also a `duplicate` when it repeats a matched finding: it satisfies the same
+label as that finding (all four conditions above) and its line is within
+`line_tolerance` of that finding's line. The review posts both when the rules and the
+model title one bug differently. The strict numbers count duplicates as FPs; the
+"excluding duplicates" numbers leave them out. A different problem next to a matched
+one stays an FP in both, unless its text also hits one of the label's keywords. A
+finding or match without a line makes no duplicate.
 
 Metrics
 -------
@@ -204,14 +205,10 @@ def _maximum_matching(candidates: list[list[int]]) -> dict[int, int]:
 
 
 def _repeats(finding: Finding, matched: Finding, label: Label, tolerance: int) -> bool:
-    """Whether an unmatched finding sits where a matched finding already reported."""
+    """Whether an unmatched finding reports again what `matched` reported for `label`."""
     if finding.line is None or matched.line is None:
         return False
-    return (
-        finding.category == label.category
-        and _same_file(finding.file, label.file)
-        and abs(finding.line - matched.line) <= tolerance
-    )
+    return matches(finding, label, tolerance) and abs(finding.line - matched.line) <= tolerance
 
 
 def score_case(outcome: CaseOutcome, line_tolerance: int = DEFAULT_LINE_TOLERANCE) -> CaseScore:

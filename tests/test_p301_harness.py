@@ -177,6 +177,22 @@ class TestChunking:
         assert not result.score.passed
 
 
+class TestDuplicatesThroughThePipeline:
+    @pytest.mark.asyncio
+    async def test_a_rule_and_model_pair_is_a_duplicate_but_another_rule_hit_is_not(self, cases):
+        picked = [by_id(cases, i) for i in ("py-sql-injection", "go-query-in-loop")]
+        pair, other = await harness.run_cases(picked, "fake")
+        assert (pair.score.fp, pair.score.duplicates) == (1, 1)
+        assert pair.score.passed_ignoring_duplicates
+        # The rules' "missing index" sits on the N+1 line but is a different claim
+        assert (other.score.fp, other.score.duplicates) == (1, 0)
+        assert not other.score.passed_ignoring_duplicates
+
+    def test_every_label_has_keywords(self, cases):
+        # Without keywords any nearby finding would count as a repeat of the match
+        assert all(label.keywords for case in cases for label in case.labels)
+
+
 class TestModelContribution:
     PICKED = ("py-unsafe-yaml", "java-sql-concat", "clean-go-extract-helper")
 

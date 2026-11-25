@@ -295,10 +295,53 @@ class TestDuplicates:
         far = score_case(outcome([want], [finding(line=10), finding(line=13)]), 2)
         assert (near.duplicates, far.duplicates) == (1, 0)
 
-    def test_it_need_not_satisfy_the_label_keywords(self):
-        want = label(keywords=("sql",))
-        found = [finding(title="SQL injection"), finding(title="Unsafe string building")]
-        assert score_case(outcome([want], found)).duplicates == 1
+    def test_two_titles_that_both_match_the_label_are_a_duplicate(self):
+        want = label(start=7, end=7, keywords=("sql",))
+        found = [
+            finding(line=7, title="Potential SQL Injection Vulnerability"),
+            finding(line=7, title="SQL injection via f-string"),
+        ]
+        score = score_case(outcome([want], found))
+        assert (score.tp, score.fp, score.duplicates) == (1, 1, 1)
+        assert score.passed_ignoring_duplicates
+
+    def test_a_different_problem_on_the_next_line_is_not_a_duplicate(self):
+        want = label(start=7, end=7, keywords=("sql",))
+        found = [
+            finding(line=7, title="SQL injection"),
+            finding(line=8, title="Hardcoded secret"),
+        ]
+        score = score_case(outcome([want], found))
+        assert (score.tp, score.fp, score.duplicates) == (1, 1, 0)
+        assert not score.passed_ignoring_duplicates
+        assert aggregate([score])["overall"]["precision_excluding_duplicates"] == 0.5
+
+    def test_junk_around_a_real_finding_is_not_excused(self):
+        want = label(start=7, end=7, keywords=("sql",))
+        junk = [finding(line=line, title=f"Junk {line}") for line in (5, 6, 8, 9)]
+        score = score_case(outcome([want], [finding(line=7, title="SQL injection"), *junk]))
+        assert (score.tp, score.fp, score.duplicates) == (1, 4, 0)
+        assert not score.passed_ignoring_duplicates
+        overall = aggregate([score])["overall"]
+        assert overall["precision"] == overall["precision_excluding_duplicates"] == 0.2
+
+    def test_it_must_be_close_to_the_matched_finding_not_only_to_the_label(self):
+        # Both satisfy the label, but they point at different places in its range
+        want = label(start=10, end=20, keywords=("sql",))
+        found = [finding(line=10, title="SQL one"), finding(line=18, title="SQL two")]
+        assert score_case(outcome([want], found)).duplicates == 0
+
+    def test_it_must_repeat_the_label_its_neighbour_matched(self):
+        labels = [
+            label("L1", start=7, end=7, keywords=("sql",)),
+            label("L2", start=40, end=40, keywords=("secret",)),
+        ]
+        found = [
+            finding(line=7, title="SQL injection"),
+            finding(line=40, title="Hardcoded secret"),
+            finding(line=8, title="Another secret"),
+        ]
+        assert score_case(outcome(labels, found)).duplicates == 0
 
     @pytest.mark.parametrize(
         "other",
