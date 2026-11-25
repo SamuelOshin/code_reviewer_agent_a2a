@@ -4,7 +4,7 @@ An AI code review agent for GitHub Pull Requests. It combines regex rules with L
 analysis to report security, performance and best-practice findings, and it fails
 closed: a review that did not fully run never says "approve".
 
-It is a FastAPI service with a JSON-RPC 2.0 endpoint, a simple A2A-style task endpoint
+It is a FastAPI service with a JSON-RPC 2.0 endpoint, an A2A v1.0 task endpoint using `a2a-sdk` v1.0 types,
 and a GitHub webhook. The LLM layer is provider agnostic: provider and model are
 configuration, not code.
 
@@ -23,8 +23,8 @@ configuration, not code.
 | Provider-agnostic model layer on Pydantic AI: Google, OpenAI, Anthropic and any OpenAI-compatible server; per-role models; ordered fallback models | `app/llm/`, `tests/test_llm_contract.py` |
 | Risk level and approval recommendation | `app/services/code_analyzer.py`, `tests/test_code_analyzer.py` |
 | Fail-closed results (see below) | `tests/test_fail_closed.py` |
-| JSON-RPC 2.0 at `/rpc` with `analyze_pr`, `message/send`, `introspect`, batch support | `app/main.py`, `app/routes/jsonrpc.py`, `tests/test_jsonrpc.py` |
-| `POST /a2a/tasks`: JSON-RPC `message/send`, or `{"message": "<text containing a PR URL>"}` | `app/routes/a2a_tasks.py`, `tests/test_a2a_protocol.py` |
+| JSON-RPC 2.0 at `/rpc` with `SendMessage` (A2A v1.0), `message/send` (A2A v0.3 compatibility), `analyze_pr`, `introspect`, batch support | `app/main.py`, `app/routes/jsonrpc.py`, `tests/test_jsonrpc.py` |
+| `POST /a2a/tasks`: A2A v1.0 `SendMessage`, A2A v0.3 `message/send`, or `{"message": "<text containing a PR URL>"}` | `app/routes/a2a_tasks.py`, `app/models/a2a.py`, `tests/test_a2a_protocol.py`, `tests/test_p202_a2a_sdk.py` |
 | GitHub webhook: HMAC-verified `pull_request` events (opened, synchronize, reopened) get one summary comment on the PR, capped at 60,000 characters | `app/routes/webhooks.py`, `tests/test_webhooks.py` |
 | Optional push of the result to a caller-supplied URL (allowlisted, https, public addresses only) | `app/core/push_url.py`, `tests/test_security_p107.py` |
 | Safe errors: clients get a generic message plus an error id; raw model output is never logged. Logs and raised errors carry only the exception type (or the HTTP status for GitHub errors) and an error id, never exception text or tracebacks | `app/core/errors.py`, `tests/test_safe_logging.py`, `tests/test_safe_logging_p117.py` |
@@ -102,6 +102,7 @@ All settings are environment variables (or `.env`). [`.env.example`](.env.exampl
 | `A2A_BLOCKING_TIMEOUT_SECONDS` | no | Longest a blocking `message/send` may run, default 300, max 3600. On timeout it returns JSON-RPC error `-32004` |
 | `CORS_ALLOWED_ORIGINS` | no | Comma-separated `scheme://host[:port]`, lowercased. Empty sends no CORS headers; `*` is refused |
 | `JSONRPC_MAX_BATCH_SIZE` | no | Most calls per JSON-RPC batch, 1-100, default 10 |
+| `PUBLIC_BASE_URL` | no | Optional external `scheme://host[:port]` advertised in agent card interfaces behind a reverse proxy |
 | `ENVIRONMENT`, `PORT`, `LOG_LEVEL`, `LOG_FORMAT`, `HOST_PORT` | no | See `.env.example` |
 
 Switching provider is a configuration change only, for example
@@ -112,10 +113,11 @@ Switching provider is a configuration change only, for example
 
 | Endpoint | Method | Auth | Description |
 |---|---|---|---|
-| `/rpc` | POST | Bearer `API_KEY` | JSON-RPC 2.0: `analyze_pr`, `message/send`, `introspect` |
-| `/a2a/tasks` | POST | Bearer `API_KEY` | `message/send` task endpoint |
+| `/rpc` | POST | Bearer `API_KEY` | JSON-RPC 2.0: `SendMessage` (A2A v1.0), `message/send` (A2A v0.3), `analyze_pr`, `introspect` |
+| `/a2a/tasks` | POST | Bearer `API_KEY` | A2A task endpoint (`SendMessage` v1.0 and `message/send` v0.3) |
 | `/webhooks/github` | POST | HMAC signature | GitHub `pull_request` events |
-| `/.well-known/agent.json` | GET | none | Agent card |
+| `/.well-known/agent-card.json` | GET | none | A2A v1.0 agent card (declares `bearerAuth` HTTP security scheme) |
+| `/.well-known/agent.json` | GET | none | Agent card alias for A2A v0.3 clients |
 | `/health`, `/ready`, `/live` | GET | none | Health, readiness, liveness |
 | `/docs` | GET | none | Interactive docs, `ENVIRONMENT=development` only |
 
@@ -134,9 +136,13 @@ curl -X POST http://localhost:8000/a2a/tasks \
   -d '{"message":"Review https://github.com/OWNER/REPO/pull/1"}'
 ```
 
-`message/send` without a push configuration returns a finished task (blocking is the
-default). With `"blocking": false` and a `pushNotificationConfig.url`, it returns at
-once and pushes the result to that URL. The URL must be `https`, its host must be in
+`SendMessage` (A2A v1.0, returning a `SendMessageResponse` with `Task` or `Message` and
+`TASK_STATE_*` states) and `message/send` (A2A v0.3 compatibility) share the same
+validation, blocking, timeout, batch, notification, and push-notification guards.
+Without a push configuration, both return a finished task (blocking is the default;
+v1.0 sets `"returnImmediately": true` + `taskPushNotificationConfig`, while v0.3 sets
+`"blocking": false` + `pushNotificationConfig`). With non-blocking push configured,
+it returns at once and pushes the result to that URL. The URL must be `https`, its host must be in
 `PUSH_URL_ALLOWED_HOSTS`, its port 443 or one in `PUSH_URL_ALLOWED_PORTS`, and it must
 resolve to public addresses only. A blocking call that runs longer than
 `A2A_BLOCKING_TIMEOUT_SECONDS` returns error `-32004`. A JSON-RPC batch runs its calls
@@ -265,9 +271,6 @@ tests/
 Not built yet; see the [tracker](docs/PROJECT_TRACKER.md):
 
 - Inline PR review comments (planned, `P2-03`); today the webhook posts one summary comment.
-- Migration to the official A2A SDK. The current A2A support is hand-written, and the
-  agent card (`config/agent_card.json`) still points at an old, no-longer-running hosting URL and a skill id that
-  does not match the RPC method name (`P2-02`).
 - Chunking large diffs so the LLM reviews the whole PR (`P2-07`).
 - Prompt-injection defences (`P2-06`).
 - Evals with published precision and recall, an MCP server, tracing and cost metrics,

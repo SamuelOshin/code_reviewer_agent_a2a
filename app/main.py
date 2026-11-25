@@ -10,18 +10,22 @@ Main FastAPI application with:
 - Agent card serving
 """
 
+import ipaddress
 import json
 import logging
+import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI
+from a2a.utils.constants import AGENT_CARD_WELL_KNOWN_PATH
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.core.config import settings
 from app.core.logging import setup_logging
+from app.models.a2a import build_v03_agent_card, build_v1_agent_card
 from app.routes import a2a_tasks, health, jsonrpc, webhooks
 from app.services.code_analyzer import CodeAnalyzerService
 from app.services.jsonrpc_handler import JSONRPCHandler
@@ -182,20 +186,43 @@ async def handle_message_send(message: dict[str, Any], configuration: dict[str, 
     return result
 
 
+async def handle_v1_send_message(
+    message: dict[str, Any],
+    configuration: dict[str, Any] | None = None,
+    metadata: dict[str, Any] | None = None,
+    tenant: str | None = None,
+) -> dict[str, Any]:
+    """JSON-RPC method: SendMessage (A2A v1.0)."""
+    logger.info("RPC: SendMessage called")
+    message_handler: MessageHandler = app.state.message_handler
+    return await message_handler.handle_v1_send_message(
+        message=message,
+        configuration=configuration,
+        metadata=metadata,
+        tenant=tenant,
+    )
+
+
 def message_send_needs_reply(params: dict[str, Any]) -> bool:
-    """True unless message/send is non-blocking with a push config (P1-24).
+    """True unless message/send or SendMessage is non-blocking with a push config (P1-24).
 
     Mirrors MessageHandler.handle_message_send: blocking defaults to true, and only
-    a falsy "blocking" plus a pushNotificationConfig delivers the result by push.
+    non-blocking (`blocking=false` or `returnImmediately=true`) plus a push config
+    delivers the result by push.
     """
     configuration = params.get("configuration") if isinstance(params, dict) else None
     if not isinstance(configuration, dict):
         return True
-    # Same test as the handler: `not is_blocking and push_config`, so any falsy
-    # "blocking" (false, 0, null, "") with a push config pushes (P1-24 review)
-    pushes = not configuration.get("blocking", True) and bool(
-        configuration.get("pushNotificationConfig")
+    if "blocking" in configuration:
+        is_blocking = bool(configuration.get("blocking", True))
+    elif "returnImmediately" in configuration:
+        is_blocking = not bool(configuration.get("returnImmediately", False))
+    else:
+        is_blocking = True
+    push = configuration.get("pushNotificationConfig") or configuration.get(
+        "taskPushNotificationConfig"
     )
+    pushes = not is_blocking and bool(push)
     return not pushes
 
 
@@ -207,8 +234,8 @@ async def register_rpc_methods(handler: JSONRPCHandler):
         handler: JSONRPCHandler instance
     """
     # P1-24: a review whose result only comes back in the reply must not be sent as a
-    # notification. analyze_pr always replies with the result; message/send does unless
-    # it is non-blocking with a push config (the result is pushed instead).
+    # notification. analyze_pr always replies with the result; message/send and
+    # SendMessage do unless non-blocking with a push config (the result is pushed instead).
     handler.register_method("analyze_pr", handle_analyze_pr, reply_required=lambda _p: True)
     handler.register_method("introspect", handle_introspect)
     handler.register_method(
@@ -217,31 +244,92 @@ async def register_rpc_methods(handler: JSONRPCHandler):
         reply_required=message_send_needs_reply,
         reply_hint="Or send it non-blocking (\"blocking\": false) with a pushNotificationConfig.",
     )
+    handler.register_method(
+        "SendMessage",
+        handle_v1_send_message,
+        reply_required=message_send_needs_reply,
+        reply_hint=(
+            "Or send it non-blocking (\"returnImmediately\": true) "
+            "with a taskPushNotificationConfig."
+        ),
+    )
 
 
 # ============================================================================
 # Agent Card Endpoint
 # ============================================================================
 
-@app.get("/.well-known/agent.json")
-def get_agent_card():
+_CARD_HOST_RE = re.compile(r"^[a-z0-9.-]+$")
+
+
+def _agent_card_base_url(request: Request) -> str:
+    """Resolve the base URL advertised in agent card interfaces.
+
+    Uses configured `PUBLIC_BASE_URL` when set so spoofed Host headers or missing
+    proxy-header forwarding cannot alter the card URL.
     """
-    Serve the A2A agent card
-    
-    Returns:
-        Agent card JSON
-    """
+    if settings.PUBLIC_BASE_URL:
+        return settings.PUBLIC_BASE_URL
+    url_scheme = request.url.scheme
+    raw_scheme = (
+        request.headers.get("x-forwarded-proto", url_scheme)
+        .split(",")[0]
+        .strip()
+        .lower()
+    )
+    scheme = raw_scheme if raw_scheme in ("http", "https") else url_scheme
+    if settings.ENVIRONMENT != "development" and scheme != "https":
+        scheme = "https"
     try:
-        with open(AGENT_CARD_PATH) as f:
-            agent_card = json.load(f)
-        
-        return JSONResponse(content=agent_card)
+        hostname = (request.url.hostname or "").lower()
+        port = request.url.port
+    except ValueError:
+        hostname = ""
+        port = None
+    host_display = ""
+    if hostname:
+        try:
+            if isinstance(ipaddress.ip_address(hostname), ipaddress.IPv6Address):
+                host_display = f"[{hostname}]"
+            else:
+                host_display = hostname
+        except ValueError:
+            if _CARD_HOST_RE.match(hostname):
+                host_display = hostname
+    if not host_display:
+        return f"{scheme}://localhost:{settings.PORT}"
+    default_port = 443 if scheme == "https" else 80
+    host_part = f"{host_display}:{port}" if port is not None and port != default_port else host_display
+    return f"{scheme}://{host_part}"
+
+
+def _serve_agent_card(request: Request, *, v1: bool) -> JSONResponse:
+    try:
+        with open(AGENT_CARD_PATH, encoding="utf-8") as f:
+            raw_card = json.load(f)
+        base_url = _agent_card_base_url(request)
+        builder = build_v1_agent_card if v1 else build_v03_agent_card
+        agent_card = builder(raw_card, base_url=base_url)
+        headers = None if settings.PUBLIC_BASE_URL else {"Cache-Control": "no-store"}
+        return JSONResponse(content=agent_card, headers=headers)
     except Exception as e:
         logger.error(f"Failed to load agent card: {type(e).__name__}")
         return JSONResponse(
             content={"error": "Failed to load agent card"},
-            status_code=500
+            status_code=500,
         )
+
+
+@app.get(AGENT_CARD_WELL_KNOWN_PATH)
+def get_agent_card(request: Request):
+    """Serve the strict A2A v1.0 agent card for discovery."""
+    return _serve_agent_card(request, v1=True)
+
+
+@app.get("/.well-known/agent.json")
+def get_legacy_agent_card(request: Request):
+    """Serve a v0.3-compatible agent card alias for legacy clients."""
+    return _serve_agent_card(request, v1=False)
 
 
 # ============================================================================
@@ -265,12 +353,12 @@ async def root():
             "a2a_tasks": "/a2a/tasks",
             "webhooks": "/webhooks/github",
             "health": "/health",
-            "agent_card": "/.well-known/agent.json",
+            "agent_card": AGENT_CARD_WELL_KNOWN_PATH,
             "docs": "/docs" if settings.ENVIRONMENT == "development" else None
         },
         "protocols": {
             "jsonrpc": "2.0",
-            "a2a": "supported"
+            "a2a": "1.0"
         },
         "status": "running"
     }

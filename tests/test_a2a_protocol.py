@@ -84,13 +84,19 @@ class TestForwarding:
             {"foo": "bar"},
             {"message": 123},
             {"message": {"parts": []}},
-            {"jsonrpc": "2.0", "method": "other/method", "id": 1},
+            {"method": "other/method", "id": 1},
             [],
             "just a string",
         ],
     )
     def test_unknown_shape_is_422(self, client, captured, body):
         assert client.post("/a2a/tasks", json=body).status_code == 422
+        assert captured == []
+
+    def test_other_jsonrpc_method_gets_method_not_found(self, client, captured):
+        res = client.post("/a2a/tasks", json={"jsonrpc": "2.0", "method": "other/method", "id": 1})
+        assert res.status_code == 200
+        assert res.json()["error"]["code"] == -32601
         assert captured == []
 
     def test_invalid_json_is_422(self, client):

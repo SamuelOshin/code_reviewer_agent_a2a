@@ -1,93 +1,72 @@
 {
   "name": "PRRover Code Review Agent",
-  "description": "AI-powered code review agent that analyzes GitHub Pull Requests for security vulnerabilities, performance issues, and best practices. Uses LLM analysis combined with rule-based checks to provide comprehensive code review summaries.",
-  "url": "https://code-reviewer-agent-a2a.onrender.com/a2a/tasks",
+  "description": "AI-powered code review agent that analyzes GitHub Pull Requests for security vulnerabilities, performance issues, and best practices. Combines rule-based checks with schema-enforced LLM analysis.",
   "version": "1.0.0",
+  "supportedInterfaces": [
+    {
+      "url": "http://localhost:8000/a2a/tasks",
+      "protocolBinding": "JSONRPC",
+      "protocolVersion": "1.0"
+    }
+  ],
   "provider": {
-    "organization": "Bobbysam (SamuelOshin)",
+    "organization": "SamuelOshin",
     "url": "https://github.com/SamuelOshin"
   },
   "documentationUrl": "https://github.com/SamuelOshin/code_reviewer_agent_a2a/blob/main/README.md",
   "capabilities": {
     "streaming": false,
     "pushNotifications": true,
-    "stateTransitionHistory": true
+    "extendedAgentCard": false
   },
-  "defaultInputModes": ["text/plain", "text/markdown"],
-  "defaultOutputModes": ["text/markdown", "application/json"],
-  "skills": [
+  "securitySchemes": {
+    "bearerAuth": {
+      "httpAuthSecurityScheme": {
+        "scheme": "bearer",
+        "bearerFormat": "API_KEY",
+        "description": "Bearer API key required for all review endpoints (Authorization: Bearer <API_KEY>)."
+      }
+    }
+  },
+  "securityRequirements": [
     {
-      "id": "analyze_github_pr",
-      "name": "Analyze GitHub Pull Request",
-      "description": "Analyzes a GitHub Pull Request for security vulnerabilities, performance issues, and best practice violations. Provides detailed findings with line numbers, severity ratings, and actionable recommendations.",
-      "inputModes": ["text/plain"],
-      "outputModes": ["text/markdown", "application/json"],
-      "examples": [
-        {
-          "input": {
-            "parts": [
-              {
-                "text": "analyze this PR: https://github.com/facebook/react/pull/31628",
-                "contentType": "text/plain"
-              }
-            ]
-          },
-          "output": {
-            "parts": [
-              {
-                "text": "# ✅ Code Review Complete - PR #31628\n\n**Risk: LOW** | ✅ Approve\n\nAnalyzed 5 files with detailed security, performance, and best practice findings.",
-                "contentType": "text/markdown"
-              }
-            ]
-          }
-        },
-        {
-          "input": {
-            "parts": [
-              {
-                "text": "Review PR https://github.com/owner/repo/pull/123 for security issues only",
-                "contentType": "text/plain"
-              }
-            ]
-          },
-          "output": {
-            "parts": [
-              {
-                "text": "# 🔒 Security Review - PR #123\n\nFound 3 security issues requiring attention.",
-                "contentType": "text/markdown"
-              }
-            ]
-          }
-        }
-      ]
-    },
-    {
-      "id": "greeting_and_intro",
-      "name": "Introduction",
-      "description": "Introduces the agent's capabilities and asks for a PR to review.",
-      "inputModes": ["text/plain"],
-      "outputModes": ["text/plain"],
-      "examples": [
-        {
-          "input": {
-            "parts": [
-              {
-                "text": "hi",
-                "contentType": "text/plain"
-              }
-            ]
-          },
-          "output": {
-            "parts": [
-              {
-                "text": "Hey! I'm PRRover, your friendly AI code reviewer. Share a GitHub PR link with me and I'll analyze it for security issues, performance problems, and best practices. Which PR would you like me to review?",
-                "contentType": "text/plain"
-              }
-            ]
-          }
-        }
-      ]
+      "schemes": {
+        "bearerAuth": {}
+      }
     }
   ],
-  "supportsAuthenticatedExtendedCard": false
+  "defaultInputModes": [
+    "text/plain",
+    "text/markdown"
+  ],
+  "defaultOutputModes": [
+    "text/markdown",
+    "application/json"
+  ],
+  "skills": [
+    {
+      "id": "analyze_pr",
+      "name": "Analyze GitHub Pull Request",
+      "description": "Analyzes a GitHub Pull Request for security vulnerabilities, performance issues, and best practice violations. Provides detailed findings with line numbers, severity ratings, and actionable recommendations.",
+      "tags": [
+        "code-review",
+        "security",
+        "performance",
+        "best-practices",
+        "github"
+      ],
+      "examples": [
+        "Analyze this PR: https://github.com/owner/repo/pull/123",
+        "Review PR https://github.com/owner/repo/pull/42 for security and performance issues"
+      ],
+      "inputModes": [
+        "text/plain",
+        "text/markdown"
+      ],
+      "outputModes": [
+        "text/markdown",
+        "application/json"
+      ]
+    }
+  ]
 }

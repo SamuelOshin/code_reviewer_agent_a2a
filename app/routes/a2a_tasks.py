@@ -3,8 +3,8 @@
 """A2A Task Endpoint
 
 Receives A2A requests from any A2A client and forwards them to the JSON-RPC
-handler (message/send). Plain `{"message": "<text>"}` bodies are converted to a
-message/send request for simple clients.
+handler (v1.0 `SendMessage` or v0.3 `message/send`). Plain `{"message": "<text>"}`
+bodies are converted to a message/send request for simple clients.
 """
 
 import logging
@@ -29,7 +29,8 @@ async def handle_a2a_task(request: Request):
     A2A task endpoint
 
     Accepts:
-    1. JSON-RPC 2.0 requests with method message/send
+    1. JSON-RPC 2.0 requests (SendMessage / message/send; any other method gets the
+       same JSON-RPC error as /rpc)
     2. Simple requests of the form {"message": "<text>"}, converted to message/send
 
     Args:
@@ -48,8 +49,11 @@ async def handle_a2a_task(request: Request):
     if not isinstance(body, dict):
         raise HTTPException(status_code=422, detail="Invalid request format: expected a JSON object")
 
-    if body.get("jsonrpc") == "2.0" and body.get("method") == "message/send":
-        logger.info("Detected JSON-RPC message/send request, forwarding to RPC handler")
+    method = body.get("method")
+    if body.get("jsonrpc") == "2.0" and isinstance(method, str):
+        # Any method goes to the same handler as /rpc, so unknown methods get the
+        # JSON-RPC -32601 error (the advertised endpoint must not 422 GetTask etc.)
+        logger.info("Detected JSON-RPC %s request, forwarding to RPC handler", method)
         jsonrpc_request = body
     elif isinstance(body.get("message"), str):
         logger.info("Detected simple message request, converting to JSON-RPC message/send")
@@ -74,7 +78,7 @@ async def handle_a2a_task(request: Request):
     else:
         raise HTTPException(
             status_code=422,
-            detail="Invalid request format: expected JSON-RPC message/send or {\"message\": \"<text>\"}"
+            detail="Invalid request format: expected a JSON-RPC 2.0 request or {\"message\": \"<text>\"}"
         )
 
     rpc_handler = getattr(request.app.state, "jsonrpc_handler", None)
