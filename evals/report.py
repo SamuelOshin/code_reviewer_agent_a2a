@@ -120,10 +120,19 @@ def _contribution(results: list[CaseResult]) -> dict | None:
     return model_contribution([r.score for r in results], model, rules)
 
 
-def build_report(results: list[CaseResult], cases: list[Case], mode: str, config: dict) -> dict:
+def build_report(
+    results: list[CaseResult],
+    cases: list[Case],
+    mode: str,
+    config: dict,
+    planned: int | None = None,
+) -> dict:
+    """The report over `results`. `planned` is how many cases the run set out to do."""
+    unfinished = planned is not None and len(results) < planned
     return {
         "schema_version": SCHEMA_VERSION,
         "mode": mode,
+        "partial": {"finished": len(results), "planned": planned} if unfinished else None,
         "created_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "dataset": {"cases": len(cases), "fingerprint": fingerprint(cases)},
         "config": config,
@@ -283,15 +292,22 @@ def _headline_rows(report: dict) -> list[tuple[str, str]]:
 
 
 def _notes(report: dict) -> list[str]:
+    notes = []
+    if report["partial"]:
+        notes += [
+            f"> Partial run: {report['partial']['finished']} of "
+            f"{report['partial']['planned']} cases finished. The numbers cover only those.",
+            "",
+        ]
     if report["mode"] == "fake":
-        return [
+        notes += [
             "> `fake` mode uses a scripted model that knows the labels. These numbers "
             "test the harness and say nothing about review quality. Tokens are estimates.",
             "",
         ]
     if report["mode"] == "rules":
-        return ["> `rules` mode: rule checks only. No model was called.", ""]
-    return []
+        notes += ["> `rules` mode: rule checks only. No model was called.", ""]
+    return notes
 
 
 def summary_markdown(report: dict) -> str:
@@ -402,6 +418,11 @@ def compare_markdown(data: list[dict]) -> str:
         unfinished = cases["total"] - cases["complete"]
         if unfinished:
             warnings.append(f"{name}: {unfinished} review(s) did not complete.")
+        if report["partial"]:
+            warnings.append(
+                f"{name}: partial run, {report['partial']['finished']} of "
+                f"{report['partial']['planned']} cases."
+            )
         if report["usage"]["cost_is_lower_bound"]:
             warnings.append(
                 f"{name}: cost and tokens are a lower bound "

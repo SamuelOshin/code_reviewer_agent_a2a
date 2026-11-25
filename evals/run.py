@@ -5,6 +5,11 @@
     uv run python -m evals.run --mode llm                    # configured model, costs money
     uv run python -m evals.run --mode llm --model <provider>:<model-id> --out run.json
     uv run python -m evals.run --compare first.json second.json
+    uv run python -m evals.run --from-cases run.cases.jsonl   # report of a stopped run
+
+Each case is saved to `<out>.cases.jsonl` as it finishes, and the file is removed once
+a run completes. Ctrl-C writes a report of the finished cases. After a crash, build
+that report with `--from-cases`. The case in progress is lost either way.
 
 A run writes a JSON report and a Markdown summary next to it. The model comes from
 the app's settings (environment or `.env`); `--model` and `--role-model` override
@@ -12,7 +17,7 @@ them for this run. The dataset format is in `evals/dataset.py`, the matching rul
 metrics in `evals/scoring.py`.
 
 Exit codes: 0 report written; 1 report written but no review completed; 2 bad
-configuration, dataset or report file.
+configuration, dataset or input file; 130 interrupted.
 """
 
 import argparse
@@ -39,13 +44,14 @@ from app.core.config import settings  # noqa: E402
 from app.llm import LLMClient, LLMConfigurationError, Role, build_client  # noqa: E402
 from app.services.llm_service import MAX_DIFF_CHARS  # noqa: E402
 from app.utils.diff_chunker import chunk_diff  # noqa: E402
-from evals import harness  # noqa: E402
+from evals import harness, partial  # noqa: E402
 from evals.dataset import DatasetError, load_cases  # noqa: E402
 from evals.fake import EmptyClient, FakeClient  # noqa: E402
 from evals.report import SCHEMA_VERSION, build_report, compare_markdown, summary_markdown  # noqa: E402
 from evals.scoring import DEFAULT_LINE_TOLERANCE  # noqa: E402
 
 RESULTS_DIR = Path("evals/results")
+CASES_SUFFIX = ".cases.jsonl"
 # The app reads its prompt templates relative to the working directory
 PROMPT_FILE = Path("config/prompts/security_analysis.txt")
 
@@ -86,6 +92,12 @@ def _arguments(argv: list[str] | None) -> argparse.Namespace:
         metavar="REPORT",
         help="two or more JSON reports to put side by side",
     )
+    action.add_argument(
+        "--from-cases",
+        type=Path,
+        metavar="FILE",
+        help="build the report from the cases a stopped run saved",
+    )
     parser.add_argument(
         "--out", type=Path, help="report path (.json); with --compare, a Markdown file"
     )
@@ -109,7 +121,9 @@ def _arguments(argv: list[str] | None) -> argparse.Namespace:
         parser.error("--model and --role-model only apply to --mode llm")
     if args.line_tolerance < 0:
         parser.error("--line-tolerance cannot be negative")
-    if args.out and args.mode and args.out.suffix != ".json":
+    if args.from_cases and args.case:
+        parser.error("--case does not apply to --from-cases")
+    if args.out and not args.compare and args.out.suffix != ".json":
         parser.error("--out must end in .json (the Markdown summary is written next to it)")
     return args
 
@@ -192,12 +206,46 @@ def _run(args: argparse.Namespace) -> int:
         client = EmptyClient() if args.mode == "rules" else FakeClient(())
     config["models_by_role"] = {role.value: client.model_name(role) for role in Role}
 
-    results = asyncio.run(
-        harness.run_cases(cases, args.mode, client_for, args.line_tolerance, _progress(len(cases)))
-    )
-    report = build_report(results, cases, args.mode, config)
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     out = args.out or RESULTS_DIR / f"{args.mode}-{stamp}.json"
+    saved = out.with_suffix(CASES_SUFFIX)
+    try:
+        partial.start(saved, args.mode, config, planned=len(cases))
+    except FileExistsError:
+        print(
+            f"{saved} holds an earlier unfinished run. Build its report with "
+            f"--from-cases, delete it, or choose another --out.",
+            file=sys.stderr,
+        )
+        return 2
+    show = _progress(len(cases))
+
+    def finished(result: harness.CaseResult) -> None:
+        partial.append(saved, result)
+        show(result)
+
+    try:
+        results = asyncio.run(
+            harness.run_cases(cases, args.mode, client_for, args.line_tolerance, finished)
+        )
+        report = build_report(results, cases, args.mode, config)
+        code = _publish(report, out)
+    except KeyboardInterrupt:
+        print(f"Interrupted. Finished cases are in {saved}.", file=sys.stderr)
+        _report_saved(saved, out)
+        return 130
+    except BaseException:
+        print(
+            f"Stopped. Finished cases are in {saved}; build their report with --from-cases.",
+            file=sys.stderr,
+        )
+        raise
+    saved.unlink()
+    return code
+
+
+def _publish(report: dict, out: Path) -> int:
+    """Write the JSON and Markdown, print the headline, and return the exit code."""
     # The JSON first: a paid run must survive a problem in the summary
     _write(out, json.dumps(report, indent=2) + "\n")
     summary = summary_markdown(report)
@@ -210,6 +258,22 @@ def _run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _report_saved(saved: Path, out: Path) -> int:
+    """The report of the cases in a saved-cases file."""
+    try:
+        run, results = partial.load(saved)
+        report = build_report(
+            results, [r.case for r in results], run["mode"], run["config"], run["planned"]
+        )
+    except (OSError, KeyError, TypeError) as e:
+        print(f"{saved} is not a saved-cases file ({type(e).__name__})", file=sys.stderr)
+        return 2
+    if not results:
+        print("No case finished, so there is no report.", file=sys.stderr)
+        return 1
+    return _publish(report, out)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _arguments(argv)
     level = logging.INFO if args.verbose else logging.CRITICAL
@@ -220,7 +284,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.verbose:
         logging.basicConfig(level=logging.WARNING)
     try:
-        return _compare(args) if args.compare else _run(args)
+        if args.compare:
+            return _compare(args)
+        if args.from_cases:
+            name = args.from_cases.name.removesuffix(CASES_SUFFIX)
+            out = args.out or args.from_cases.with_name(f"{name}.json")
+            return _report_saved(args.from_cases, out)
+        return _run(args)
     except (DatasetError, LLMConfigurationError, ValueError) as e:
         print(str(e), file=sys.stderr)
         return 2

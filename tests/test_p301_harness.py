@@ -430,6 +430,119 @@ class TestLlmCommand:
         assert json.loads(out.read_text())["metrics"]["cases"]["failed"] == 1
 
 
+class TestSavedCases:
+    PICKED = ("clean-go-extract-helper", "py-sql-injection", "py-unsafe-yaml")
+
+    def argv(self, out, mode="fake"):
+        picked = [flag for case_id in self.PICKED for flag in ("--case", case_id)]
+        return ["--mode", mode, *picked, "--out", str(out)]
+
+    def saved_lines(self, tmp_path):
+        text = (tmp_path / "run.cases.jsonl").read_text()
+        return [json.loads(line) for line in text.splitlines()]
+
+    def crash_after_the_cases(self, tmp_path, monkeypatch):
+        """A finished set of cases whose report was never written."""
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("report bug")
+
+        out = tmp_path / "run.json"
+        with monkeypatch.context() as patch:
+            patch.setattr(run, "build_report", boom)
+            with pytest.raises(RuntimeError):
+                run.main(self.argv(out))
+        return out, tmp_path / "run.cases.jsonl"
+
+    def test_a_completed_run_leaves_only_the_report(self, tmp_path):
+        assert run.main(self.argv(tmp_path / "run.json")) == 0
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["run.json", "run.md"]
+        assert json.loads((tmp_path / "run.json").read_text())["partial"] is None
+
+    def test_each_case_is_on_disk_before_the_next_starts(self, tmp_path, monkeypatch):
+        seen = []
+
+        class Watching(FakeClient):
+            async def generate(inner, role, prompt, **kwargs):
+                if role == Role.SUMMARY:
+                    seen.append([r.get("id") for r in self.saved_lines(tmp_path)[1:]])
+                return await super().generate(role, prompt, **kwargs)
+
+        monkeypatch.setattr(run, "build_client", lambda c: Watching(()))
+        run.main(self.argv(tmp_path / "run.json", "llm"))
+        # The summary call ends the model review of a case, before that case is saved
+        assert seen == [list(self.PICKED[:i]) for i in range(3)]
+
+    def test_ctrl_c_writes_a_report_of_the_finished_cases(self, tmp_path, monkeypatch, capsys):
+        summaries = []
+
+        class Interrupted(FakeClient):
+            async def generate(inner, role, prompt, **kwargs):
+                if len(summaries) == 2:
+                    raise KeyboardInterrupt
+                if role == Role.SUMMARY:
+                    summaries.append(prompt)
+                return await super().generate(role, prompt, **kwargs)
+
+        monkeypatch.setattr(run, "build_client", lambda c: Interrupted(()))
+        assert run.main(self.argv(tmp_path / "run.json", "llm")) == 130
+        report = json.loads((tmp_path / "run.json").read_text())
+        assert report["partial"] == {"finished": 2, "planned": 3}
+        assert [c["id"] for c in report["cases"]] == list(self.PICKED[:2])
+        assert report["dataset"]["cases"] == 2
+        assert "Partial run: 2 of 3 cases" in (tmp_path / "run.md").read_text()
+        assert "partial run, 2 of 3 cases" in compare_markdown([report, report])
+        assert [r["kind"] for r in self.saved_lines(tmp_path)] == ["run", "case", "case"]
+        assert "Interrupted" in capsys.readouterr().err
+
+    def test_a_crash_keeps_the_cases_and_they_rebuild_the_same_report(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        out, saved = self.crash_after_the_cases(tmp_path, monkeypatch)
+        assert not out.exists()
+        assert "--from-cases" in capsys.readouterr().err
+        assert run.main(["--from-cases", str(saved)]) == 0
+        rebuilt = json.loads(out.read_text())
+        assert saved.exists()  # kept until the user deletes it
+        clean = tmp_path / "clean" / "run.json"
+        run.main(self.argv(clean))
+        expected = json.loads(clean.read_text())
+        for report in (rebuilt, expected):
+            report.pop("created_at")
+            report.pop("latency_seconds")
+            for case in report["cases"]:
+                case.pop("latency_seconds")
+        assert rebuilt == expected
+
+    def test_a_line_cut_off_mid_write_is_skipped(self, tmp_path, monkeypatch):
+        out, saved = self.crash_after_the_cases(tmp_path, monkeypatch)
+        saved.write_text(saved.read_text()[:-40])
+        assert run.main(["--from-cases", str(saved)]) == 0
+        assert json.loads(out.read_text())["partial"] == {"finished": 2, "planned": 3}
+
+    def test_an_unfinished_run_is_never_overwritten(self, tmp_path, monkeypatch, capsys):
+        out, saved = self.crash_after_the_cases(tmp_path, monkeypatch)
+        before = saved.read_text()
+        assert run.main(self.argv(out)) == 2
+        assert saved.read_text() == before
+        assert "unfinished run" in capsys.readouterr().err
+
+    def test_a_case_changed_since_the_run_is_refused(self, tmp_path, monkeypatch, capsys):
+        out, saved = self.crash_after_the_cases(tmp_path, monkeypatch)
+        lines = saved.read_text().splitlines()
+        record = {**json.loads(lines[1]), "digest": "old"}
+        saved.write_text("\n".join([lines[0], json.dumps(record), *lines[2:]]) + "\n")
+        assert run.main(["--from-cases", str(saved)]) == 2
+        assert "has changed since this run" in capsys.readouterr().err
+        assert not out.exists()
+
+    @pytest.mark.parametrize("content", ["", "{}\n", "not json\n"])
+    def test_another_file_is_refused(self, tmp_path, content):
+        saved = tmp_path / "x.cases.jsonl"
+        saved.write_text(content)
+        assert run.main(["--from-cases", str(saved)]) == 2
+
+
 class TestModelOverride:
     def test_one_flag_sets_every_role_and_drops_fallbacks(self, monkeypatch):
         monkeypatch.setattr(settings, "LLM_MODEL_SECURITY", "openai:from-env")
