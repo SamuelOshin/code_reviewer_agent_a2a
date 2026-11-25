@@ -250,7 +250,7 @@ class CodeAnalyzerService:
             # Step 6: Merge and deduplicate findings
             all_security_issues = self._merge_security_issues(rule_security_issues, llm_security_issues)
             all_performance_issues = self._merge_performance_issues(rule_performance_issues, llm_performance_issues)
-            all_best_practice_issues = llm_best_practice_issues  # Only from LLM
+            all_best_practice_issues = self._merge_best_practice_issues(llm_best_practice_issues)
             
             # Step 7: Calculate risk level
             risk_level = self._calculate_risk_level(all_security_issues, all_performance_issues)
@@ -544,6 +544,40 @@ class CodeAnalyzerService:
         
         return merged
     
+    def _merge_best_practice_issues(
+        self,
+        llm_issues: list[BestPracticeIssue]
+    ) -> list[BestPracticeIssue]:
+        """
+        Deduplicate best-practice issues (LLM only, one run per diff chunk, P2-07)
+
+        Args:
+            llm_issues: Issues from LLM analysis
+
+        Returns:
+            Deduplicated list in first-seen order
+        """
+        merged: list[BestPracticeIssue] = []
+
+        for llm_issue in llm_issues:
+            is_duplicate = False
+
+            for existing in merged:
+                if (existing.file == llm_issue.file and
+                    existing.line_number == llm_issue.line_number and
+                    self._titles_similar(existing.title, llm_issue.title)):
+                    is_duplicate = True
+                    # If a later chunk rated it higher, update
+                    if self._severity_higher(llm_issue.severity, existing.severity):
+                        existing.severity = llm_issue.severity
+                        existing.recommendation = llm_issue.recommendation
+                    break
+
+            if not is_duplicate:
+                merged.append(llm_issue)
+
+        return merged
+
     def _titles_similar(self, title1: str, title2: str) -> bool:
         """
         Check if two issue titles are similar (fuzzy matching)

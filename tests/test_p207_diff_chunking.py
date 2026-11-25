@@ -18,6 +18,8 @@ from app.llm.errors import LLMOutputError, LLMRateLimitError
 from app.models.analysis import (
     AnalysisStatus,
     ApprovalRecommendation,
+    BestPracticeIssue,
+    BestPracticesReport,
     SecurityIssue,
     SecurityReport,
 )
@@ -681,6 +683,76 @@ class TestCoverageCountsOnlyReviewedParts:
         assert result.diff_truncated is False
         assert not any("characters in" in r for r in result.incomplete_reasons)
         assert result.status == AnalysisStatus.INCOMPLETE
+
+
+class TestBestPracticeDuplicates:
+    """S2: best-practice steps run once per part, so repeats must be merged."""
+
+    @staticmethod
+    def finding(title="Add unit tests for new code", file="early.py", line=None, severity="low"):
+        return BestPracticeIssue(
+            category="testing",
+            severity=severity,
+            title=title,
+            description="d",
+            file=file,
+            line_number=line,
+            recommendation=f"r-{severity}",
+        )
+
+    @staticmethod
+    async def review(diff, per_call):
+        """Run a review where best-practice call N returns per_call(N)."""
+        analyzer, github, prompts = analyzer_over(diff)
+        client = analyzer.llm_service.client
+        inner = client.generate.side_effect
+
+        async def generate(role, prompt, **kwargs):
+            out = await inner(role, prompt, **kwargs)
+            if role == Role.BEST_PRACTICES:
+                findings = per_call(len(prompts[role]))
+                return LLMResult(
+                    output=BestPracticesReport(findings=findings), usage=out.usage, model=out.model
+                )
+            return out
+
+        client.generate.side_effect = generate
+        result = await run(analyzer, github)
+        return result, len(prompts[Role.BEST_PRACTICES])
+
+    @pytest.mark.asyncio
+    async def test_the_same_finding_from_several_parts_appears_once(self):
+        diff = "".join(file_diff(f"f{i}.py", 150) for i in range(6))
+
+        result, calls = await self.review(diff, lambda _: [self.finding()])
+
+        assert calls > 1
+        assert [i.title for i in result.best_practice_findings] == ["Add unit tests for new code"]
+
+    @pytest.mark.asyncio
+    async def test_the_higher_severity_of_two_duplicates_is_kept(self):
+        severities = {1: "low", 2: "high"}
+
+        result, calls = await self.review(
+            LONG_DIFF, lambda n: [self.finding(severity=severities[n])]
+        )
+
+        assert calls == 2
+        [issue] = result.best_practice_findings
+        assert (issue.severity, issue.recommendation) == ("high", "r-high")
+
+    @pytest.mark.asyncio
+    async def test_findings_that_differ_by_file_line_or_title_are_all_kept(self):
+        distinct = [
+            self.finding(),
+            self.finding(file="late.py"),
+            self.finding(line=7),
+            self.finding(title="Rename the unclear variable"),
+        ]
+
+        result, _ = await self.review(LONG_DIFF, lambda _: distinct)
+
+        assert len(result.best_practice_findings) == len(distinct)
 
 
 class TestConfig:
