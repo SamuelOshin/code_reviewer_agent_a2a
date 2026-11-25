@@ -77,3 +77,6 @@ docker-compose
 .claude/worktrees/
 .mypy_cache/
 .ruff_cache/
+
+# Eval runs; committed baselines live in evals/baselines/
+evals/results/
