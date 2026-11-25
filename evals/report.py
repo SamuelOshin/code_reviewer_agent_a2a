@@ -48,7 +48,12 @@ def _case_row(result: CaseResult) -> dict:
         "fn": score.fn,
         "duplicates": score.duplicates,
         "matched": [
-            {"label": m.label_id, **_finding(result, m.finding_index)} for m in score.matches
+            {
+                "label": m.label_id,
+                "without_line": m.without_line,
+                **_finding(result, m.finding_index),
+            }
+            for m in score.matches
         ],
         "missed": list(score.missed),
         "false_positives": [_finding(result, i) for i in score.false_positives],
@@ -151,6 +156,7 @@ def _headline_rows(report: dict) -> list[tuple[str, str]]:
         ("Precision", _percent(overall["precision"])),
         ("Recall", _percent(overall["recall"])),
         ("TP / FP / FN", f"{overall['tp']} / {overall['fp']} / {overall['fn']}"),
+        ("TP matched without a line", str(overall["matched_without_line"])),
         ("Duplicate reports (in FP)", str(overall["duplicates"])),
         (
             "Clean-case false-positive rate",

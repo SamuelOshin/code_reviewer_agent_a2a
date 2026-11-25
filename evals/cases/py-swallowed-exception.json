@@ -20,9 +20,14 @@
       "keywords": [
         "except",
         "swallow",
+        "swallows",
+        "swallowed",
+        "swallowing",
         "error handling",
         "silent",
-        "exception"
+        "silently",
+        "exception",
+        "exceptions"
       ]
     }
   ]

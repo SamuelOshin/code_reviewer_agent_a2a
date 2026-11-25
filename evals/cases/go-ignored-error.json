@@ -19,12 +19,18 @@
       ],
       "keywords": [
         "ignored",
+        "ignores",
+        "ignoring",
         "unchecked",
         "discard",
+        "discards",
+        "discarded",
+        "discarding",
         "unhandled",
         "not handled",
         "error handling",
-        "swallow"
+        "swallow",
+        "swallowed"
       ]
     }
   ]

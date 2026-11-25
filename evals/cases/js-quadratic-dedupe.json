@@ -20,10 +20,12 @@
       "keywords": [
         "quadratic",
         "o(n",
+        "o(n\u00b2",
         "nested",
         "complexity",
         "linear search",
         "lookup",
+        "lookups",
         "hash map"
       ]
     }

@@ -19,9 +19,14 @@
       ],
       "keywords": [
         "concat",
+        "concatenation",
+        "concatenating",
+        "concatenates",
+        "concatenated",
         "stringbuilder",
         "string building",
-        "o(n"
+        "o(n",
+        "o(n\u00b2"
       ]
     }
   ]

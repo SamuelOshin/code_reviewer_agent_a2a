@@ -21,6 +21,7 @@
         "traversal",
         "CWE-22",
         "arbitrary file",
+        "arbitrary files",
         "path injection"
       ]
     }

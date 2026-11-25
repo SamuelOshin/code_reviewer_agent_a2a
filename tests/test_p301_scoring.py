@@ -1,5 +1,7 @@
 """P3-01: the eval scorer (matching rule and metric definitions in evals/scoring.py)."""
 
+import pytest
+
 from evals.scoring import CaseOutcome, Finding, Label, aggregate, score_case
 
 NO_APPROVAL = ("approve", "approve_with_suggestions")
@@ -81,6 +83,60 @@ class TestMatching:
         no_line = finding(line=None, title="Bare except hides errors")
         assert score_case(outcome([label(keywords=("except",))], [no_line])).tp == 1
         assert score_case(outcome([label()], [no_line])).tp == 0
+
+    @pytest.mark.parametrize(
+        "keyword,title",
+        [
+            ("sql", "Missing NoSQL index hint"),
+            ("sql", "Use sqlalchemy session"),
+            ("sql", "The sql_injection rule"),
+            ("eval", "Retrieval is slow"),
+            ("CWE-89", "CWE-890"),
+        ],
+    )
+    def test_a_keyword_inside_another_word_does_not_match(self, keyword, title):
+        for line in (10, None):
+            found = finding(line=line, title=title)
+            assert score_case(outcome([label(keywords=(keyword,))], [found])).tp == 0, line
+
+    @pytest.mark.parametrize(
+        "keyword,title",
+        [
+            ("sql", "SQL injection"),
+            ("sql", "Raw (SQL) query"),
+            ("n+1", "N+1 query problem"),
+            ("o(n", "O(n) lookup in a loop"),
+            ("os.system", "Calls os.system() with input"),
+            ("event loop", "Blocks the Event Loop."),
+        ],
+    )
+    def test_a_whole_word_or_phrase_matches(self, keyword, title):
+        found = finding(title=title)
+        assert score_case(outcome([label(keywords=(keyword,))], [found])).tp == 1
+
+    def test_matches_without_a_line_are_counted_apart(self):
+        labels = [
+            label("L1", keywords=("sql",)),
+            label("L2", "performance", keywords=("loop",)),
+        ]
+        findings = [
+            finding(line=None, title="SQL injection"),
+            finding("performance", title="Query in a loop"),
+        ]
+        score = score_case(outcome(labels, findings))
+        assert [m.without_line for m in score.matches] == [True, False]
+        metrics = aggregate([score])
+        assert metrics["overall"]["tp"] == 2
+        assert metrics["overall"]["matched_without_line"] == 1
+        assert metrics["by_category"]["security"]["matched_without_line"] == 1
+        assert metrics["by_category"]["performance"]["matched_without_line"] == 0
+
+    def test_a_finding_with_a_line_is_preferred_over_one_without(self):
+        want = label(keywords=("sql",))
+        findings = [finding(line=None, title="SQL injection"), finding(title="SQL injection")]
+        for order in (findings, findings[::-1]):
+            score = score_case(outcome([want], order))
+            assert [m.without_line for m in score.matches] == [False]
 
     def test_matching_is_one_to_one_and_extra_reports_are_false_positives(self):
         score = score_case(outcome([label()], [finding(), finding(title="Same again")]))

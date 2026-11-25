@@ -25,6 +25,7 @@
       ],
       "keywords": [
         "sql",
+        "sqli",
         "CWE-89"
       ]
     }

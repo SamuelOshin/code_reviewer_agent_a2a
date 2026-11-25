@@ -15,6 +15,7 @@ from evals import harness, run
 from evals.dataset import CASES_DIR, DatasetError, fingerprint, load_cases
 from evals.fake import FakeClient
 from evals.report import build_report, compare_markdown, summary_markdown
+from evals.scoring import Finding, matches
 
 NO_APPROVAL = {"approve", "approve_with_suggestions"}
 
@@ -70,6 +71,13 @@ class TestDataset:
         text = "".join(c.diff for c in cases if not c.labels)
         for trap in ("model.eval()", "VERSION.exec(", "open(config_path"):
             assert trap in text, trap
+
+    def test_every_label_title_hits_its_own_keywords(self, cases):
+        # A keyword list that rejects the obvious wording would under-score every model
+        for case in cases:
+            for item in case.labels:
+                found = Finding(item.category, item.file, None, item.title)
+                assert matches(found, item, 2), (case.id, item.title)
 
     def test_fingerprint_changes_with_the_content(self, cases):
         assert fingerprint(cases) == fingerprint(list(reversed(cases)))

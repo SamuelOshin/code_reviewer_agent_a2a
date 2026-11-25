@@ -9,12 +9,16 @@ A finding matches a label when all of these hold:
 2. Same file path (a leading `./`, or the `a/` / `b/` of a diff path, is ignored).
 3. Line: the finding's line is within `line_tolerance` lines (default 2) of the
    label's inclusive line range.
-4. Keywords: if the label lists keywords, at least one appears (case-insensitive
-   substring) in the finding's title, description or CWE id.
+4. Keywords: if the label lists keywords, at least one appears in the finding's title,
+   description or CWE id as a whole word or phrase, ignoring case: no letter, digit or
+   underscore directly before or after it. "sql" matches "SQL injection" but not
+   "NoSQL" or "sqlalchemy", so each label lists the word forms it accepts.
 
 A finding with no line number matches only a label that has keywords, and only through
-one of them. Matching is one to one, and as many labels as possible are matched
-(maximum bipartite matching), so the result does not depend on finding order.
+one of them. These matches are weaker evidence, so they are also counted as
+`matched_without_line`. Matching is one to one, and as many labels as possible are
+matched (maximum bipartite matching), preferring findings that give a line, so the
+counts do not depend on finding order.
 
 Each matched pair is a true positive (TP). Every other finding is a false positive
 (FP), including a second report of an already matched bug; those are also counted as
@@ -39,6 +43,7 @@ Metrics
   false positive and the verdict constraint, if any, holds.
 """
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -89,6 +94,7 @@ class CaseOutcome:
 class Match:
     label_id: str
     finding_index: int
+    without_line: bool = False
 
 
 @dataclass(frozen=True)
@@ -131,12 +137,18 @@ def _same_file(reported: str, labelled: str) -> bool:
     return reported in (labelled, f"a/{labelled}", f"b/{labelled}")
 
 
+def _mentions(text: str, keyword: str) -> bool:
+    """Whether `keyword` is in `text` as a whole word or phrase, ignoring case."""
+    pattern = rf"(?<!\w){re.escape(keyword.casefold())}(?!\w)"
+    return re.search(pattern, text) is not None
+
+
 def matches(finding: Finding, label: Label, tolerance: int) -> bool:
     """Whether a finding satisfies a label (see the module docstring)."""
     if finding.category != label.category or not _same_file(finding.file, label.file):
         return False
     text = " ".join((finding.title, finding.description, finding.cwe_id or "")).casefold()
-    keyword_hit = any(word.casefold() in text for word in label.keywords)
+    keyword_hit = any(_mentions(text, word) for word in label.keywords)
     if finding.line is None:
         return keyword_hit
     if not label.start - tolerance <= finding.line <= label.end + tolerance:
@@ -167,13 +179,15 @@ def _maximum_matching(candidates: list[list[int]]) -> dict[int, int]:
 
 
 def score_case(outcome: CaseOutcome, line_tolerance: int = DEFAULT_LINE_TOLERANCE) -> CaseScore:
+    # Findings with a line are tried first, so a line-less one is used only if needed
+    order = sorted(range(len(outcome.findings)), key=lambda i: outcome.findings[i].line is None)
     candidates = [
-        [i for i, f in enumerate(outcome.findings) if matches(f, label, line_tolerance)]
+        [i for i in order if matches(outcome.findings[i], label, line_tolerance)]
         for label in outcome.labels
     ]
     owner = _maximum_matching(candidates)
     found = tuple(
-        Match(outcome.labels[label].id, finding)
+        Match(outcome.labels[label].id, finding, outcome.findings[finding].line is None)
         for finding, label in sorted(owner.items(), key=lambda item: item[1])
     )
     matched_ids = {m.label_id for m in found}
@@ -202,16 +216,20 @@ def _ratio(numerator: int, denominator: int) -> float | None:
 
 def _counts(scores: Sequence[CaseScore], category: str | None) -> dict:
     """TP, FP, FN, precision and recall, for one category or all of them."""
-    tp = fp = fn = 0
+    tp = fp = fn = without_line = 0
     for score in scores:
         label_category = {label.id: label.category for label in score.outcome.labels}
         tp += sum(category in (None, label_category[m.label_id]) for m in score.matches)
+        without_line += sum(
+            m.without_line and category in (None, label_category[m.label_id]) for m in score.matches
+        )
         fn += sum(category in (None, label_category[i]) for i in score.missed)
         fp += sum(
             category in (None, score.outcome.findings[i].category) for i in score.false_positives
         )
     return {
         "tp": tp,
+        "matched_without_line": without_line,
         "fp": fp,
         "fn": fn,
         "precision": _ratio(tp, tp + fp),

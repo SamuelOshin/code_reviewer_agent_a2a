@@ -22,7 +22,11 @@
       ],
       "keywords": [
         "yaml",
-        "deserial",
+        "deserialization",
+        "deserialisation",
+        "deserialize",
+        "deserializes",
+        "deserializing",
         "CWE-502"
       ]
     }
