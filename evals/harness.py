@@ -51,8 +51,12 @@ class RecordingClient:
         return result
 
     def usage(self) -> dict:
-        """Totals over the calls. A call that failed reports no tokens or cost.
+        """Totals over the calls.
 
+        A call that raised reports no tokens or cost, though the provider may have
+        billed it (output that failed validation twice, a timeout): neither the model
+        layer's error types nor the library errors behind them carry its usage. With
+        any failed call the tokens and cost are therefore only a lower bound.
         `cost_usd` is null when any returned call had an unknown price: a partial sum
         would make that model look cheaper than it is.
         """
@@ -68,6 +72,7 @@ class RecordingClient:
             "cost_usd": None if unknown else known,
             "known_cost_usd": known,
             "unknown_cost_calls": unknown,
+            "cost_is_lower_bound": bool(self.failed),
         }
 
 

@@ -226,6 +226,14 @@ class TestFailures:
         assert not any(r.score.passed for r in results)
         assert results[0].usage["failed_calls"] == results[0].usage["calls"] > 0
         assert results[0].incomplete_reasons
+        assert results[0].usage["cost_is_lower_bound"] is True
+        report = build_report(results, picked, "llm", {})
+        assert report["usage"]["cost_is_lower_bound"] is True
+        fine = build_report([], picked, "rules", {})
+        assert fine["usage"]["cost_is_lower_bound"] is False
+        for pair in ([("a", report), ("b", fine)], [("b", fine), ("a", report)]):
+            assert "a: cost and tokens are a lower bound" in compare_markdown(pair)
+        assert "lower bound" not in compare_markdown([("b", fine), ("c", fine)])
 
     @pytest.mark.asyncio
     async def test_a_pipeline_crash_is_one_error_case_not_a_crashed_run(self, cases, monkeypatch):

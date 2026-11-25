@@ -77,6 +77,7 @@ def _usage_totals(results: list[CaseResult]) -> dict:
     totals["model_latency_ms"] = round(sum(u["model_latency_ms"] for u in rows), 1)
     totals["cost_usd"] = None if totals["unknown_cost_calls"] else known
     totals["known_cost_usd"] = known
+    totals["cost_is_lower_bound"] = any(u["cost_is_lower_bound"] for u in rows)
     return totals
 
 
@@ -120,10 +121,25 @@ def _percent(value: float | None) -> str:
     return "n/a" if value is None else f"{value:.1%}"
 
 
+def _at_least(usage: dict) -> str:
+    """Marks a total that leaves out calls which may have been billed."""
+    return "≥ " if usage["cost_is_lower_bound"] else ""
+
+
 def _cost(usage: dict) -> str:
     if usage["cost_usd"] is not None:
-        return f"${usage['cost_usd']:.4f}"
-    return f"unknown (known part ${usage['known_cost_usd']:.4f})"
+        return f"{_at_least(usage)}${usage['cost_usd']:.4f}"
+    return f"unknown (known part {_at_least(usage)}${usage['known_cost_usd']:.4f})"
+
+
+def _total_cost(usage: dict) -> str:
+    if not usage["cost_is_lower_bound"]:
+        return _cost(usage)
+    return f"{_cost(usage)} ({usage['failed_calls']} failed call(s) not counted)"
+
+
+def _tokens(usage: dict) -> str:
+    return f"{_at_least(usage)}{usage['input_tokens']:,} / {usage['output_tokens']:,}"
 
 
 def _seconds(value: float | None) -> str:
@@ -200,8 +216,8 @@ def _headline_rows(report: dict) -> list[tuple[str, str]]:
         ]
     rows += [
         ("Model calls (failed)", f"{usage['calls']} ({usage['failed_calls']})"),
-        ("Tokens in / out", f"{usage['input_tokens']:,} / {usage['output_tokens']:,}"),
-        ("Cost", _cost(usage)),
+        ("Tokens in / out", _tokens(usage)),
+        ("Cost", _total_cost(usage)),
         ("Latency total", _seconds(report["latency_seconds"]["total"])),
         (
             "Latency per case (mean / median / max)",
@@ -274,7 +290,7 @@ def summary_markdown(report: dict) -> str:
                     else "pass ignoring duplicates"
                     if c["passed_ignoring_duplicates"]
                     else "fail",
-                    f"{c['usage']['input_tokens']:,} / {c['usage']['output_tokens']:,}",
+                    _tokens(c["usage"]),
                     _cost(c["usage"]),
                     _seconds(c["latency_seconds"]),
                 ]
@@ -320,6 +336,11 @@ def compare_markdown(reports: list[tuple[str, dict]]) -> str:
         unfinished = cases["total"] - cases["complete"]
         if unfinished:
             warnings.append(f"{_safe(name)}: {unfinished} review(s) did not complete.")
+        if report["usage"]["cost_is_lower_bound"]:
+            warnings.append(
+                f"{_safe(name)}: cost and tokens are a lower bound "
+                f"({report['usage']['failed_calls']} failed call(s) not counted)."
+            )
         if report["mode"] == "fake":
             warnings.append(f"{_safe(name)}: scripted model, not a quality result.")
 
