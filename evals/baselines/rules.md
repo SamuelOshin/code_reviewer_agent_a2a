@@ -1,6 +1,6 @@
 # Eval run: rules
 
-2026-11-25T18:42:42+00:00 · 30 cases · dataset `6fccf2daf6803613` · line tolerance 2
+2026-11-25T21:10:51+00:00 · 30 cases · dataset `112765e7041fdf33` · line tolerance 2
 
 > `rules` mode: rule checks only. No model was called.
 
@@ -9,22 +9,33 @@
 | Mode | rules |
 | Model(s) | rules-only |
 | Answered by | no model |
-| Cases passed | 15 / 30 |
+| Cases passed (strict) | 15 / 30 |
+| Cases passed ignoring duplicates | 15 / 30 |
 | Incomplete / failed / error | 0 / 0 / 0 |
-| Precision | 64.3% |
+| Precision (strict) | 64.3% |
+| Precision excluding duplicates | 64.3% |
 | Recall | 42.9% |
 | TP / FP / FN | 9 / 5 / 12 |
-| Duplicate reports (in FP) | 0 |
+| TP matched without a line | 0 |
+| Duplicate reports (counted in strict FP) | 0 |
+| FP at high severity or above | 4 |
 | Clean-case false-positive rate | 33.3% (3 of 9 evaluated, 9 clean) |
+| Clean-case FP rate, high or above | 22.2% (2 of 9 evaluated) |
 | Verdict accuracy | 72.2% (13 of 18) |
-| security: precision / recall / clean FP rate | 77.8% / 53.8% / 11.1% |
-| performance: precision / recall / clean FP rate | 40.0% / 40.0% / 22.2% |
-| best_practice: precision / recall / clean FP rate | n/a / 0.0% / 0.0% |
+| security: precision (strict / excl. duplicates) / recall | 77.8% / 77.8% / 53.8% |
+| security: FP high+ / clean FP rate / clean FP rate high+ | 2 / 11.1% / 11.1% |
+| performance: precision (strict / excl. duplicates) / recall | 40.0% / 40.0% / 40.0% |
+| performance: FP high+ / clean FP rate / clean FP rate high+ | 2 / 22.2% / 11.1% |
+| best_practice: precision (strict / excl. duplicates) / recall | n/a / n/a / 0.0% |
+| best_practice: FP high+ / clean FP rate / clean FP rate high+ | 0 / 0.0% / 0.0% |
+| Model findings only: recall / passed / ignoring duplicates | n/a (no model) |
+| Rules only, same cases: recall / passed / ignoring duplicates | n/a (no model) |
+| Combined minus rules only: recall / passed / ignoring duplicates | n/a (no model) |
 | Model calls (failed) | 0 (0) |
 | Tokens in / out | 0 / 0 |
 | Cost | $0.0000 |
-| Latency total | 0.14 s |
-| Latency per case (mean / median / max) | 0.01 s / 0.00 s / 0.08 s |
+| Latency total | 0.12 s |
+| Latency per case (mean / median / max) | 0.00 s / 0.00 s / 0.06 s |
 
 ## By case type
 
@@ -58,7 +69,7 @@
 | js-eval-user-input | complete | reject | 1 | 0 | 0 | pass | 0 / 0 | $0.0000 | 0.00 s |
 | js-quadratic-dedupe | complete | approve | 0 | 0 | 1 | fail | 0 / 0 | $0.0000 | 0.00 s |
 | js-xss-innerhtml | complete | approve_with_suggestions | 1 | 0 | 0 | pass | 0 / 0 | $0.0000 | 0.00 s |
-| large-py-late-authz-bug | complete | approve (not allowed) | 0 | 0 | 1 | fail | 0 / 0 | $0.0000 | 0.08 s |
+| large-py-late-authz-bug | complete | approve (not allowed) | 0 | 0 | 1 | fail | 0 / 0 | $0.0000 | 0.06 s |
 | py-blocking-sleep-async | complete | approve_with_suggestions | 1 | 0 | 0 | pass | 0 / 0 | $0.0000 | 0.00 s |
 | py-command-injection | complete | reject | 1 | 0 | 0 | pass | 0 / 0 | $0.0000 | 0.00 s |
 | py-hardcoded-secret | complete | reject | 1 | 0 | 0 | pass | 0 / 0 | $0.0000 | 0.00 s |

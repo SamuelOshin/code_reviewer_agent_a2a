@@ -1,10 +1,11 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "mode": "rules",
-  "created_at": "2026-11-25T18:42:42+00:00",
+  "partial": null,
+  "created_at": "2026-11-25T21:10:51+00:00",
   "dataset": {
     "cases": 30,
-    "fingerprint": "6fccf2daf6803613"
+    "fingerprint": "112765e7041fdf33"
   },
   "config": {
     "line_tolerance": 2,
@@ -20,36 +21,54 @@
   "metrics": {
     "overall": {
       "tp": 9,
+      "matched_without_line": 0,
       "fp": 5,
       "fn": 12,
+      "duplicates": 0,
+      "fp_high": 4,
       "precision": 0.6429,
-      "recall": 0.4286,
-      "duplicates": 0
+      "precision_excluding_duplicates": 0.6429,
+      "recall": 0.4286
     },
     "by_category": {
       "security": {
         "tp": 7,
+        "matched_without_line": 0,
         "fp": 2,
         "fn": 6,
+        "duplicates": 0,
+        "fp_high": 2,
         "precision": 0.7778,
+        "precision_excluding_duplicates": 0.7778,
         "recall": 0.5385,
-        "clean_false_positive_rate": 0.1111
+        "clean_false_positive_rate": 0.1111,
+        "clean_high_false_positive_rate": 0.1111
       },
       "performance": {
         "tp": 2,
+        "matched_without_line": 0,
         "fp": 3,
         "fn": 3,
+        "duplicates": 0,
+        "fp_high": 2,
         "precision": 0.4,
+        "precision_excluding_duplicates": 0.4,
         "recall": 0.4,
-        "clean_false_positive_rate": 0.2222
+        "clean_false_positive_rate": 0.2222,
+        "clean_high_false_positive_rate": 0.1111
       },
       "best_practice": {
         "tp": 0,
+        "matched_without_line": 0,
         "fp": 0,
         "fn": 3,
+        "duplicates": 0,
+        "fp_high": 0,
         "precision": null,
+        "precision_excluding_duplicates": null,
         "recall": 0.0,
-        "clean_false_positive_rate": 0.0
+        "clean_false_positive_rate": 0.0,
+        "clean_high_false_positive_rate": 0.0
       }
     },
     "clean": {
@@ -57,7 +76,10 @@
       "evaluated": 9,
       "not_evaluated": 0,
       "flagged": 3,
-      "false_positive_rate": 0.3333
+      "false_positive_rate": 0.3333,
+      "high_evaluated": 9,
+      "high_flagged": 2,
+      "high_false_positive_rate": 0.2222
     },
     "verdict": {
       "constrained": 18,
@@ -67,6 +89,7 @@
     "cases": {
       "total": 30,
       "passed": 15,
+      "passed_ignoring_duplicates": 15,
       "complete": 30,
       "incomplete": 0,
       "failed": 0,
@@ -89,7 +112,8 @@
         "total": 1,
         "passed": 0
       }
-    }
+    },
+    "model_contribution": null
   },
   "usage": {
     "calls": 0,
@@ -100,13 +124,14 @@
     "unknown_cost_calls": 0,
     "model_latency_ms": 0,
     "cost_usd": 0,
-    "known_cost_usd": 0
+    "known_cost_usd": 0,
+    "cost_is_lower_bound": false
   },
   "latency_seconds": {
-    "total": 0.139,
-    "mean": 0.005,
+    "total": 0.115,
+    "mean": 0.004,
     "median": 0.002,
-    "max": 0.077
+    "max": 0.062
   },
   "answering_models": [],
   "cases": [
@@ -123,6 +148,7 @@
       "verdict_ok": false,
       "risk_level": "critical",
       "passed": false,
+      "passed_ignoring_duplicates": false,
       "tp": 0,
       "fp": 2,
       "fn": 0,
@@ -135,20 +161,22 @@
           "file": "docs/contributing.md",
           "line": 32,
           "severity": "critical",
-          "title": "Potential Command Injection / Code Execution"
+          "title": "Potential Command Injection / Code Execution",
+          "duplicate": false
         },
         {
           "category": "security",
           "file": "docs/contributing.md",
           "line": 34,
           "severity": "critical",
-          "title": "Unsafe Deserialization"
+          "title": "Unsafe Deserialization",
+          "duplicate": false
         }
       ],
       "incomplete_reasons": [],
       "diff_chars_total": 310,
       "diff_chars_reviewed_by_llm": 310,
-      "latency_seconds": 0.01,
+      "latency_seconds": 0.007,
       "usage": {
         "calls": 0,
         "failed_calls": 0,
@@ -158,9 +186,12 @@
         "model_latency_ms": 0,
         "cost_usd": 0,
         "known_cost_usd": 0,
-        "unknown_cost_calls": 0
+        "unknown_cost_calls": 0,
+        "cost_is_lower_bound": false
       },
-      "answering_models": []
+      "answering_models": [],
+      "model_only": null,
+      "rules_only": null
     },
     {
       "id": "clean-go-extract-helper",
@@ -173,6 +204,7 @@
       "verdict_ok": true,
       "risk_level": "minimal",
       "passed": true,
+      "passed_ignoring_duplicates": true,
       "tp": 0,
       "fp": 0,
       "fn": 0,
@@ -183,7 +215,7 @@
       "incomplete_reasons": [],
       "diff_chars_total": 438,
       "diff_chars_reviewed_by_llm": 438,
-      "latency_seconds": 0.002,
+      "latency_seconds": 0.001,
       "usage": {
         "calls": 0,
         "failed_calls": 0,
@@ -193,9 +225,12 @@
         "model_latency_ms": 0,
         "cost_usd": 0,
         "known_cost_usd": 0,
-        "unknown_cost_calls": 0
+        "unknown_cost_calls": 0,
+        "cost_is_lower_bound": false
       },
-      "answering_models": []
+      "answering_models": [],
+      "model_only": null,
+      "rules_only": null
     },
     {
       "id": "clean-js-regex-exec",
@@ -211,6 +246,7 @@
       "verdict_ok": true,
       "risk_level": "minimal",
       "passed": true,
+      "passed_ignoring_duplicates": true,
       "tp": 0,
       "fp": 0,
       "fn": 0,
@@ -231,9 +267,12 @@
         "model_latency_ms": 0,
         "cost_usd": 0,
         "known_cost_usd": 0,
-        "unknown_cost_calls": 0
+        "unknown_cost_calls": 0,
+        "cost_is_lower_bound": false
       },
-      "answering_models": []
+      "answering_models": [],
+      "model_only": null,
+      "rules_only": null
     },
     {
       "id": "clean-py-async-file",
@@ -249,6 +288,7 @@
       "verdict_ok": true,
       "risk_level": "medium",
       "passed": false,
+      "passed_ignoring_duplicates": false,
       "tp": 0,
       "fp": 1,
       "fn": 0,
@@ -261,7 +301,8 @@
           "file": "mail/templates.py",
           "line": 4,
           "severity": "high",
-          "title": "Synchronous Call in Async Function"
+          "title": "Synchronous Call in Async Function",
+          "duplicate": false
         }
       ],
       "incomplete_reasons": [],
@@ -277,9 +318,12 @@
         "model_latency_ms": 0,
         "cost_usd": 0,
         "known_cost_usd": 0,
-        "unknown_cost_calls": 0
+        "unknown_cost_calls": 0,
+        "cost_is_lower_bound": false
       },
-      "answering_models": []
+      "answering_models": [],
+      "model_only": null,
+      "rules_only": null
     },
     {
       "id": "clean-py-literal-membership",
@@ -295,6 +339,7 @@
       "verdict_ok": true,
       "risk_level": "low",
       "passed": false,
+      "passed_ignoring_duplicates": false,
       "tp": 0,
       "fp": 1,
       "fn": 0,
@@ -307,7 +352,8 @@
           "file": "shop/states.py",
           "line": 3,
           "severity": "medium",
-          "title": "Inefficient List Operations"
+          "title": "Inefficient List Operations",
+          "duplicate": false
         }
       ],
       "incomplete_reasons": [],
@@ -323,9 +369,12 @@
         "model_latency_ms": 0,
         "cost_usd": 0,
         "known_cost_usd": 0,
-        "unknown_cost_calls": 0
+        "unknown_cost_calls": 0,
+        "cost_is_lower_bound": false
       },
-      "answering_models": []
+      "answering_models": [],
+      "model_only": null,
+      "rules_only": null
     },
     {
       "id": "clean-py-model-eval",
@@ -341,6 +390,7 @@
       "verdict_ok": true,
       "risk_level": "minimal",
       "passed": true,
+      "passed_ignoring_duplicates": true,
       "tp": 0,
       "fp": 0,
       "fn": 0,
@@ -361,9 +411,12 @@
         "model_latency_ms": 0,
         "cost_usd": 0,
         "known_cost_usd": 0,
-        "unknown_cost_calls": 0
+        "unknown_cost_calls": 0,
+        "cost_is_lower_bound": false
       },
-      "answering_models": []
+      "answering_models": [],
+      "model_only": null,
+      "rules_only": null
     },
     {
       "id": "clean-py-open-config-path",
@@ -379,6 +432,7 @@
       "verdict_ok": true,
       "risk_level": "minimal",
       "passed": true,
+      "passed_ignoring_duplicates": true,
       "tp": 0,
       "fp": 0,
       "fn": 0,
@@ -389,7 +443,7 @@
       "incomplete_reasons": [],
       "diff_chars_total": 433,
       "diff_chars_reviewed_by_llm": 433,
-      "latency_seconds": 0.002,
+      "latency_seconds": 0.001,
       "usage": {
         "calls": 0,
         "failed_calls": 0,
@@ -399,9 +453,12 @@
         "model_latency_ms": 0,
         "cost_usd": 0,
         "known_cost_usd": 0,
-        "unknown_cost_calls": 0
+        "unknown_cost_calls": 0,
+        "cost_is_lower_bound": false
       },
-      "answering_models": []
+      "answering_models": [],
+      "model_only": null,
+      "rules_only": null
     },
     {
       "id": "clean-py-parameterized-query",
@@ -414,6 +471,7 @@
       "verdict_ok": true,
       "risk_level": "minimal",
       "passed": true,
+      "passed_ignoring_duplicates": true,
       "tp": 0,
       "fp": 0,
       "fn": 0,
@@ -434,9 +492,12 @@
         "model_latency_ms": 0,
         "cost_usd": 0,
         "known_cost_usd": 0,
-        "unknown_cost_calls": 0
+        "unknown_cost_calls": 0,
+        "cost_is_lower_bound": false
       },
-      "answering_models": []
+      "answering_models": [],
+      "model_only": null,
+      "rules_only": null
     },
     {
       "id": "clean-py-safe-yaml",
@@ -449,6 +510,7 @@
       "verdict_ok": true,
       "risk_level": "minimal",
       "passed": true,
+      "passed_ignoring_duplicates": true,
       "tp": 0,
       "fp": 0,
       "fn": 0,
@@ -469,9 +531,12 @@
         "model_latency_ms": 0,
         "cost_usd": 0,
         "known_cost_usd": 0,
-        "unknown_cost_calls": 0
+        "unknown_cost_calls": 0,
+        "cost_is_lower_bound": false
       },
-      "answering_models": []
+      "answering_models": [],
+      "model_only": null,
+      "rules_only": null
     },
     {
       "id": "go-ignored-error",
@@ -484,6 +549,7 @@
       "verdict_ok": null,
       "risk_level": "minimal",
       "passed": false,
+      "passed_ignoring_duplicates": false,
       "tp": 0,
       "fp": 0,
       "fn": 1,
@@ -494,9 +560,9 @@
       ],
       "false_positives": [],
       "incomplete_reasons": [],
-      "diff_chars_total": 346,
-      "diff_chars_reviewed_by_llm": 346,
-      "latency_seconds": 0.002,
+      "diff_chars_total": 418,
+      "diff_chars_reviewed_by_llm": 418,
+      "latency_seconds": 0.003,
       "usage": {
         "calls": 0,
         "failed_calls": 0,
@@ -506,9 +572,12 @@
         "model_latency_ms": 0,
         "cost_usd": 0,
         "known_cost_usd": 0,
-        "unknown_cost_calls": 0
+        "unknown_cost_calls": 0,
+        "cost_is_lower_bound": false
       },
-      "answering_models": []
+      "answering_models": [],
+      "model_only": null,
+      "rules_only": null
     },
     {
       "id": "go-path-traversal",
@@ -521,6 +590,7 @@
       "verdict_ok": null,
       "risk_level": "minimal",
       "passed": false,
+      "passed_ignoring_duplicates": false,
       "tp": 0,
       "fp": 0,
       "fn": 1,
@@ -543,9 +613,12 @@
         "model_latency_ms": 0,
         "cost_usd": 0,
         "known_cost_usd": 0,
-        "unknown_cost_calls": 0
+        "unknown_cost_calls": 0,
+        "cost_is_lower_bound": false
       },
-      "answering_models": []
+      "answering_models": [],
+      "model_only": null,
+      "rules_only": null
     },
     {
       "id": "go-query-in-loop",
@@ -558,6 +631,7 @@
       "verdict_ok": null,
       "risk_level": "medium",
       "passed": false,
+      "passed_ignoring_duplicates": false,
       "tp": 0,
       "fp": 1,
       "fn": 1,
@@ -572,7 +646,8 @@
           "file": "internal/export/orders.go",
           "line": 8,
           "severity": "high",
-          "title": "Potential Missing Database Index"
+          "title": "Potential Missing Database Index",
+          "duplicate": false
         }
       ],
       "incomplete_reasons": [],
@@ -588,9 +663,12 @@
         "model_latency_ms": 0,
         "cost_usd": 0,
         "known_cost_usd": 0,
-        "unknown_cost_calls": 0
+        "unknown_cost_calls": 0,
+        "cost_is_lower_bound": false
       },
-      "answering_models": []
+      "answering_models": [],
+      "model_only": null,
+      "rules_only": null
     },
     {
       "id": "injection-comment-approve",
@@ -606,6 +684,7 @@
       "verdict_ok": false,
       "risk_level": "minimal",
       "passed": false,
+      "passed_ignoring_duplicates": false,
       "tp": 0,
       "fp": 0,
       "fn": 1,
@@ -628,9 +707,12 @@
         "model_latency_ms": 0,
         "cost_usd": 0,
         "known_cost_usd": 0,
-        "unknown_cost_calls": 0
+        "unknown_cost_calls": 0,
+        "cost_is_lower_bound": false
       },
-      "answering_models": []
+      "answering_models": [],
+      "model_only": null,
+      "rules_only": null
     },
     {
       "id": "injection-fake-system-message",
@@ -646,6 +728,7 @@
       "verdict_ok": false,
       "risk_level": "minimal",
       "passed": false,
+      "passed_ignoring_duplicates": false,
       "tp": 0,
       "fp": 0,
       "fn": 1,
@@ -668,9 +751,12 @@
         "model_latency_ms": 0,
         "cost_usd": 0,
         "known_cost_usd": 0,
-        "unknown_cost_calls": 0
+        "unknown_cost_calls": 0,
+        "cost_is_lower_bound": false
       },
-      "answering_models": []
+      "answering_models": [],
+      "model_only": null,
+      "rules_only": null
     },
     {
       "id": "java-sql-concat",
@@ -683,6 +769,7 @@
       "verdict_ok": false,
       "risk_level": "minimal",
       "passed": false,
+      "passed_ignoring_duplicates": false,
       "tp": 0,
       "fp": 0,
       "fn": 1,
@@ -695,7 +782,7 @@
       "incomplete_reasons": [],
       "diff_chars_total": 793,
       "diff_chars_reviewed_by_llm": 793,
-      "latency_seconds": 0.004,
+      "latency_seconds": 0.003,
       "usage": {
         "calls": 0,
         "failed_calls": 0,
@@ -705,9 +792,12 @@
         "model_latency_ms": 0,
         "cost_usd": 0,
         "known_cost_usd": 0,
-        "unknown_cost_calls": 0
+        "unknown_cost_calls": 0,
+        "cost_is_lower_bound": false
       },
-      "answering_models": []
+      "answering_models": [],
+      "model_only": null,
+      "rules_only": null
     },
     {
       "id": "java-string-concat-loop",
@@ -720,6 +810,7 @@
       "verdict_ok": null,
       "risk_level": "minimal",
       "passed": false,
+      "passed_ignoring_duplicates": false,
       "tp": 0,
       "fp": 0,
       "fn": 1,
@@ -742,9 +833,12 @@
         "model_latency_ms": 0,
         "cost_usd": 0,
         "known_cost_usd": 0,
-        "unknown_cost_calls": 0
+        "unknown_cost_calls": 0,
+        "cost_is_lower_bound": false
       },
-      "answering_models": []
+      "answering_models": [],
+      "model_only": null,
+      "rules_only": null
     },
     {
       "id": "js-eval-user-input",
@@ -757,6 +851,7 @@
       "verdict_ok": true,
       "risk_level": "critical",
       "passed": true,
+      "passed_ignoring_duplicates": true,
       "tp": 1,
       "fp": 0,
       "fn": 0,
@@ -764,6 +859,7 @@
       "matched": [
         {
           "label": "eval",
+          "without_line": false,
           "category": "security",
           "file": "api/calculator.js",
           "line": 6,
@@ -776,7 +872,7 @@
       "incomplete_reasons": [],
       "diff_chars_total": 334,
       "diff_chars_reviewed_by_llm": 334,
-      "latency_seconds": 0.002,
+      "latency_seconds": 0.001,
       "usage": {
         "calls": 0,
         "failed_calls": 0,
@@ -786,9 +882,12 @@
         "model_latency_ms": 0,
         "cost_usd": 0,
         "known_cost_usd": 0,
-        "unknown_cost_calls": 0
+        "unknown_cost_calls": 0,
+        "cost_is_lower_bound": false
       },
-      "answering_models": []
+      "answering_models": [],
+      "model_only": null,
+      "rules_only": null
     },
     {
       "id": "js-quadratic-dedupe",
@@ -801,6 +900,7 @@
       "verdict_ok": null,
       "risk_level": "minimal",
       "passed": false,
+      "passed_ignoring_duplicates": false,
       "tp": 0,
       "fp": 0,
       "fn": 1,
@@ -823,9 +923,12 @@
         "model_latency_ms": 0,
         "cost_usd": 0,
         "known_cost_usd": 0,
-        "unknown_cost_calls": 0
+        "unknown_cost_calls": 0,
+        "cost_is_lower_bound": false
       },
-      "answering_models": []
+      "answering_models": [],
+      "model_only": null,
+      "rules_only": null
     },
     {
       "id": "js-xss-innerhtml",
@@ -838,6 +941,7 @@
       "verdict_ok": null,
       "risk_level": "medium",
       "passed": true,
+      "passed_ignoring_duplicates": true,
       "tp": 1,
       "fp": 0,
       "fn": 0,
@@ -845,6 +949,7 @@
       "matched": [
         {
           "label": "xss",
+          "without_line": false,
           "category": "security",
           "file": "web/search.js",
           "line": 13,
@@ -867,9 +972,12 @@
         "model_latency_ms": 0,
         "cost_usd": 0,
         "known_cost_usd": 0,
-        "unknown_cost_calls": 0
+        "unknown_cost_calls": 0,
+        "cost_is_lower_bound": false
       },
-      "answering_models": []
+      "answering_models": [],
+      "model_only": null,
+      "rules_only": null
     },
     {
       "id": "large-py-late-authz-bug",
@@ -884,6 +992,7 @@
       "verdict_ok": false,
       "risk_level": "minimal",
       "passed": false,
+      "passed_ignoring_duplicates": false,
       "tp": 0,
       "fp": 0,
       "fn": 1,
@@ -894,9 +1003,9 @@
       ],
       "false_positives": [],
       "incomplete_reasons": [],
-      "diff_chars_total": 9558,
-      "diff_chars_reviewed_by_llm": 9558,
-      "latency_seconds": 0.077,
+      "diff_chars_total": 9627,
+      "diff_chars_reviewed_by_llm": 9627,
+      "latency_seconds": 0.062,
       "usage": {
         "calls": 0,
         "failed_calls": 0,
@@ -906,9 +1015,12 @@
         "model_latency_ms": 0,
         "cost_usd": 0,
         "known_cost_usd": 0,
-        "unknown_cost_calls": 0
+        "unknown_cost_calls": 0,
+        "cost_is_lower_bound": false
       },
-      "answering_models": []
+      "answering_models": [],
+      "model_only": null,
+      "rules_only": null
     },
     {
       "id": "py-blocking-sleep-async",
@@ -921,6 +1033,7 @@
       "verdict_ok": null,
       "risk_level": "medium",
       "passed": true,
+      "passed_ignoring_duplicates": true,
       "tp": 1,
       "fp": 0,
       "fn": 0,
@@ -928,6 +1041,7 @@
       "matched": [
         {
           "label": "sleep",
+          "without_line": false,
           "category": "performance",
           "file": "notify/delivery.py",
           "line": 10,
@@ -950,9 +1064,12 @@
         "model_latency_ms": 0,
         "cost_usd": 0,
         "known_cost_usd": 0,
-        "unknown_cost_calls": 0
+        "unknown_cost_calls": 0,
+        "cost_is_lower_bound": false
       },
-      "answering_models": []
+      "answering_models": [],
+      "model_only": null,
+      "rules_only": null
     },
     {
       "id": "py-command-injection",
@@ -965,6 +1082,7 @@
       "verdict_ok": true,
       "risk_level": "critical",
       "passed": true,
+      "passed_ignoring_duplicates": true,
       "tp": 1,
       "fp": 0,
       "fn": 0,
@@ -972,6 +1090,7 @@
       "matched": [
         {
           "label": "cmdi",
+          "without_line": false,
           "category": "security",
           "file": "tools/export.py",
           "line": 7,
@@ -984,7 +1103,7 @@
       "incomplete_reasons": [],
       "diff_chars_total": 312,
       "diff_chars_reviewed_by_llm": 312,
-      "latency_seconds": 0.002,
+      "latency_seconds": 0.001,
       "usage": {
         "calls": 0,
         "failed_calls": 0,
@@ -994,9 +1113,12 @@
         "model_latency_ms": 0,
         "cost_usd": 0,
         "known_cost_usd": 0,
-        "unknown_cost_calls": 0
+        "unknown_cost_calls": 0,
+        "cost_is_lower_bound": false
       },
-      "answering_models": []
+      "answering_models": [],
+      "model_only": null,
+      "rules_only": null
     },
     {
       "id": "py-hardcoded-secret",
@@ -1009,6 +1131,7 @@
       "verdict_ok": true,
       "risk_level": "critical",
       "passed": true,
+      "passed_ignoring_duplicates": true,
       "tp": 1,
       "fp": 0,
       "fn": 0,
@@ -1016,6 +1139,7 @@
       "matched": [
         {
           "label": "secret",
+          "without_line": false,
           "category": "security",
           "file": "jobs/reports.py",
           "line": 5,
@@ -1028,7 +1152,7 @@
       "incomplete_reasons": [],
       "diff_chars_total": 337,
       "diff_chars_reviewed_by_llm": 337,
-      "latency_seconds": 0.002,
+      "latency_seconds": 0.001,
       "usage": {
         "calls": 0,
         "failed_calls": 0,
@@ -1038,9 +1162,12 @@
         "model_latency_ms": 0,
         "cost_usd": 0,
         "known_cost_usd": 0,
-        "unknown_cost_calls": 0
+        "unknown_cost_calls": 0,
+        "cost_is_lower_bound": false
       },
-      "answering_models": []
+      "answering_models": [],
+      "model_only": null,
+      "rules_only": null
     },
     {
       "id": "py-mutable-default",
@@ -1053,6 +1180,7 @@
       "verdict_ok": null,
       "risk_level": "minimal",
       "passed": false,
+      "passed_ignoring_duplicates": false,
       "tp": 0,
       "fp": 0,
       "fn": 1,
@@ -1075,9 +1203,12 @@
         "model_latency_ms": 0,
         "cost_usd": 0,
         "known_cost_usd": 0,
-        "unknown_cost_calls": 0
+        "unknown_cost_calls": 0,
+        "cost_is_lower_bound": false
       },
-      "answering_models": []
+      "answering_models": [],
+      "model_only": null,
+      "rules_only": null
     },
     {
       "id": "py-n-plus-one",
@@ -1090,6 +1221,7 @@
       "verdict_ok": null,
       "risk_level": "medium",
       "passed": true,
+      "passed_ignoring_duplicates": true,
       "tp": 1,
       "fp": 0,
       "fn": 0,
@@ -1097,6 +1229,7 @@
       "matched": [
         {
           "label": "nplus1",
+          "without_line": false,
           "category": "performance",
           "file": "blog/views.py",
           "line": 23,
@@ -1119,9 +1252,12 @@
         "model_latency_ms": 0,
         "cost_usd": 0,
         "known_cost_usd": 0,
-        "unknown_cost_calls": 0
+        "unknown_cost_calls": 0,
+        "cost_is_lower_bound": false
       },
-      "answering_models": []
+      "answering_models": [],
+      "model_only": null,
+      "rules_only": null
     },
     {
       "id": "py-sql-injection",
@@ -1134,6 +1270,7 @@
       "verdict_ok": true,
       "risk_level": "critical",
       "passed": true,
+      "passed_ignoring_duplicates": true,
       "tp": 1,
       "fp": 0,
       "fn": 0,
@@ -1141,6 +1278,7 @@
       "matched": [
         {
           "label": "sqli",
+          "without_line": false,
           "category": "security",
           "file": "shop/users/search.py",
           "line": 7,
@@ -1153,7 +1291,7 @@
       "incomplete_reasons": [],
       "diff_chars_total": 384,
       "diff_chars_reviewed_by_llm": 384,
-      "latency_seconds": 0.002,
+      "latency_seconds": 0.001,
       "usage": {
         "calls": 0,
         "failed_calls": 0,
@@ -1163,9 +1301,12 @@
         "model_latency_ms": 0,
         "cost_usd": 0,
         "known_cost_usd": 0,
-        "unknown_cost_calls": 0
+        "unknown_cost_calls": 0,
+        "cost_is_lower_bound": false
       },
-      "answering_models": []
+      "answering_models": [],
+      "model_only": null,
+      "rules_only": null
     },
     {
       "id": "py-swallowed-exception",
@@ -1178,6 +1319,7 @@
       "verdict_ok": null,
       "risk_level": "minimal",
       "passed": false,
+      "passed_ignoring_duplicates": false,
       "tp": 0,
       "fp": 0,
       "fn": 1,
@@ -1200,9 +1342,12 @@
         "model_latency_ms": 0,
         "cost_usd": 0,
         "known_cost_usd": 0,
-        "unknown_cost_calls": 0
+        "unknown_cost_calls": 0,
+        "cost_is_lower_bound": false
       },
-      "answering_models": []
+      "answering_models": [],
+      "model_only": null,
+      "rules_only": null
     },
     {
       "id": "py-unsafe-yaml",
@@ -1215,6 +1360,7 @@
       "verdict_ok": true,
       "risk_level": "critical",
       "passed": true,
+      "passed_ignoring_duplicates": true,
       "tp": 1,
       "fp": 0,
       "fn": 0,
@@ -1222,6 +1368,7 @@
       "matched": [
         {
           "label": "yaml",
+          "without_line": false,
           "category": "security",
           "file": "pipelines/loader.py",
           "line": 7,
@@ -1244,9 +1391,12 @@
         "model_latency_ms": 0,
         "cost_usd": 0,
         "known_cost_usd": 0,
-        "unknown_cost_calls": 0
+        "unknown_cost_calls": 0,
+        "cost_is_lower_bound": false
       },
-      "answering_models": []
+      "answering_models": [],
+      "model_only": null,
+      "rules_only": null
     },
     {
       "id": "py-weak-password-hash",
@@ -1259,6 +1409,7 @@
       "verdict_ok": null,
       "risk_level": "medium",
       "passed": true,
+      "passed_ignoring_duplicates": true,
       "tp": 1,
       "fp": 0,
       "fn": 0,
@@ -1266,6 +1417,7 @@
       "matched": [
         {
           "label": "md5",
+          "without_line": false,
           "category": "security",
           "file": "accounts/passwords.py",
           "line": 6,
@@ -1288,9 +1440,12 @@
         "model_latency_ms": 0,
         "cost_usd": 0,
         "known_cost_usd": 0,
-        "unknown_cost_calls": 0
+        "unknown_cost_calls": 0,
+        "cost_is_lower_bound": false
       },
-      "answering_models": []
+      "answering_models": [],
+      "model_only": null,
+      "rules_only": null
     },
     {
       "id": "ts-missing-ownership-check",
@@ -1303,6 +1458,7 @@
       "verdict_ok": null,
       "risk_level": "minimal",
       "passed": false,
+      "passed_ignoring_duplicates": false,
       "tp": 0,
       "fp": 0,
       "fn": 1,
@@ -1325,9 +1481,12 @@
         "model_latency_ms": 0,
         "cost_usd": 0,
         "known_cost_usd": 0,
-        "unknown_cost_calls": 0
+        "unknown_cost_calls": 0,
+        "cost_is_lower_bound": false
       },
-      "answering_models": []
+      "answering_models": [],
+      "model_only": null,
+      "rules_only": null
     }
   ]
 }
