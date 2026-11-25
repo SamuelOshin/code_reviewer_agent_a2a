@@ -21,13 +21,20 @@ matched (maximum bipartite matching), preferring findings that give a line, so t
 counts do not depend on finding order.
 
 Each matched pair is a true positive (TP). Every other finding is a false positive
-(FP), including a second report of an already matched bug; those are also counted as
-`duplicates`. Each unmatched label is a false negative (FN). A real problem that a case
-does not label is counted as an FP, so precision is "precision against the labels".
+(FP). Each unmatched label is a false negative (FN). A real problem that a case does
+not label is counted as an FP, so precision is "precision against the labels".
+
+An FP is also a `duplicate` when it has the same category and file as a matched finding
+and its line is within `line_tolerance` of that finding's line. The review posts both
+when the rules and the model title one bug differently. The strict numbers count
+duplicates as FPs; the "excluding duplicates" numbers leave them out. The rule looks
+only at position, so a different problem right next to a matched one is also left out
+there. A finding or match without a line makes no duplicate.
 
 Metrics
 -------
-- precision = TP / (TP + FP); null when there are no findings.
+- precision = TP / (TP + FP); null when there are no findings (strict).
+- precision excluding duplicates = TP / (TP + FP - duplicates).
 - recall = TP / (TP + FN); null when there are no labels.
 - Review status is `complete`, `incomplete`, `failed` or `error` (the pipeline
   raised). Findings and labels of every status count in precision and recall, because
@@ -40,7 +47,12 @@ Metrics
 - Verdict accuracy = constrained cases with an acceptable verdict / constrained cases.
   A constraint lists the verdicts a case must not get.
 - A case passes when its review is `complete`, every label is matched, there is no
-  false positive and the verdict constraint, if any, holds.
+  false positive and the verdict constraint, if any, holds. It passes ignoring
+  duplicates when the only false positives are duplicates.
+- Severity does not weigh matches or the numbers above. False positives of high or
+  critical severity are also counted on their own, and so is the clean-case rate for
+  them: a clean case is flagged by a high or critical finding, and evaluated when its
+  review completed or it raised one.
 """
 
 import re
@@ -50,6 +62,7 @@ from dataclasses import dataclass
 CATEGORIES = ("security", "performance", "best_practice")
 STATUSES = ("complete", "incomplete", "failed", "error")
 DEFAULT_LINE_TOLERANCE = 2
+HIGH_SEVERITIES = ("critical", "high")
 
 
 @dataclass(frozen=True)
@@ -103,7 +116,7 @@ class CaseScore:
     matches: tuple[Match, ...]
     missed: tuple[str, ...]  # label ids
     false_positives: tuple[int, ...]  # finding indices
-    duplicates: int
+    duplicate_indices: tuple[int, ...]  # the false positives that repeat a match
     verdict_ok: bool | None  # None when the case constrains no verdict
 
     @property
@@ -119,11 +132,19 @@ class CaseScore:
         return len(self.missed)
 
     @property
+    def duplicates(self) -> int:
+        return len(self.duplicate_indices)
+
+    @property
     def passed(self) -> bool:
+        return self.passed_ignoring_duplicates and not self.false_positives
+
+    @property
+    def passed_ignoring_duplicates(self) -> bool:
         return (
             self.outcome.status == "complete"
             and not self.missed
-            and not self.false_positives
+            and self.fp == self.duplicates
             and self.verdict_ok is not False
         )
 
@@ -178,6 +199,17 @@ def _maximum_matching(candidates: list[list[int]]) -> dict[int, int]:
     return owner
 
 
+def _repeats(finding: Finding, matched: Finding, label: Label, tolerance: int) -> bool:
+    """Whether an unmatched finding sits where a matched finding already reported."""
+    if finding.line is None or matched.line is None:
+        return False
+    return (
+        finding.category == label.category
+        and _same_file(finding.file, label.file)
+        and abs(finding.line - matched.line) <= tolerance
+    )
+
+
 def score_case(outcome: CaseOutcome, line_tolerance: int = DEFAULT_LINE_TOLERANCE) -> CaseScore:
     # Findings with a line are tried first, so a line-less one is used only if needed
     order = sorted(range(len(outcome.findings)), key=lambda i: outcome.findings[i].line is None)
@@ -192,20 +224,30 @@ def score_case(outcome: CaseOutcome, line_tolerance: int = DEFAULT_LINE_TOLERANC
     )
     matched_ids = {m.label_id for m in found}
     false_positives = tuple(i for i in range(len(outcome.findings)) if i not in owner)
-    # An unmatched finding that fits some label is a repeat report of a matched bug:
-    # were that label free, the matching would have used it
-    fits = {i for per_label in candidates for i in per_label}
     verdict_ok = None
     if outcome.forbidden_verdicts:
         verdict_ok = (
             outcome.status == "complete" and outcome.verdict not in outcome.forbidden_verdicts
         )
+    duplicates = tuple(
+        i
+        for i in false_positives
+        if any(
+            _repeats(
+                outcome.findings[i],
+                outcome.findings[finding],
+                outcome.labels[label],
+                line_tolerance,
+            )
+            for finding, label in owner.items()
+        )
+    )
     return CaseScore(
         outcome=outcome,
         matches=found,
         missed=tuple(label.id for label in outcome.labels if label.id not in matched_ids),
         false_positives=false_positives,
-        duplicates=sum(i in fits for i in false_positives),
+        duplicate_indices=duplicates,
         verdict_ok=verdict_ok,
     )
 
@@ -215,35 +257,50 @@ def _ratio(numerator: int, denominator: int) -> float | None:
 
 
 def _counts(scores: Sequence[CaseScore], category: str | None) -> dict:
-    """TP, FP, FN, precision and recall, for one category or all of them."""
-    tp = fp = fn = without_line = 0
+    """TP, FP, FN and the rates, for one category or all of them."""
+    tp = fn = without_line = 0
+    false_positives: list[Finding] = []
+    duplicates = 0
     for score in scores:
         label_category = {label.id: label.category for label in score.outcome.labels}
-        tp += sum(category in (None, label_category[m.label_id]) for m in score.matches)
-        without_line += sum(
-            m.without_line and category in (None, label_category[m.label_id]) for m in score.matches
-        )
+        matched = [m for m in score.matches if category in (None, label_category[m.label_id])]
+        tp += len(matched)
+        without_line += sum(m.without_line for m in matched)
         fn += sum(category in (None, label_category[i]) for i in score.missed)
-        fp += sum(
-            category in (None, score.outcome.findings[i].category) for i in score.false_positives
-        )
+        findings = score.outcome.findings
+        false_positives += [
+            findings[i] for i in score.false_positives if category in (None, findings[i].category)
+        ]
+        duplicates += sum(category in (None, findings[i].category) for i in score.duplicate_indices)
+    fp = len(false_positives)
     return {
         "tp": tp,
         "matched_without_line": without_line,
         "fp": fp,
         "fn": fn,
+        "duplicates": duplicates,
+        "fp_high": sum(f.severity in HIGH_SEVERITIES for f in false_positives),
         "precision": _ratio(tp, tp + fp),
+        "precision_excluding_duplicates": _ratio(tp, tp + fp - duplicates),
         "recall": _ratio(tp, tp + fn),
     }
 
 
-def _clean(scores: Sequence[CaseScore], category: str | None) -> tuple[int, int]:
-    """(clean cases flagged, clean cases evaluated), for one category or all."""
+def _clean(
+    scores: Sequence[CaseScore], category: str | None, severities: tuple[str, ...] | None = None
+) -> tuple[int, int]:
+    """(clean cases flagged, clean cases evaluated), for one category or all.
+
+    With `severities`, only findings of those severities flag a case.
+    """
     flagged = evaluated = 0
     for score in scores:
         if score.outcome.labels:
             continue
-        hit = any(category in (None, f.category) for f in score.outcome.findings)
+        hit = any(
+            category in (None, f.category) and (severities is None or f.severity in severities)
+            for f in score.outcome.findings
+        )
         flagged += hit
         evaluated += hit or score.outcome.status == "complete"
     return flagged, evaluated
@@ -257,8 +314,10 @@ def aggregate(scores: Sequence[CaseScore]) -> dict:
         by_category[category] = {
             **_counts(scores, category),
             "clean_false_positive_rate": _ratio(flagged, evaluated),
+            "clean_high_false_positive_rate": _ratio(*_clean(scores, category, HIGH_SEVERITIES)),
         }
     flagged, evaluated = _clean(scores, None)
+    high_flagged, high_evaluated = _clean(scores, None, HIGH_SEVERITIES)
     clean_total = sum(not s.outcome.labels for s in scores)
     constrained = [s for s in scores if s.verdict_ok is not None]
     ok = sum(s.verdict_ok is True for s in constrained)
@@ -268,7 +327,7 @@ def aggregate(scores: Sequence[CaseScore]) -> dict:
         row["total"] += 1
         row["passed"] += score.passed
     return {
-        "overall": {**_counts(scores, None), "duplicates": sum(s.duplicates for s in scores)},
+        "overall": _counts(scores, None),
         "by_category": by_category,
         "clean": {
             "total": clean_total,
@@ -276,6 +335,9 @@ def aggregate(scores: Sequence[CaseScore]) -> dict:
             "not_evaluated": clean_total - evaluated,
             "flagged": flagged,
             "false_positive_rate": _ratio(flagged, evaluated),
+            "high_evaluated": high_evaluated,
+            "high_flagged": high_flagged,
+            "high_false_positive_rate": _ratio(high_flagged, high_evaluated),
         },
         "verdict": {
             "constrained": len(constrained),
@@ -285,6 +347,7 @@ def aggregate(scores: Sequence[CaseScore]) -> dict:
         "cases": {
             "total": len(scores),
             "passed": sum(s.passed for s in scores),
+            "passed_ignoring_duplicates": sum(s.passed_ignoring_duplicates for s in scores),
             **{status: sum(s.outcome.status == status for s in scores) for status in STATUSES},
         },
         "by_type": by_type,

@@ -7,7 +7,7 @@ from evals.dataset import Case, fingerprint
 from evals.harness import CaseResult
 from evals.scoring import CATEGORIES, aggregate
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 _TEXT_LIMIT = 200
 _USAGE_COUNTS = (
     "calls",
@@ -43,6 +43,7 @@ def _case_row(result: CaseResult) -> dict:
         "verdict_ok": score.verdict_ok,
         "risk_level": result.risk_level,
         "passed": score.passed,
+        "passed_ignoring_duplicates": score.passed_ignoring_duplicates,
         "tp": score.tp,
         "fp": score.fp,
         "fn": score.fn,
@@ -56,7 +57,10 @@ def _case_row(result: CaseResult) -> dict:
             for m in score.matches
         ],
         "missed": list(score.missed),
-        "false_positives": [_finding(result, i) for i in score.false_positives],
+        "false_positives": [
+            {**_finding(result, i), "duplicate": i in score.duplicate_indices}
+            for i in score.false_positives
+        ],
         "incomplete_reasons": result.incomplete_reasons,
         "diff_chars_total": result.diff_chars_total,
         "diff_chars_reviewed_by_llm": result.diff_chars_reviewed,
@@ -148,20 +152,31 @@ def _headline_rows(report: dict) -> list[tuple[str, str]]:
         ("Mode", report["mode"]),
         ("Model(s)", _models(report)),
         ("Answered by", _safe(", ".join(report["answering_models"]) or "no model")),
-        ("Cases passed", f"{cases['passed']} / {cases['total']}"),
+        ("Cases passed (strict)", f"{cases['passed']} / {cases['total']}"),
+        (
+            "Cases passed ignoring duplicates",
+            f"{cases['passed_ignoring_duplicates']} / {cases['total']}",
+        ),
         (
             "Incomplete / failed / error",
             f"{cases['incomplete']} / {cases['failed']} / {cases['error']}",
         ),
-        ("Precision", _percent(overall["precision"])),
+        ("Precision (strict)", _percent(overall["precision"])),
+        ("Precision excluding duplicates", _percent(overall["precision_excluding_duplicates"])),
         ("Recall", _percent(overall["recall"])),
         ("TP / FP / FN", f"{overall['tp']} / {overall['fp']} / {overall['fn']}"),
         ("TP matched without a line", str(overall["matched_without_line"])),
-        ("Duplicate reports (in FP)", str(overall["duplicates"])),
+        ("Duplicate reports (counted in strict FP)", str(overall["duplicates"])),
+        ("FP at high severity or above", str(overall["fp_high"])),
         (
             "Clean-case false-positive rate",
             f"{_percent(clean['false_positive_rate'])} "
             f"({clean['flagged']} of {clean['evaluated']} evaluated, {clean['total']} clean)",
+        ),
+        (
+            "Clean-case FP rate, high or above",
+            f"{_percent(clean['high_false_positive_rate'])} "
+            f"({clean['high_flagged']} of {clean['high_evaluated']} evaluated)",
         ),
         (
             "Verdict accuracy",
@@ -170,13 +185,19 @@ def _headline_rows(report: dict) -> list[tuple[str, str]]:
     ]
     for category in CATEGORIES:
         data = metrics["by_category"][category]
-        rows.append(
+        rows += [
             (
-                f"{category}: precision / recall / clean FP rate",
-                f"{_percent(data['precision'])} / {_percent(data['recall'])} / "
-                f"{_percent(data['clean_false_positive_rate'])}",
-            )
-        )
+                f"{category}: precision (strict / excl. duplicates) / recall",
+                f"{_percent(data['precision'])} / "
+                f"{_percent(data['precision_excluding_duplicates'])} / "
+                f"{_percent(data['recall'])}",
+            ),
+            (
+                f"{category}: FP high+ / clean FP rate / clean FP rate high+",
+                f"{data['fp_high']} / {_percent(data['clean_false_positive_rate'])} / "
+                f"{_percent(data['clean_high_false_positive_rate'])}",
+            ),
+        ]
     rows += [
         ("Model calls (failed)", f"{usage['calls']} ({usage['failed_calls']})"),
         ("Tokens in / out", f"{usage['input_tokens']:,} / {usage['output_tokens']:,}"),
@@ -248,7 +269,11 @@ def summary_markdown(report: dict) -> str:
                     str(c["tp"]),
                     str(c["fp"]),
                     str(c["fn"]),
-                    "pass" if c["passed"] else "fail",
+                    "pass"
+                    if c["passed"]
+                    else "pass ignoring duplicates"
+                    if c["passed_ignoring_duplicates"]
+                    else "fail",
                     f"{c['usage']['input_tokens']:,} / {c['usage']['output_tokens']:,}",
                     _cost(c["usage"]),
                     _seconds(c["latency_seconds"]),
@@ -262,7 +287,7 @@ def summary_markdown(report: dict) -> str:
         lines += ["", "## Missed labels", "", *misses]
     false_alarms = [
         f"- `{c['id']}`: {f['category']} {_safe(f['file'])}:{f['line']} "
-        f"({f['severity']}) {_safe(f['title'])}"
+        f"({f['severity']}{', duplicate' if f['duplicate'] else ''}) {_safe(f['title'])}"
         for c in report["cases"]
         for f in c["false_positives"]
     ]

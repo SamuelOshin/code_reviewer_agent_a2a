@@ -11,10 +11,16 @@ def label(id="L1", category="security", file="a.py", start=10, end=10, keywords=
     return Label(id=id, category=category, file=file, start=start, end=end, keywords=keywords)
 
 
-def finding(category="security", file="a.py", line=10, title="Issue", description="d", cwe=None):
-    return Finding(
-        category=category, file=file, line=line, title=title, description=description, cwe_id=cwe
-    )
+def finding(
+    category="security",
+    file="a.py",
+    line=10,
+    title="Issue",
+    description="d",
+    cwe=None,
+    severity="medium",
+):
+    return Finding(category, file, line, title, description, severity, cwe)
 
 
 def outcome(labels=(), findings=(), status="complete", verdict="reject", forbidden=(), id="c1"):
@@ -235,6 +241,7 @@ class TestIncompleteReviews:
             for s in ("complete", "incomplete", "incomplete", "failed", "error")
         ]
         counts = aggregate(scores)["cases"]
+        assert counts.pop("passed_ignoring_duplicates") == 1
         assert counts == {
             "total": 5,
             "passed": 1,
@@ -264,6 +271,92 @@ class TestVerdict:
         assert unconstrained.verdict_ok is None
         verdict = aggregate([unconstrained, wrong])["verdict"]
         assert verdict == {"constrained": 1, "ok": 0, "accuracy": 0.0}
+
+
+class TestDuplicates:
+    def test_a_second_title_for_a_matched_bug_is_left_out_of_the_lenient_numbers(self):
+        # The rules and the model both report one bug, and the app keeps both
+        score = score_case(
+            outcome([label()], [finding(title="Potential injection"), finding(line=11)])
+        )
+        assert (score.fp, score.duplicates) == (1, 1)
+        assert not score.passed
+        assert score.passed_ignoring_duplicates
+        metrics = aggregate([score])
+        assert metrics["overall"]["precision"] == 0.5
+        assert metrics["overall"]["precision_excluding_duplicates"] == 1.0
+        assert metrics["by_category"]["security"]["precision_excluding_duplicates"] == 1.0
+        assert metrics["cases"]["passed"] == 0
+        assert metrics["cases"]["passed_ignoring_duplicates"] == 1
+
+    def test_the_distance_is_measured_from_the_matched_finding(self):
+        want = label(start=10, end=20)
+        near = score_case(outcome([want], [finding(line=10), finding(line=12)]), 2)
+        far = score_case(outcome([want], [finding(line=10), finding(line=13)]), 2)
+        assert (near.duplicates, far.duplicates) == (1, 0)
+
+    def test_it_need_not_satisfy_the_label_keywords(self):
+        want = label(keywords=("sql",))
+        found = [finding(title="SQL injection"), finding(title="Unsafe string building")]
+        assert score_case(outcome([want], found)).duplicates == 1
+
+    @pytest.mark.parametrize(
+        "other",
+        [
+            finding(category="performance"),
+            finding(file="b.py"),
+            finding(line=None),
+            finding(line=30),
+        ],
+    )
+    def test_another_category_file_or_place_is_a_plain_false_positive(self, other):
+        score = score_case(outcome([label()], [finding(), other]))
+        assert (score.fp, score.duplicates) == (1, 0)
+
+    def test_nothing_repeats_a_match_without_a_line(self):
+        want = label(keywords=("sql",))
+        found = [finding(line=None, title="sql"), finding(title="other")]
+        assert score_case(outcome([want], found)).duplicates == 0
+
+    def test_ignoring_duplicates_still_needs_a_complete_review_and_verdict(self):
+        found = [finding(), finding()]
+        for broken in (
+            outcome([label()], found, status="incomplete"),
+            outcome([label()], found, verdict="approve", forbidden=NO_APPROVAL),
+        ):
+            assert not score_case(broken).passed_ignoring_duplicates
+
+
+class TestSeverity:
+    def test_high_false_positives_are_counted_apart(self):
+        scores = [
+            score_case(outcome([], [finding(severity="low")], id="a")),
+            score_case(outcome([], [finding("performance", severity="critical")], id="b")),
+            score_case(
+                outcome(
+                    [label()], [finding(severity="info"), finding(line=50, severity="high")], id="c"
+                )
+            ),
+            score_case(outcome([], [], id="d")),
+        ]
+        metrics = aggregate(scores)
+        assert metrics["overall"]["fp"] == 3
+        assert metrics["overall"]["fp_high"] == 2
+        assert metrics["overall"]["tp"] == 1  # severity does not affect matching
+        assert metrics["by_category"]["security"]["fp_high"] == 1
+        assert metrics["by_category"]["performance"]["fp_high"] == 1
+        assert metrics["clean"]["false_positive_rate"] == round(2 / 3, 4)
+        assert metrics["clean"]["high_false_positive_rate"] == round(1 / 3, 4)
+        by_category = metrics["by_category"]
+        assert by_category["security"]["clean_high_false_positive_rate"] == 0.0
+        assert by_category["performance"]["clean_high_false_positive_rate"] == round(1 / 3, 4)
+
+    def test_an_unfinished_review_with_only_minor_findings_cannot_lower_the_high_rate(self):
+        minor = score_case(outcome([], [finding(severity="low")], status="incomplete", id="a"))
+        bad = score_case(outcome([], [finding(severity="high")], id="b"))
+        clean = aggregate([minor, bad])["clean"]
+        assert (clean["high_flagged"], clean["high_evaluated"]) == (1, 1)
+        assert clean["high_false_positive_rate"] == 1.0
 
 
 class TestAggregate:
