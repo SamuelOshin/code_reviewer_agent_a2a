@@ -1,0 +1,35 @@
+{
+  "id": "go-query-in-loop",
+  "type": "bug",
+  "language": "go",
+  "title": "Load line items for the order export",
+  "description": "",
+  "tags": [],
+  "forbidden_verdicts": [],
+  "expected": [
+    {
+      "id": "nplus1",
+      "category": "performance",
+      "severity": "high",
+      "title": "One database query per order",
+      "file": "internal/export/orders.go",
+      "lines": [
+        8,
+        8
+      ],
+      "keywords": [
+        "n+1",
+        "n + 1",
+        "queries",
+        "query in",
+        "inside the loop",
+        "inside a loop",
+        "in a loop",
+        "query per",
+        "batch",
+        "batched",
+        "batching"
+      ]
+    }
+  ]
+}

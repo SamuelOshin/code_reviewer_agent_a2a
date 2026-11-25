@@ -1,0 +1,14 @@
+diff --git a/sync/runner.py b/sync/runner.py
+--- a/sync/runner.py
++++ b/sync/runner.py
+@@ -0,0 +1,10 @@
++def sync_all(accounts, client):
++    """Sync every account with the remote service."""
++    synced = 0
++    for account in accounts:
++        try:
++            client.push(account)
++            synced += 1
++        except:
++            pass
++    return synced

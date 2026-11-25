@@ -1,0 +1,29 @@
+{
+  "id": "go-path-traversal",
+  "type": "bug",
+  "language": "go",
+  "title": "Serve uploaded attachments",
+  "description": "",
+  "tags": [],
+  "forbidden_verdicts": [],
+  "expected": [
+    {
+      "id": "traversal",
+      "category": "security",
+      "severity": "high",
+      "title": "Path traversal through the file name",
+      "file": "internal/files/handler.go",
+      "lines": [
+        13,
+        14
+      ],
+      "keywords": [
+        "traversal",
+        "CWE-22",
+        "arbitrary file",
+        "arbitrary files",
+        "path injection"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "id": "java-sql-concat",
+  "type": "bug",
+  "language": "java",
+  "title": "Look up orders by reference",
+  "description": "",
+  "tags": [],
+  "forbidden_verdicts": [
+    "approve",
+    "approve_with_suggestions"
+  ],
+  "expected": [
+    {
+      "id": "sqli",
+      "category": "security",
+      "severity": "critical",
+      "title": "SQL built by concatenating the reference",
+      "file": "src/main/java/shop/OrderRepository.java",
+      "lines": [
+        16,
+        18
+      ],
+      "keywords": [
+        "sql",
+        "sqli",
+        "CWE-89"
+      ]
+    }
+  ]
+}

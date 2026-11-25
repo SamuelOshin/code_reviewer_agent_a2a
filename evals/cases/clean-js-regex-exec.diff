@@ -1,0 +1,14 @@
+diff --git a/src/version.js b/src/version.js
+--- a/src/version.js
++++ b/src/version.js
+@@ -0,0 +1,10 @@
++const VERSION = /^(\d+)\.(\d+)\.(\d+)$/;
++
++export function parseVersion(text) {
++  const match = VERSION.exec(text);
++  if (match === null) {
++    return null;
++  }
++  const [, major, minor, patch] = match.map(Number);
++  return { major, minor, patch };
++}

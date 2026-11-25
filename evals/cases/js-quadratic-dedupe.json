@@ -1,0 +1,33 @@
+{
+  "id": "js-quadratic-dedupe",
+  "type": "bug",
+  "language": "javascript",
+  "title": "Merge imported contacts",
+  "description": "",
+  "tags": [],
+  "forbidden_verdicts": [],
+  "expected": [
+    {
+      "id": "quadratic",
+      "category": "performance",
+      "severity": "medium",
+      "title": "Quadratic duplicate search",
+      "file": "src/contacts/merge.js",
+      "lines": [
+        4,
+        4
+      ],
+      "keywords": [
+        "quadratic",
+        "o(n",
+        "o(n\u00b2",
+        "nested",
+        "complexity",
+        "linear search",
+        "lookup",
+        "lookups",
+        "hash map"
+      ]
+    }
+  ]
+}

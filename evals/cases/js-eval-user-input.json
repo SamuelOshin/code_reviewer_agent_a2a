@@ -1,0 +1,32 @@
+{
+  "id": "js-eval-user-input",
+  "type": "bug",
+  "language": "javascript",
+  "title": "Add calculator endpoint",
+  "description": "",
+  "tags": [],
+  "forbidden_verdicts": [
+    "approve",
+    "approve_with_suggestions"
+  ],
+  "expected": [
+    {
+      "id": "eval",
+      "category": "security",
+      "severity": "critical",
+      "title": "Request body passed to eval",
+      "file": "api/calculator.js",
+      "lines": [
+        6,
+        6
+      ],
+      "keywords": [
+        "eval",
+        "code execution",
+        "code injection",
+        "CWE-94",
+        "CWE-95"
+      ]
+    }
+  ]
+}

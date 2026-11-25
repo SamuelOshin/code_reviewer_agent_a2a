@@ -1,0 +1,33 @@
+{
+  "id": "java-string-concat-loop",
+  "type": "bug",
+  "language": "java",
+  "title": "Build the CSV export",
+  "description": "",
+  "tags": [],
+  "forbidden_verdicts": [],
+  "expected": [
+    {
+      "id": "concat",
+      "category": "performance",
+      "severity": "medium",
+      "title": "String concatenation inside a loop",
+      "file": "src/main/java/shop/CsvExport.java",
+      "lines": [
+        9,
+        9
+      ],
+      "keywords": [
+        "concat",
+        "concatenation",
+        "concatenating",
+        "concatenates",
+        "concatenated",
+        "stringbuilder",
+        "string building",
+        "o(n",
+        "o(n\u00b2"
+      ]
+    }
+  ]
+}

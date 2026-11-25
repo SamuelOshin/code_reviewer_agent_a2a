@@ -1,0 +1,12 @@
+{
+  "id": "clean-py-safe-yaml",
+  "type": "clean",
+  "language": "python",
+  "title": "Read feature flags",
+  "description": "",
+  "tags": [],
+  "forbidden_verdicts": [
+    "reject"
+  ],
+  "expected": []
+}

@@ -1,0 +1,14 @@
+diff --git a/app_config/load.py b/app_config/load.py
+--- a/app_config/load.py
++++ b/app_config/load.py
+@@ -0,0 +1,10 @@
++import json
++from pathlib import Path
++
++CONFIG_PATH = Path(__file__).with_name("settings.json")
++
++
++def load_settings(config_path: Path = CONFIG_PATH) -> dict:
++    """Read the settings file shipped with the package."""
++    with open(config_path, encoding="utf-8") as handle:
++        return json.load(handle)

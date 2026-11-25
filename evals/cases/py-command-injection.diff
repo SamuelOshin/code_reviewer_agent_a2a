@@ -1,0 +1,12 @@
+diff --git a/tools/export.py b/tools/export.py
+--- a/tools/export.py
++++ b/tools/export.py
+@@ -0,0 +1,8 @@
++import os
++
++
++def export_folder(request):
++    """Zip the folder named in the request."""
++    name = request.args["folder"]
++    os.system("zip -r /tmp/export.zip " + name)
++    return "/tmp/export.zip"

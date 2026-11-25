@@ -1,0 +1,19 @@
+diff --git a/internal/settings/save.go b/internal/settings/save.go
+--- a/internal/settings/save.go
++++ b/internal/settings/save.go
+@@ -0,0 +1,15 @@
++package settings
++
++import (
++    "encoding/json"
++    "os"
++)
++
++func Save(path string, values map[string]string) error {
++    data, err := json.Marshal(values)
++    if err != nil {
++        return err
++    }
++    _ = os.WriteFile(path, data, 0o600)
++    return nil
++}

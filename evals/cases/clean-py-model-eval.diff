@@ -1,0 +1,8 @@
+diff --git a/ml/predict.py b/ml/predict.py
+--- a/ml/predict.py
++++ b/ml/predict.py
+@@ -12,1 +12,4 @@
+ def predict(model, batch):
++    model.eval()
++    with torch.no_grad():
++        return model(batch).argmax(dim=1)

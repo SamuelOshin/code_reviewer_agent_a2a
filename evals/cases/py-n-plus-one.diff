@@ -1,0 +1,11 @@
+diff --git a/blog/views.py b/blog/views.py
+--- a/blog/views.py
++++ b/blog/views.py
+@@ -20,2 +20,7 @@
+ def post_list(request):
+     posts = Post.objects.order_by("-created")[:100]
++    rows = []
++    for post in posts:
++        author = Author.objects.get(pk=post.author_id)
++        rows.append({"title": post.title, "author": author.name})
++    return JsonResponse({"posts": rows})

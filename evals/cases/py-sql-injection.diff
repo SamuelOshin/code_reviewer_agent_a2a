@@ -1,0 +1,12 @@
+diff --git a/shop/users/search.py b/shop/users/search.py
+--- a/shop/users/search.py
++++ b/shop/users/search.py
+@@ -0,0 +1,8 @@
++from shop.db import get_cursor
++
++
++def find_users(term):
++    """Return users whose name contains the search term."""
++    cursor = get_cursor()
++    cursor.execute(f"SELECT id, name FROM users WHERE name LIKE '%{term}%'")
++    return cursor.fetchmany(50)

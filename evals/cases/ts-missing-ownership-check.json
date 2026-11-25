@@ -1,0 +1,44 @@
+{
+  "id": "ts-missing-ownership-check",
+  "type": "bug",
+  "language": "typescript",
+  "title": "Add invoice download route",
+  "description": "",
+  "tags": [],
+  "forbidden_verdicts": [],
+  "expected": [
+    {
+      "id": "idor",
+      "category": "security",
+      "severity": "high",
+      "title": "Any signed-in user can read any invoice",
+      "file": "src/routes/invoices.ts",
+      "lines": [
+        8,
+        12
+      ],
+      "keywords": [
+        "authorization",
+        "authorisation",
+        "authorize",
+        "authorise",
+        "authorized",
+        "authorised",
+        "permission",
+        "permissions",
+        "ownership",
+        "owner",
+        "access control",
+        "idor",
+        "any user",
+        "any signed-in user",
+        "any authenticated user",
+        "CWE-639",
+        "CWE-862",
+        "CWE-863",
+        "CWE-285",
+        "CWE-284"
+      ]
+    }
+  ]
+}

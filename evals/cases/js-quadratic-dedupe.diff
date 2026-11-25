@@ -1,0 +1,14 @@
+diff --git a/src/contacts/merge.js b/src/contacts/merge.js
+--- a/src/contacts/merge.js
++++ b/src/contacts/merge.js
+@@ -0,0 +1,10 @@
++export function mergeContacts(existing, imported) {
++  const merged = [...existing];
++  for (const contact of imported) {
++    const duplicate = merged.find((other) => other.email === contact.email);
++    if (!duplicate) {
++      merged.push(contact);
++    }
++  }
++  return merged;
++}

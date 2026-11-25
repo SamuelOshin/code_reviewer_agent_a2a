@@ -1,0 +1,10 @@
+diff --git a/catalog/tags.py b/catalog/tags.py
+--- a/catalog/tags.py
++++ b/catalog/tags.py
+@@ -0,0 +1,6 @@
++def add_tag(item, tag, seen=[]):
++    """Attach a tag to an item once."""
++    if tag not in seen:
++        seen.append(tag)
++        item.tags.append(tag)
++    return seen

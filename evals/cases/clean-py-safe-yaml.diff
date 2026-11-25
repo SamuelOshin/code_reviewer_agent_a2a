@@ -1,0 +1,13 @@
+diff --git a/flags/read.py b/flags/read.py
+--- a/flags/read.py
++++ b/flags/read.py
+@@ -0,0 +1,9 @@
++import yaml
++
++
++def read_flags(text: str) -> dict:
++    """Parse the feature flag document."""
++    flags = yaml.safe_load(text) or {}
++    if not isinstance(flags, dict):
++        raise ValueError("flags must be a mapping")
++    return flags

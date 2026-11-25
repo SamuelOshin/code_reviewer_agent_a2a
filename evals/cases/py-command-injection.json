@@ -1,0 +1,32 @@
+{
+  "id": "py-command-injection",
+  "type": "bug",
+  "language": "python",
+  "title": "Add archive export",
+  "description": "",
+  "tags": [],
+  "forbidden_verdicts": [
+    "approve",
+    "approve_with_suggestions"
+  ],
+  "expected": [
+    {
+      "id": "cmdi",
+      "category": "security",
+      "severity": "critical",
+      "title": "Command injection through the folder name",
+      "file": "tools/export.py",
+      "lines": [
+        7,
+        7
+      ],
+      "keywords": [
+        "command",
+        "commands",
+        "shell",
+        "os.system",
+        "CWE-78"
+      ]
+    }
+  ]
+}

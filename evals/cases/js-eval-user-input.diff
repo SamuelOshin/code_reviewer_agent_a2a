@@ -1,0 +1,14 @@
+diff --git a/api/calculator.js b/api/calculator.js
+--- a/api/calculator.js
++++ b/api/calculator.js
+@@ -0,0 +1,10 @@
++const express = require("express");
++
++const router = express.Router();
++
++router.post("/calculate", (req, res) => {
++  const value = eval(req.body.expression);
++  res.json({ value });
++});
++
++module.exports = router;

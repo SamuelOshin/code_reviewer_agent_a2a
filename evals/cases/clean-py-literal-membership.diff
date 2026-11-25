@@ -1,0 +1,7 @@
+diff --git a/shop/states.py b/shop/states.py
+--- a/shop/states.py
++++ b/shop/states.py
+@@ -0,0 +1,3 @@
++def is_terminal(status: str) -> bool:
++    """Whether an order can no longer change."""
++    return status in ["delivered", "cancelled", "refunded"]

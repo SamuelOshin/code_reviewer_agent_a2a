@@ -1,0 +1,17 @@
+diff --git a/src/routes/invoices.ts b/src/routes/invoices.ts
+--- a/src/routes/invoices.ts
++++ b/src/routes/invoices.ts
+@@ -0,0 +1,13 @@
++import { Router } from "express";
++import { requireLogin } from "../auth";
++import { invoices } from "../store";
++
++export const router = Router();
++
++router.get("/invoices/:id", requireLogin, async (req, res) => {
++  const invoice = await invoices.findById(req.params.id);
++  if (!invoice) {
++    return res.status(404).end();
++  }
++  return res.json(invoice);
++});

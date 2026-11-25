@@ -1,0 +1,10 @@
+diff --git a/web/search.js b/web/search.js
+--- a/web/search.js
++++ b/web/search.js
+@@ -10,3 +10,6 @@
+ export function renderResults(container, results) {
++  const term = new URLSearchParams(window.location.search).get("q");
++  const heading = document.querySelector("#results-heading");
++  heading.innerHTML = "Results for " + term;
+   container.replaceChildren(...results.map(toListItem));
+ }

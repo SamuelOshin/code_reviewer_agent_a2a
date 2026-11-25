@@ -10,7 +10,8 @@ configuration, not code.
 
 > **Status:** this project is being rebuilt as an AI engineering portfolio piece. The
 > [project tracker](docs/PROJECT_TRACKER.md) holds the plan and what is verified.
-> No real LLM or GitHub call has been run end to end yet; the test suite mocks them.
+> Real reviews through `/rpc` last ran on 2026-11-15, before the structured-output and
+> large-diff changes; the test suite mocks LLM and GitHub calls.
 
 ## What it does
 
@@ -253,6 +254,81 @@ Push a new commit or restart the service to retry.
   so don't run production at `LOG_LEVEL=DEBUG`.
 - This repo is public. Put secrets only in `.env`, which is not committed.
 
+## Evals
+
+`evals/` measures review quality, cost and latency on 30 synthetic cases: 18 seeded
+bugs (security, performance and best practice, in Python, JavaScript, TypeScript, Java
+and Go), 9 clean changes (including known rule false-positive traps), one large change
+with its bug past the first 8,000 characters, and 2 prompt-injection attempts. Each
+case goes through the app's own review pipeline; only GitHub is replaced by the case
+files. Run from the repository root:
+
+```bash
+uv run python -m evals.run --mode rules                  # rule checks only, no model, free
+uv run python -m evals.run --mode fake                   # scripted model, tests the harness, free
+uv run python -m evals.run --mode llm                    # your configured model, costs money
+uv run python -m evals.run --mode llm --model <provider>:<model-id> --out evals/results/a.json
+uv run python -m evals.run --compare evals/results/a.json evals/results/b.json
+uv run python -m evals.run --from-cases evals/results/a.cases.jsonl   # a stopped run
+```
+
+- `llm` mode uses `LLM_MODEL` and the per-role settings from the environment or `.env`,
+  with that provider's key. `--model` applies one model to every role and drops per-role
+  and fallback models; `--role-model security=<provider>:<model-id>` sets one role. It
+  makes about three calls per diff chunk plus one summary per case (just over 120 for
+  the whole set, before retries). `--case <id>` runs a single case for a cheap check.
+- Each run writes a JSON report and a Markdown summary (default `evals/results/`).
+  Every case is also saved to `<out>.cases.jsonl` as it finishes; the file is removed
+  when the run completes. Ctrl-C writes a report of the finished cases, marked partial.
+  After a crash, `--from-cases` builds it. The case in progress is lost.
+- Measured: precision and recall (overall and per category), false-positive rate on
+  clean changes, verdict accuracy (a seeded critical bug must not be approved, a clean
+  change must not be rejected), incomplete and failed reviews (counted separately, never
+  as passes), and tokens, cost and latency per case and in total, as the model layer
+  reports them.
+- A finding matches a labelled bug when the category and file are the same, the line is
+  within 2 lines of the label (`--line-tolerance`) and, where the label lists keywords,
+  one appears in the title, description or CWE id as a whole word or phrase, ignoring
+  case ("sql" does not match "NoSQL"). A finding without a line matches only through a
+  keyword, and such matches are counted separately. Matching is one to one; every other
+  finding is a false positive, including a repeat report and a real problem the case
+  does not label.
+- Duplicates: the review posts a bug twice when the rules and the model title it
+  differently. The strict precision and pass numbers count the second report as a false
+  positive. A second set leaves it out, but only when it also matches the same label and
+  its line is within the tolerance of the matched finding's line. A different finding
+  nearby stays a false positive, unless its text hits one of that label's keywords.
+- Severity does not weigh the scores. False positives of high or critical severity are
+  also reported on their own: overall, per category, and as a clean-case rate.
+- Runs with a model also report what it adds: recall and passes from its findings alone
+  (no verdict, which comes from the combined findings), and the combined review minus a
+  rules-only review of the same cases.
+- Cost is unknown when a model's price is unknown. A failed call reports no tokens or
+  cost although it may be billed, so a run with failed calls shows both as a lower bound
+  (`≥`), and `--compare` warns about it.
+- The full rules are in `evals/scoring.py`, the case format in `evals/dataset.py`.
+- Limits: the set is small and synthetic, each case has few labels, and one run of a
+  model is one sample. Treat small differences as noise.
+
+### Rules baseline
+
+Rule checks alone, from [`evals/baselines/rules.md`](evals/baselines/rules.md) (30
+cases, dataset `112765e7041fdf33`, 2026-11-25):
+
+| Measure | Rules only |
+|---|---|
+| Precision | 64.3% (9 of 14 findings; no duplicates) |
+| Recall | 42.9% (9 of 21 labelled bugs) |
+| Clean changes with a false positive | 3 of 9 |
+| Clean changes with a high or critical false positive | 2 of 9 |
+| High or critical false positives, all cases | 4 of 5 |
+| Verdict constraints met | 13 of 18 |
+| Cases passed | 15 of 30 |
+
+The rules find no seeded best-practice bug (they have no such checks), miss both
+injection cases and the late bug in the large change, and reject a documentation change
+that only mentions `eval()` and `yaml.load`. No LLM results are published yet.
+
 ## Development
 
 ```bash
@@ -272,6 +348,7 @@ app/
   services/   analyzer, GitHub client, LLM prompts and structured findings, message handler
   utils/      diff parser, security and performance rules, formatters
 config/       agent card and LLM prompts
+evals/        eval harness: cases, scorer, runner and baselines
 tests/
 ```
 
@@ -280,13 +357,13 @@ tests/
 Not built yet; see the [tracker](docs/PROJECT_TRACKER.md):
 
 - Inline PR review comments (planned, `P2-03`); today the webhook posts one summary comment.
-- Chunking large diffs so the LLM reviews the whole PR (`P2-07`).
 - Prompt-injection defences (`P2-06`).
-- Evals with published precision and recall, an MCP server, tracing and cost metrics,
-  persisted runs and model routing (Phase 3).
+- Published LLM precision and recall and evals in CI (`P3-02`), an MCP server, tracing
+  and cost metrics, persisted runs and model routing (Phase 3).
 - Not tested yet: the GitHub webhook path against real GitHub, and the push-notification
-  path against a real receiver. A real review via `/rpc` has run on two providers
-  (Google, and OpenRouter through the `openai-compatible` adapter).
+  path against a real receiver. Real reviews via `/rpc` ran on two providers (Google,
+  and OpenRouter through the `openai-compatible` adapter) on 2026-11-15. They have not
+  been repeated since the structured-output (`P2-01`) and chunking (`P2-07`) changes.
 
 ## License
 

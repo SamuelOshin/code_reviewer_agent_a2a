@@ -1,0 +1,10 @@
+diff --git a/mail/templates.py b/mail/templates.py
+--- a/mail/templates.py
++++ b/mail/templates.py
+@@ -0,0 +1,6 @@
++import aiofiles
++
++
++async def read_template(location):
++    async with aiofiles.open(location, encoding="utf-8") as handle:
++        return await handle.read()

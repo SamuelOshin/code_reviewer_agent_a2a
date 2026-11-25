@@ -1,0 +1,49 @@
+{
+  "id": "large-py-late-authz-bug",
+  "type": "large",
+  "language": "python",
+  "title": "Add monthly report formatting and cleanup",
+  "description": "Column formatters for the monthly report, plus a delete action.",
+  "tags": [
+    "P2-07"
+  ],
+  "forbidden_verdicts": [
+    "approve",
+    "approve_with_suggestions"
+  ],
+  "expected": [
+    {
+      "id": "authz",
+      "category": "security",
+      "severity": "critical",
+      "title": "Any user can delete any report",
+      "file": "reports/admin_actions.py",
+      "lines": [
+        11,
+        11
+      ],
+      "keywords": [
+        "authorization",
+        "authorisation",
+        "authorize",
+        "authorise",
+        "authorized",
+        "authorised",
+        "permission",
+        "permissions",
+        "ownership",
+        "owner",
+        "access control",
+        "idor",
+        "any user",
+        "any signed-in user",
+        "any authenticated user",
+        "CWE-639",
+        "CWE-862",
+        "CWE-863",
+        "CWE-285",
+        "CWE-284"
+      ]
+    }
+  ]
+}

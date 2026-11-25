@@ -1,0 +1,11 @@
+diff --git a/pipelines/loader.py b/pipelines/loader.py
+--- a/pipelines/loader.py
++++ b/pipelines/loader.py
+@@ -0,0 +1,7 @@
++import yaml
++
++
++def load_pipeline(upload):
++    """Parse a pipeline definition uploaded by a user."""
++    text = upload.read().decode("utf-8")
++    return yaml.load(text, Loader=yaml.Loader)

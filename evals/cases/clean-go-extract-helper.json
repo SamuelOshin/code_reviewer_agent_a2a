@@ -1,0 +1,12 @@
+{
+  "id": "clean-go-extract-helper",
+  "type": "clean",
+  "language": "go",
+  "title": "Extract price formatting",
+  "description": "",
+  "tags": [],
+  "forbidden_verdicts": [
+    "reject"
+  ],
+  "expected": []
+}
