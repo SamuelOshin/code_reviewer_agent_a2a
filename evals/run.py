@@ -126,8 +126,8 @@ def _compare(args: argparse.Namespace) -> int:
             report = json.loads(Path(name).read_text(encoding="utf-8"))
             if report["schema_version"] != SCHEMA_VERSION:
                 raise ValueError("unknown schema version")
-            compare_markdown([(name, report)])  # raises on a missing or mistyped field
-            reports.append((Path(name).stem, report))
+            compare_markdown([report])  # raises on a missing or mistyped field
+            reports.append(report)
         except (OSError, ValueError, KeyError, TypeError) as e:
             print(f"{name} is not an eval report ({type(e).__name__})", file=sys.stderr)
             return 2

@@ -293,9 +293,9 @@ class TestFailures:
         assert report["usage"]["cost_is_lower_bound"] is True
         fine = build_report([], picked, "rules", {})
         assert fine["usage"]["cost_is_lower_bound"] is False
-        for pair in ([("a", report), ("b", fine)], [("b", fine), ("a", report)]):
-            assert "a: cost and tokens are a lower bound" in compare_markdown(pair)
-        assert "lower bound" not in compare_markdown([("b", fine), ("c", fine)])
+        for pair in ([report, fine], [fine, report]):
+            assert "llm: n/a: cost and tokens are a lower bound" in compare_markdown(pair)
+        assert "lower bound" not in compare_markdown([fine, fine])
 
     @pytest.mark.asyncio
     async def test_a_pipeline_crash_is_one_error_case_not_a_crashed_run(self, cases, monkeypatch):
@@ -361,10 +361,24 @@ class TestCommandLine:
             assert row in printed, row
         assert "Different datasets" not in printed
 
+    def test_compare_names_each_side_by_mode_and_model(self, tmp_path, capsys):
+        # Two files with the same name used to show as "run | run"
+        for folder, mode in (("a", "rules"), ("b", "fake")):
+            out = tmp_path / folder / "run.json"
+            self.run_main("--mode", mode, "--case", "py-unsafe-yaml", "--out", str(out))
+        capsys.readouterr()
+        paths = [str(tmp_path / f / "run.json") for f in ("a", "b")]
+        assert self.run_main("--compare", *paths) == 0
+        text = capsys.readouterr().out
+        assert "| Measure | rules: rules-only | fake: fake:scripted |" in text
+        assert self.run_main("--compare", paths[0], paths[0]) == 0
+        text = capsys.readouterr().out
+        assert "| rules: rules-only (run 1) | rules: rules-only (run 2) |" in text
+
     def test_compare_warns_when_runs_are_not_comparable(self, cases):
         first = build_report([], cases[:1], "rules", {"line_tolerance": 2})
         second = build_report([], cases[:2], "llm", {"line_tolerance": 5})
-        text = compare_markdown([("a", first), ("b", second)])
+        text = compare_markdown([first, second])
         assert "Different datasets" in text
         assert "Different line tolerance" in text
 

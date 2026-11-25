@@ -377,10 +377,18 @@ def summary_markdown(report: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def compare_markdown(reports: list[tuple[str, dict]]) -> str:
-    """Runs side by side. `reports` is (name, report) pairs."""
-    names = [name for name, _ in reports]
-    data = [report for _, report in reports]
+def _side_labels(reports: list[dict]) -> list[str]:
+    """Each run named by mode and model, numbered where two would read the same."""
+    labels = [f"{_safe(r['mode'])}: {_models(r)}" for r in reports]
+    return [
+        f"{label} (run {i + 1})" if labels.count(label) > 1 else label
+        for i, label in enumerate(labels)
+    ]
+
+
+def compare_markdown(data: list[dict]) -> str:
+    """Runs side by side, in the order given."""
+    names = _side_labels(data)
     warnings = []
     if len({r["dataset"]["fingerprint"] for r in data}) > 1:
         warnings.append("Different datasets: the quality numbers are not comparable.")
@@ -389,21 +397,21 @@ def compare_markdown(reports: list[tuple[str, dict]]) -> str:
     limits = ("max_diff_chunks", "review_budget_seconds")
     if len({tuple(r["config"].get(k) for k in limits) for r in data}) > 1:
         warnings.append("Different review limits (chunks or time budget).")
-    for name, report in reports:
+    for name, report in zip(names, data, strict=True):
         cases = report["metrics"]["cases"]
         unfinished = cases["total"] - cases["complete"]
         if unfinished:
-            warnings.append(f"{_safe(name)}: {unfinished} review(s) did not complete.")
+            warnings.append(f"{name}: {unfinished} review(s) did not complete.")
         if report["usage"]["cost_is_lower_bound"]:
             warnings.append(
-                f"{_safe(name)}: cost and tokens are a lower bound "
+                f"{name}: cost and tokens are a lower bound "
                 f"({report['usage']['failed_calls']} failed call(s) not counted)."
             )
         if report["mode"] == "fake":
-            warnings.append(f"{_safe(name)}: scripted model, not a quality result.")
+            warnings.append(f"{name}: scripted model, not a quality result.")
 
     columns = [dict(_headline_rows(r)) for r in data]
-    header = ["Measure", *(_safe(n) for n in names)]
+    header = ["Measure", *names]
     lines = ["# Eval comparison", ""]
     if warnings:
         lines += [*(f"> {w}" for w in warnings), ""]
@@ -418,7 +426,13 @@ def compare_markdown(reports: list[tuple[str, dict]]) -> str:
             if case is None:
                 cells.append("not run")
                 continue
-            word = "pass" if case["passed"] else "fail"
+            word = (
+                "pass"
+                if case["passed"]
+                else "pass ignoring duplicates"
+                if case["passed_ignoring_duplicates"]
+                else "fail"
+            )
             cells.append(
                 f"{word} (TP {case['tp']}, FP {case['fp']}, FN {case['fn']}, "
                 f"{case['verdict'] or case['status']})"
