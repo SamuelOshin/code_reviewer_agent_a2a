@@ -121,8 +121,9 @@ def _apply_push_auth(headers: dict[str, str], push_config: dict[str, Any]) -> No
 
     In A2A v1.0 (`TaskPushNotificationConfig`), `token` is sent in
     `X-A2A-Notification-Token` and `authentication.credentials` holds the
-    credential for `Authorization`. In v0.3, `authentication.schemes` lists
-    `["Bearer"]` and `token` supplies the Bearer credential when `credentials` is unset.
+    credential for `Authorization` as `<scheme> <credentials>`. In v0.3,
+    `authentication.schemes` is a list (first entry used). `token` supplies the Bearer
+    credential when `credentials` is unset.
     """
     raw_token = push_config.get("token")
     token = raw_token if isinstance(raw_token, str) and raw_token else None
@@ -133,14 +134,20 @@ def _apply_push_auth(headers: dict[str, str], push_config: dict[str, Any]) -> No
     auth_dict = auth if isinstance(auth, dict) else {}
     raw_creds = auth_dict.get("credentials")
     credentials = raw_creds if isinstance(raw_creds, str) and raw_creds else None
-    schemes = auth_dict.get("schemes", [])
+    # v1.0 has one `scheme`; v0.3 has a `schemes` list, of which the first is used
     scheme = auth_dict.get("scheme")
-    has_bearer = (
-        isinstance(schemes, list) and any(str(s).lower() == "bearer" for s in schemes)
-    ) or (isinstance(scheme, str) and scheme.lower() == "bearer")
-    bearer_secret = credentials or token
-    if has_bearer and bearer_secret:
-        headers["Authorization"] = f"Bearer {bearer_secret}"
+    schemes = auth_dict.get("schemes")
+    if not (isinstance(scheme, str) and scheme):
+        scheme = schemes[0] if isinstance(schemes, list) and schemes else None
+    if not (isinstance(scheme, str) and scheme):
+        return
+    # Same as the a2a-sdk push sender: `Authorization: <scheme> <credentials>`. A scheme
+    # without credentials sends nothing, except Bearer which falls back to `token`.
+    secret = credentials
+    if secret is None and scheme.lower() == "bearer":
+        secret = token
+    if secret:
+        headers["Authorization"] = f"{scheme} {secret}"
 
 
 def _is_text_part(part: dict[str, Any]) -> bool:
