@@ -551,32 +551,33 @@ class CodeAnalyzerService:
         """
         Deduplicate best-practice issues (LLM only, one run per diff chunk, P2-07)
 
+        Only the same file, line and normalized title count as a duplicate. Most of
+        these findings have no line number, so fuzzy title matching would merge
+        different advice about one file.
+
         Args:
             llm_issues: Issues from LLM analysis
 
         Returns:
-            Deduplicated list in first-seen order
+            Deduplicated list in first-seen order, each entry the highest-severity
+            finding of its duplicates
         """
-        merged: list[BestPracticeIssue] = []
+        merged: dict[tuple[str, int | None, str], BestPracticeIssue] = {}
 
-        for llm_issue in llm_issues:
-            is_duplicate = False
+        for issue in llm_issues:
+            key = (issue.file, issue.line_number, self._normalize_title(issue.title))
+            existing = merged.get(key)
+            # Replace the whole finding, so its fields all come from one report
+            if existing is None or self._severity_higher(issue.severity, existing.severity):
+                merged[key] = issue
 
-            for existing in merged:
-                if (existing.file == llm_issue.file and
-                    existing.line_number == llm_issue.line_number and
-                    self._titles_similar(existing.title, llm_issue.title)):
-                    is_duplicate = True
-                    # If a later chunk rated it higher, update
-                    if self._severity_higher(llm_issue.severity, existing.severity):
-                        existing.severity = llm_issue.severity
-                        existing.recommendation = llm_issue.recommendation
-                    break
+        return list(merged.values())
 
-            if not is_duplicate:
-                merged.append(llm_issue)
-
-        return merged
+    @staticmethod
+    def _normalize_title(title: str) -> str:
+        """Case-fold, collapse whitespace and drop trailing sentence punctuation"""
+        # Only sentence punctuation: "C++" and "C#" must stay different titles
+        return " ".join(title.casefold().split()).rstrip(" .,;:!?\u2026")
 
     def _titles_similar(self, title1: str, title2: str) -> bool:
         """

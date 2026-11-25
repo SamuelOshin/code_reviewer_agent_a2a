@@ -689,12 +689,18 @@ class TestBestPracticeDuplicates:
     """S2: best-practice steps run once per part, so repeats must be merged."""
 
     @staticmethod
-    def finding(title="Add unit tests for new code", file="early.py", line=None, severity="low"):
+    def finding(
+        title="Add unit tests for new code",
+        file="early.py",
+        line=None,
+        severity="low",
+        description="d",
+    ):
         return BestPracticeIssue(
             category="testing",
             severity=severity,
             title=title,
-            description="d",
+            description=description,
             file=file,
             line_number=line,
             recommendation=f"r-{severity}",
@@ -730,16 +736,78 @@ class TestBestPracticeDuplicates:
         assert [i.title for i in result.best_practice_findings] == ["Add unit tests for new code"]
 
     @pytest.mark.asyncio
-    async def test_the_higher_severity_of_two_duplicates_is_kept(self):
-        severities = {1: "low", 2: "high"}
+    async def test_a_higher_severity_duplicate_replaces_the_whole_finding_in_place(self):
+        by_part = {
+            1: [
+                self.finding(title="Add unit tests", severity="low", description="first"),
+                self.finding(title="Rename the unclear variable"),
+            ],
+            2: [self.finding(title="ADD UNIT TESTS.", severity="high", description="second")],
+        }
 
-        result, calls = await self.review(
-            LONG_DIFF, lambda n: [self.finding(severity=severities[n])]
-        )
+        result, calls = await self.review(LONG_DIFF, by_part.__getitem__)
 
         assert calls == 2
+        kept, other = result.best_practice_findings
+        assert (kept.severity, kept.title, kept.description, kept.recommendation) == (
+            "high",
+            "ADD UNIT TESTS.",
+            "second",
+            "r-high",
+        )
+        assert other.title == "Rename the unclear variable"
+
+    @pytest.mark.asyncio
+    async def test_a_later_duplicate_that_is_not_higher_changes_nothing(self):
+        by_part = {
+            1: [self.finding(severity="high", description="first")],
+            2: [self.finding(severity="low", description="second")],
+        }
+
+        result, _ = await self.review(LONG_DIFF, by_part.__getitem__)
+
         [issue] = result.best_practice_findings
-        assert (issue.severity, issue.recommendation) == ("high", "r-high")
+        assert (issue.severity, issue.description) == ("high", "first")
+
+    @pytest.mark.parametrize(
+        "variant",
+        [
+            "add unit tests for new code",
+            "  Add   unit tests\tfor new\ncode ",
+            "Add unit tests for new code.",
+            "Add unit tests for new code !",
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_case_spacing_and_trailing_punctuation_do_not_make_a_new_finding(
+        self, variant
+    ):
+        by_part = {1: [self.finding()], 2: [self.finding(title=variant)]}
+
+        result, _ = await self.review(LONG_DIFF, by_part.__getitem__)
+
+        assert len(result.best_practice_findings) == 1
+
+    @pytest.mark.parametrize(
+        "first,second",
+        [
+            # The three pairs the re-review saw collapse (R1)
+            ("Use logging instead of print", "Use type hints instead of Any"),
+            ("Missing docstring for function load", "Missing docstring for function save"),
+            ("Add unit tests", "Add integration tests for the API"),
+            # Symbols that are part of a name are not trailing punctuation
+            ("Prefer C++", "Prefer C#"),
+        ],
+    )
+    @pytest.mark.parametrize("across_parts", [False, True])
+    @pytest.mark.asyncio
+    async def test_similar_but_different_titles_are_both_kept(self, first, second, across_parts):
+        both = [self.finding(title=first), self.finding(title=second)]
+        by_part = {1: [both[0]], 2: [both[1]]} if across_parts else {1: both, 2: []}
+
+        result, _ = await self.review(LONG_DIFF, by_part.__getitem__)
+
+        assert [i.title for i in result.best_practice_findings] == [first, second]
 
     @pytest.mark.asyncio
     async def test_findings_that_differ_by_file_line_or_title_are_all_kept(self):
