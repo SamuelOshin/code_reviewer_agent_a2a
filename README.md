@@ -4,7 +4,7 @@ An AI code review agent for GitHub Pull Requests. It combines regex rules with L
 analysis to report security, performance and best-practice findings, and it fails
 closed: a review that did not fully run never says "approve".
 
-It is a FastAPI service with a JSON-RPC 2.0 endpoint, an A2A v1.0 task endpoint built on `a2a-sdk`,
+It is a FastAPI service with a JSON-RPC 2.0 endpoint, an A2A v1.0 task endpoint using `a2a-sdk` v1.0 types,
 and a GitHub webhook. The LLM layer is provider agnostic: provider and model are
 configuration, not code.
 
