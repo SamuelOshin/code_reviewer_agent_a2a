@@ -38,11 +38,18 @@ Every result carries a `status`:
 - `failed`: no LLM findings step succeeded; only rule-based findings are reported.
 
 An `incomplete` or `failed` review gets the recommendation `incomplete` and **never
-approves**. Rule findings are kept when an LLM call fails. The LLM sees only the first
-8,000 characters of the diff; when the diff is longer the result sets `diff_truncated`
-and reports how many characters were reviewed (the rules still cover the whole diff).
+approves**. Rule findings are kept when an LLM call fails. The LLM reviews the whole
+diff in chunks of up to 8,000 characters (split by file, then by hunk), up to
+`LLM_MAX_DIFF_CHUNKS` chunks (default 8). Each chunk costs three model calls. A longer
+diff is reviewed up to the cap and marked incomplete: the result sets `diff_truncated`
+and reports how many characters and files the LLM did not cover (the rules still
+cover the whole diff). A chunk that fails keeps the findings from the other chunks
+and marks the review incomplete. Chunks run one after another, so a large PR is slow;
+after `LLM_REVIEW_BUDGET_SECONDS` (default 150) no new chunk starts and the rest is
+reported as not reviewed. Each chunk is reviewed on its own, so the model can't see
+code that sits in another chunk.
 Malformed or truncated model output is never read as "no issues". Raw model output is
-never logged. Tests: `tests/test_fail_closed.py`.
+never logged. Tests: `tests/test_fail_closed.py`, `tests/test_p207_diff_chunking.py`.
 
 The status and reasons appear in the PR comment (`app/utils/formatters.py`) and in the
 A2A report text. The `analyze_pr` RPC result carries them as `analysis_status` and
@@ -99,7 +106,9 @@ All settings are environment variables (or `.env`). [`.env.example`](.env.exampl
 | `OPENAI_COMPATIBLE_BASE_URL`, `OPENAI_COMPATIBLE_API_KEY` | for `openai-compatible` | Local models or gateways |
 | `PUSH_URL_ALLOWED_HOSTS` | no | Comma-separated bare hostnames allowed to receive push notifications. Empty (default) disables them |
 | `PUSH_URL_ALLOWED_PORTS` | no | Extra ports push URLs may use, comma-separated. Empty (default) allows only 443 |
-| `A2A_BLOCKING_TIMEOUT_SECONDS` | no | Longest a blocking `message/send` may run, default 300, max 3600. On timeout it returns JSON-RPC error `-32004` |
+| `A2A_BLOCKING_TIMEOUT_SECONDS` | no | Longest a blocking `message/send` may run, default 300, max 3600. On timeout it returns JSON-RPC error `-32004`. Must be above `LLM_REVIEW_BUDGET_SECONDS`, or startup fails |
+| `LLM_MAX_DIFF_CHUNKS` | no | Most 8,000-character diff chunks the LLM reviews per PR, 1-50, default 8. Each chunk costs three model calls |
+| `LLM_REVIEW_BUDGET_SECONDS` | no | Seconds after which no new diff chunk starts, default 150, max 3600. Must be below `A2A_BLOCKING_TIMEOUT_SECONDS`; leave room for the last chunk's calls and the summary (on a slow model they can still run past the blocking timeout). Applies to webhook reviews too |
 | `CORS_ALLOWED_ORIGINS` | no | Comma-separated `scheme://host[:port]`, lowercased. Empty sends no CORS headers; `*` is refused |
 | `JSONRPC_MAX_BATCH_SIZE` | no | Most calls per JSON-RPC batch, 1-100, default 10 |
 | `PUBLIC_BASE_URL` | no | Optional external `scheme://host[:port]` advertised in agent card interfaces behind a reverse proxy |

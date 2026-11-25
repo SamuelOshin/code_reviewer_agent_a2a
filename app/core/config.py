@@ -2,7 +2,7 @@
 
 import re
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 # Shortest API key accepted at startup (P1-07). 32 characters of a random token is
@@ -65,8 +65,10 @@ class Settings(BaseSettings):
     PUSH_URL_ALLOWED_PORTS: str = ""
 
     # Longest a blocking A2A message/send may run before it returns a JSON-RPC error
-    # (P1-15). A review makes four sequential model calls, each bounded by
-    # LLM_TIMEOUT_SECONDS, so keep this above that unless you want early cut-offs.
+    # (P1-15). A review makes three findings calls per diff chunk (see
+    # LLM_MAX_DIFF_CHUNKS) plus a summary call, one after another and each bounded by
+    # LLM_TIMEOUT_SECONDS. LLM_REVIEW_BUDGET_SECONDS stops new chunks in time; keep
+    # this above it with room for the last chunk's calls and the summary.
     A2A_BLOCKING_TIMEOUT_SECONDS: float = Field(300.0, gt=0, le=3600)
 
     # Browser origins allowed by CORS, comma-separated (e.g. https://app.example.com).
@@ -96,6 +98,15 @@ class Settings(BaseSettings):
     # Retries for transient provider errors, applied the same way for every provider
     LLM_MAX_RETRIES: int = Field(2, ge=0)
     LLM_TIMEOUT_SECONDS: float = Field(120.0, gt=0)
+    # Most diff chunks (MAX_DIFF_CHARS each) the LLM reviews per PR (P2-07). Each
+    # chunk costs three model calls. A diff needing more chunks is reviewed up to this
+    # cap and marked incomplete, with the uncovered part stated in the result.
+    LLM_MAX_DIFF_CHUNKS: int = Field(8, ge=1, le=50)
+    # Time after which the review starts no new diff chunk (P2-07). The chunk in
+    # progress finishes, then the summary runs; unreviewed chunks are reported and the
+    # review is marked incomplete. The default leaves the 300 s blocking A2A timeout
+    # room for the last chunk and the summary.
+    LLM_REVIEW_BUDGET_SECONDS: float = Field(150.0, gt=0, le=3600)
 
     # Provider credentials (only the ones your models use are needed)
     OPENAI_API_KEY: str = ""
@@ -179,6 +190,17 @@ class Settings(BaseSettings):
                     "with no path; '*' is not allowed"
                 )
         return value
+
+    @model_validator(mode="after")
+    def _budget_below_blocking_timeout(self) -> "Settings":
+        # P2-07: a budget at or above the blocking timeout would let every large
+        # blocking review time out with no result at all
+        if self.LLM_REVIEW_BUDGET_SECONDS >= self.A2A_BLOCKING_TIMEOUT_SECONDS:
+            raise ValueError(
+                "LLM_REVIEW_BUDGET_SECONDS must be less than A2A_BLOCKING_TIMEOUT_SECONDS "
+                "(leave room for the last diff chunk and the summary)"
+            )
+        return self
 
     @property
     def push_url_allowed_hosts(self) -> frozenset[str]:

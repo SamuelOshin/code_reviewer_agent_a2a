@@ -13,9 +13,9 @@ Main service that orchestrates the complete code review process:
 
 import logging
 import time
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
-from typing import Any, TypeVar
+from typing import Any, Generic, TypeVar
 
 from app.core.config import settings
 from app.core.errors import new_error_id, pr_ref
@@ -34,6 +34,7 @@ from app.models.analysis import (
 from app.models.github import PullRequest, PullRequestFile
 from app.services.github_mcp import GitHubMCPService
 from app.services.llm_service import MAX_DIFF_CHARS, LLMService, PartialFindingsError
+from app.utils.diff_chunker import chunk_diff
 from app.utils.diff_parser import DiffParser, FileDiff
 from app.utils.performance_rules import PerformanceChecker
 from app.utils.security_rules import SecurityChecker
@@ -45,6 +46,78 @@ IssueT = TypeVar("IssueT")
 # Fixed texts for a throttled model (P1-22). No exception text, no provider name.
 RETRY_LATER_TEXT = "wait a few minutes and run the review again."
 RATE_LIMITED_TEXT = f"the model was rate-limited; {RETRY_LATER_TEXT}"
+# Clock for the review time budget (P2-07); tests replace it
+_clock = time.monotonic
+
+
+class _LLMStep(Generic[IssueT]):
+    """One LLM findings step run over the diff chunks without ending the review.
+
+    Failures are recorded in `incomplete_reasons` by error type only: exception text
+    can echo the prompt or model output, and the reasons may be posted on the PR.
+    Findings that validated before a failure are kept. A rate limit stops the step's
+    remaining chunks, which would only be throttled too (P2-07).
+    """
+
+    def __init__(self, name: str, analyze: Callable[[str], Awaitable[list[IssueT]]]):
+        self.name = name
+        self.analyze = analyze
+        self.findings: list[IssueT] = []
+        self.succeeded = 0
+        self.partial = False
+        self.rate_limited = False
+        self.error_types: list[str] = []
+
+    async def run(self, chunk: str) -> None:
+        if self.rate_limited:
+            return
+        try:
+            self.findings.extend(await self.analyze(chunk))
+            self.succeeded += 1
+        except PartialFindingsError as e:
+            logger.error(f"{self.name} returned some invalid findings: {type(e).__name__}")
+            self.findings.extend(e.findings)
+            self.succeeded += 1
+            self.partial = True
+        except LLMRateLimitError as e:
+            logger.error(f"{self.name} failed: {type(e).__name__}")
+            self.rate_limited = True
+            self.error_types.append(type(e).__name__)
+        except Exception as e:
+            logger.error(f"{self.name} failed: {type(e).__name__}")
+            self.error_types.append(type(e).__name__)
+
+    def finish(self, parts: int, incomplete_reasons: list[str]) -> tuple[list[IssueT], bool, bool]:
+        """Record the outcome over `parts` chunks.
+
+        Returns the findings, whether the step produced usable output for at least one
+        chunk (a partial result counts; it is still recorded as incomplete), and
+        whether it failed outright because the model was rate-limited (P1-23).
+        """
+        if not self.succeeded:
+            # P1-22: fixed text, no exception text, so a throttled model reads as
+            # "retry later" and not as a bug
+            only_limited = self.rate_limited and len(set(self.error_types)) == 1
+            if only_limited:
+                incomplete_reasons.append(f"{self.name} failed: {RATE_LIMITED_TEXT}")
+            else:
+                incomplete_reasons.append(f"{self.name} failed ({self.error_types[0]}).")
+            return [], False, only_limited
+
+        if self.partial:
+            incomplete_reasons.append(
+                f"{self.name} returned some invalid findings, which were dropped."
+            )
+        failed = parts - self.succeeded
+        if failed:
+            cause = (
+                RATE_LIMITED_TEXT if self.rate_limited
+                else ", ".join(dict.fromkeys(self.error_types))
+            )
+            incomplete_reasons.append(
+                f"{self.name} failed on {failed} of {parts} diff parts ({cause})."
+            )
+        return self.findings, True, False
 
 
 class CodeAnalyzerService:
@@ -99,36 +172,85 @@ class CodeAnalyzerService:
             # Step 5: Run LLM-powered analysis (slower, comprehensive). A failed step
             # keeps the rule findings and marks the review incomplete (P1-06, F-03).
             incomplete_reasons: list[str] = []
-            diff_chars_total = len(diff_content)
-            diff_truncated = diff_chars_total > MAX_DIFF_CHARS
-            if diff_truncated:
-                incomplete_reasons.append(
-                    f"The diff is {diff_chars_total:,} characters; the LLM reviewed only "
-                    f"the first {MAX_DIFF_CHARS:,}. Rule-based checks covered the whole diff."
+            # P2-07: the LLM reviews the whole diff in chunks of MAX_DIFF_CHARS, up to
+            # LLM_MAX_DIFF_CHUNKS; anything past the cap is reported, never dropped quietly
+            chunked = chunk_diff(diff_content, MAX_DIFF_CHARS, settings.LLM_MAX_DIFF_CHUNKS)
+            diff_chars_total = chunked.chars_total
+            if len(chunked.chunks) > 1:
+                logger.info(
+                    f"Diff split into {len(chunked.chunks)} parts for the LLM "
+                    f"({chunked.chars_reviewed:,} of {chunked.chars_total:,} characters)"
                 )
 
-            llm_security_issues, security_ran, security_limited = await self._run_llm_step(
-                "Security analysis",
-                self.llm_service.analyze_security(diff_content, files),
-                incomplete_reasons,
-            )
-            llm_performance_issues, performance_ran, performance_limited = await self._run_llm_step(
-                "Performance analysis",
-                self.llm_service.analyze_performance(diff_content, files),
-                incomplete_reasons,
-            )
-            llm_best_practice_issues, best_practices_ran, best_practices_limited = await self._run_llm_step(
-                "Best practices analysis",
-                self.llm_service.analyze_best_practices(diff_content, files),
-                incomplete_reasons,
-            )
+            # Chunk by chunk, each through all three steps, so a time-budget stop leaves
+            # every step at the same coverage (P2-07)
+            steps = [
+                _LLMStep("Security analysis", lambda c: self.llm_service.analyze_security(c, files)),
+                _LLMStep("Performance analysis", lambda c: self.llm_service.analyze_performance(c, files)),
+                _LLMStep("Best practices analysis", lambda c: self.llm_service.analyze_best_practices(c, files)),
+            ]
+            deadline = _clock() + settings.LLM_REVIEW_BUDGET_SECONDS
+            parts_sent = 0
+            # Parts at least one step succeeded on; only these count as coverage (P2-07)
+            reviewed_parts: set[int] = set()
+            out_of_time = False
+            all_rate_limited = False
+            for index, chunk in enumerate(chunked.chunks):
+                if all(step.rate_limited for step in steps):
+                    all_rate_limited = True  # every step has stopped
+                    break
+                # The first part always runs; later ones only while the budget lasts
+                if index and _clock() >= deadline:
+                    out_of_time = True
+                    break
+                succeeded_before = sum(step.succeeded for step in steps)
+                for step in steps:
+                    await step.run(chunk)
+                parts_sent += 1
+                if sum(step.succeeded for step in steps) > succeeded_before:
+                    reviewed_parts.add(index)
+            reviewed = sum(chunked.chunk_chars[i] for i in reviewed_parts)
+            diff_truncated = reviewed < chunked.chars_total
+            # With no limit hit and no part reviewed, each step's own "failed" reason
+            # already says nothing ran, so there is no coverage to state
+            limit_hit = chunked.capped or out_of_time or all_rate_limited
+            if diff_truncated and (limit_hit or reviewed_parts):
+                # One statement of coverage, from what actually ran (P2-07)
+                limits = []
+                if chunked.capped:
+                    limits.append("the LLM_MAX_DIFF_CHUNKS limit")
+                if all_rate_limited:
+                    limits.append("the model being rate-limited")
+                if out_of_time:
+                    limits.append("the review time limit (LLM_REVIEW_BUDGET_SECONDS)")
+                    logger.warning(
+                        f"LLM review time budget ran out after {parts_sent} of "
+                        f"{len(chunked.chunks)} diff parts"
+                    )
+                causes = [f"stopped by {' and '.join(limits)}"] if limits else []
+                failed_parts = parts_sent - len(reviewed_parts)
+                if failed_parts:
+                    causes.append(f"no step succeeded on {failed_parts} part(s)")
+                not_fully = chunked.files_total - chunked.files_fully_reviewed(reviewed_parts)
+                incomplete_reasons.append(
+                    f"The diff is {chunked.chars_total:,} characters in "
+                    f"{chunked.files_total} file(s); the LLM reviewed {reviewed:,} of them "
+                    f"({len(reviewed_parts)} of {chunked.chunks_needed} diff parts, "
+                    f"{'; '.join(causes)}), and {not_fully} file(s) were not fully "
+                    f"reviewed by the LLM. Rule-based checks covered the whole diff."
+                )
+            (
+                (llm_security_issues, security_ran, security_limited),
+                (llm_performance_issues, performance_ran, performance_limited),
+                (llm_best_practice_issues, best_practices_ran, best_practices_limited),
+            ) = (step.finish(parts_sent, incomplete_reasons) for step in steps)
 
             logger.info(f"LLM analysis: {len(llm_security_issues)} security, {len(llm_performance_issues)} performance, {len(llm_best_practice_issues)} best practice issues")
             
             # Step 6: Merge and deduplicate findings
             all_security_issues = self._merge_security_issues(rule_security_issues, llm_security_issues)
             all_performance_issues = self._merge_performance_issues(rule_performance_issues, llm_performance_issues)
-            all_best_practice_issues = llm_best_practice_issues  # Only from LLM
+            all_best_practice_issues = self._merge_best_practice_issues(llm_best_practice_issues)
             
             # Step 7: Calculate risk level
             risk_level = self._calculate_risk_level(all_security_issues, all_performance_issues)
@@ -230,7 +352,7 @@ class CodeAnalyzerService:
                 incomplete_reasons=incomplete_reasons,
                 diff_truncated=diff_truncated,
                 diff_chars_total=diff_chars_total,
-                diff_chars_reviewed_by_llm=min(diff_chars_total, MAX_DIFF_CHARS),
+                diff_chars_reviewed_by_llm=reviewed,
                 key_concerns=recommendations,  # Map recommendations to key_concerns
                 analyzed_at=datetime.now(UTC),
                 analysis_duration_seconds=analysis_duration,
@@ -261,38 +383,6 @@ class CodeAnalyzerService:
                 f"Analysis failed ({type(e).__name__}, error id: {error_id})"
             ) from None
     
-    async def _run_llm_step(
-        self,
-        name: str,
-        call: Awaitable[list[IssueT]],
-        incomplete_reasons: list[str],
-    ) -> tuple[list[IssueT], bool, bool]:
-        """Await one LLM findings step without letting its failure end the review.
-
-        Returns the findings, whether the step produced usable output (a partial
-        result counts; it is still recorded as incomplete), and whether the step failed
-        because the model was rate-limited (P1-23). Any failure is
-        recorded in `incomplete_reasons` by error type only: exception text can echo
-        the prompt or model output, and the reasons may be posted on the PR.
-        Findings that validated before a partial failure are kept.
-        """
-        try:
-            return await call, True, False
-        except PartialFindingsError as e:
-            logger.error(f"{name} returned some invalid findings: {type(e).__name__}")
-            incomplete_reasons.append(f"{name} returned some invalid findings, which were dropped.")
-            return list(e.findings), True, False
-        except LLMRateLimitError as e:
-            # P1-22: fixed text, no exception text, so a throttled model reads as
-            # "retry later" and not as a bug
-            logger.error(f"{name} failed: {type(e).__name__}")
-            incomplete_reasons.append(f"{name} failed: {RATE_LIMITED_TEXT}")
-            return [], False, True
-        except Exception as e:
-            logger.error(f"{name} failed: {type(e).__name__}")
-            incomplete_reasons.append(f"{name} failed ({type(e).__name__}).")
-            return [], False, False
-
     @staticmethod
     def _fail_closed(
         status: AnalysisStatus, recommendation: ApprovalRecommendation
@@ -454,6 +544,41 @@ class CodeAnalyzerService:
         
         return merged
     
+    def _merge_best_practice_issues(
+        self,
+        llm_issues: list[BestPracticeIssue]
+    ) -> list[BestPracticeIssue]:
+        """
+        Deduplicate best-practice issues (LLM only, one run per diff chunk, P2-07)
+
+        Only the same file, line and normalized title count as a duplicate. Most of
+        these findings have no line number, so fuzzy title matching would merge
+        different advice about one file.
+
+        Args:
+            llm_issues: Issues from LLM analysis
+
+        Returns:
+            Deduplicated list in first-seen order, each entry the highest-severity
+            finding of its duplicates
+        """
+        merged: dict[tuple[str, int | None, str], BestPracticeIssue] = {}
+
+        for issue in llm_issues:
+            key = (issue.file, issue.line_number, self._normalize_title(issue.title))
+            existing = merged.get(key)
+            # Replace the whole finding, so its fields all come from one report
+            if existing is None or self._severity_higher(issue.severity, existing.severity):
+                merged[key] = issue
+
+        return list(merged.values())
+
+    @staticmethod
+    def _normalize_title(title: str) -> str:
+        """Case-fold, collapse whitespace and drop trailing sentence punctuation"""
+        # Only sentence punctuation: "C++" and "C#" must stay different titles
+        return " ".join(title.casefold().split()).rstrip(" .,;:!?\u2026")
+
     def _titles_similar(self, title1: str, title2: str) -> bool:
         """
         Check if two issue titles are similar (fuzzy matching)

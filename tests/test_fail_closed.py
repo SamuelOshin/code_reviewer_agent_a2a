@@ -206,7 +206,10 @@ class TestNeverApproves:
         assert result.status == AnalysisStatus.FAILED
 
     @pytest.mark.asyncio
-    async def test_truncated_diff_is_reported_and_never_approves(self):
+    async def test_truncated_diff_is_reported_and_never_approves(self, monkeypatch):
+        # P2-07: a long diff is chunked, so only a diff past LLM_MAX_DIFF_CHUNKS is cut
+        from app.core.config import settings
+        monkeypatch.setattr(settings, "LLM_MAX_DIFF_CHUNKS", 1)
         padding = "".join(f"+    line_{i} = {i}\n" for i in range(MAX_DIFF_CHARS // 10))
         diff = SAFE_DIFF + padding
         assert len(diff) > MAX_DIFF_CHARS
@@ -216,10 +219,10 @@ class TestNeverApproves:
 
         assert result.diff_truncated is True
         assert result.diff_chars_total == len(diff)
-        assert result.diff_chars_reviewed_by_llm == MAX_DIFF_CHARS
+        assert 0 < result.diff_chars_reviewed_by_llm < len(diff)
         assert result.status == AnalysisStatus.INCOMPLETE
         assert result.approval_recommendation == ApprovalRecommendation.INCOMPLETE
-        assert any("first 8,000" in r for r in result.incomplete_reasons)
+        assert any("LLM_MAX_DIFF_CHUNKS" in r for r in result.incomplete_reasons)
 
     @pytest.mark.asyncio
     async def test_summary_failure_falls_back_and_never_approves(self):
