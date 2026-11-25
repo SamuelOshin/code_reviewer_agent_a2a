@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 
 from evals.dataset import Case, fingerprint
 from evals.harness import CaseResult
-from evals.scoring import CATEGORIES, aggregate
+from evals.scoring import CATEGORIES, CaseScore, aggregate, model_contribution
 
 SCHEMA_VERSION = 2
 _TEXT_LIMIT = 200
@@ -27,6 +27,22 @@ def _finding(result: CaseResult, index: int) -> dict:
         "line": finding.line,
         "severity": finding.severity,
         "title": finding.title[:_TEXT_LIMIT],
+    }
+
+
+def _brief(score: CaseScore | None) -> dict | None:
+    """One side of the model contribution, for a case row."""
+    if score is None:
+        return None
+    return {
+        "status": score.outcome.status,
+        "verdict": score.outcome.verdict,
+        "tp": score.tp,
+        "fp": score.fp,
+        "fn": score.fn,
+        "missed": list(score.missed),
+        "passed": score.passed,
+        "passed_ignoring_duplicates": score.passed_ignoring_duplicates,
     }
 
 
@@ -67,6 +83,8 @@ def _case_row(result: CaseResult) -> dict:
         "latency_seconds": result.latency_seconds,
         "usage": result.usage,
         "answering_models": result.answering_models,
+        "model_only": _brief(result.model_score),
+        "rules_only": _brief(result.rules_score),
     }
 
 
@@ -93,6 +111,15 @@ def _latency(results: list[CaseResult]) -> dict:
     }
 
 
+def _contribution(results: list[CaseResult]) -> dict | None:
+    """None when no model was involved (rules mode, or no case finished)."""
+    model = [r.model_score for r in results if r.model_score is not None]
+    rules = [r.rules_score for r in results if r.rules_score is not None]
+    if not results or len(model) != len(results) or len(rules) != len(results):
+        return None
+    return model_contribution([r.score for r in results], model, rules)
+
+
 def build_report(results: list[CaseResult], cases: list[Case], mode: str, config: dict) -> dict:
     return {
         "schema_version": SCHEMA_VERSION,
@@ -100,7 +127,10 @@ def build_report(results: list[CaseResult], cases: list[Case], mode: str, config
         "created_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "dataset": {"cases": len(cases), "fingerprint": fingerprint(cases)},
         "config": config,
-        "metrics": aggregate([r.score for r in results]),
+        "metrics": {
+            **aggregate([r.score for r in results]),
+            "model_contribution": _contribution(results),
+        },
         "usage": _usage_totals(results),
         "latency_seconds": _latency(results),
         "answering_models": sorted({m for r in results for m in r.answering_models}),
@@ -159,6 +189,30 @@ def _table(header: list[str], rows: list[list[str]]) -> list[str]:
     return lines + ["| " + " | ".join(row) + " |" for row in rows]
 
 
+def _contribution_rows(data: dict | None, total: int) -> list[tuple[str, str]]:
+    labels = (
+        ("model_only", "Model findings only: recall / passed / ignoring duplicates"),
+        ("rules_only", "Rules only, same cases: recall / passed / ignoring duplicates"),
+    )
+    gain_label = "Combined minus rules only: recall / passed / ignoring duplicates"
+    if data is None:
+        return [(label, "n/a (no model)") for _, label in labels] + [(gain_label, "n/a (no model)")]
+    rows = [
+        (
+            label,
+            f"{_percent(data[key]['recall'])} / {data[key]['passed']} of {total} / "
+            f"{data[key]['passed_ignoring_duplicates']} of {total}",
+        )
+        for key, label in labels
+    ]
+    gain = data["gain_over_rules"]
+    recall = "n/a" if gain["recall"] is None else f"{gain['recall'] * 100:+.1f} points"
+    rows.append(
+        (gain_label, f"{recall} / {gain['passed']:+d} / {gain['passed_ignoring_duplicates']:+d}")
+    )
+    return rows
+
+
 def _headline_rows(report: dict) -> list[tuple[str, str]]:
     """The rows shared by a run's summary and a comparison."""
     metrics, usage = report["metrics"], report["usage"]
@@ -214,6 +268,7 @@ def _headline_rows(report: dict) -> list[tuple[str, str]]:
                 f"{_percent(data['clean_high_false_positive_rate'])}",
             ),
         ]
+    rows += _contribution_rows(metrics["model_contribution"], cases["total"])
     rows += [
         ("Model calls (failed)", f"{usage['calls']} ({usage['failed_calls']})"),
         ("Tokens in / out", _tokens(usage)),
@@ -250,6 +305,9 @@ def summary_markdown(report: dict) -> str:
         "",
         *_notes(report),
         *_table(["Measure", "Value"], [list(row) for row in _headline_rows(report)]),
+        "",
+        "Passes of the model's findings alone do not include a verdict: the app derives "
+        "it from the combined findings.",
         "",
         "## By case type",
         "",

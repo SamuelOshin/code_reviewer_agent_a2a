@@ -10,7 +10,7 @@ from app.llm import LLMResult, ModelCapabilities, Role, Usage
 from app.models.analysis import BestPracticesReport, PerformanceReport, SecurityReport
 from evals.dataset import ExpectedLabel
 
-_CATEGORY_OF = {
+CATEGORY_OF_REPORT = {
     SecurityReport: "security",
     PerformanceReport: "performance",
     BestPracticesReport: "best_practice",
@@ -40,7 +40,7 @@ class EmptyClient:
         if output_type is str:
             output = "Scripted summary."
         else:
-            category = _CATEGORY_OF[output_type]
+            category = CATEGORY_OF_REPORT[output_type]
             output = output_type(findings=self._findings(category, prompt))
         text = output if isinstance(output, str) else output.model_dump_json()
         # A rough, repeatable token estimate (4 characters each), not a provider count

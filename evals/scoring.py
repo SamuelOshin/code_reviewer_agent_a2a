@@ -46,6 +46,10 @@ Metrics
   can't lower the rate. Null when no clean case was evaluated.
 - Verdict accuracy = constrained cases with an acceptable verdict / constrained cases.
   A constraint lists the verdicts a case must not get.
+- Model contribution (runs with a model): the model's own findings scored alone, the
+  same cases reviewed by the rules alone, and the combined review minus the rules-only
+  one. Model-only passes ignore the verdict, which the app derives from the combined
+  findings; rules-only and combined passes include it.
 - A case passes when its review is `complete`, every label is matched, there is no
   false positive and the verdict constraint, if any, holds. It passes ignoring
   duplicates when the only false positives are duplicates.
@@ -352,3 +356,35 @@ def aggregate(scores: Sequence[CaseScore]) -> dict:
         },
         "by_type": by_type,
     }
+
+
+def _recall_and_passes(scores: Sequence[CaseScore]) -> dict:
+    tp = sum(s.tp for s in scores)
+    fn = sum(s.fn for s in scores)
+    passed = sum(s.passed for s in scores)
+    return {
+        "tp": tp,
+        "fn": fn,
+        "recall": _ratio(tp, tp + fn),
+        "passed": passed,
+        "passed_ignoring_duplicates": sum(s.passed_ignoring_duplicates for s in scores),
+        "pass_rate": _ratio(passed, len(scores)),
+    }
+
+
+def model_contribution(
+    combined: Sequence[CaseScore], model: Sequence[CaseScore], rules: Sequence[CaseScore]
+) -> dict:
+    """What the model adds over the rules, for the same cases in each list."""
+    result = {
+        "model_only": _recall_and_passes(model),
+        "rules_only": _recall_and_passes(rules),
+        "combined": _recall_and_passes(combined),
+    }
+    result["gain_over_rules"] = {
+        key: None
+        if value is None or result["rules_only"][key] is None
+        else round(value - result["rules_only"][key], 4)
+        for key, value in result["combined"].items()
+    }
+    return result

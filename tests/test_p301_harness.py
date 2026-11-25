@@ -10,6 +10,7 @@ import pytest
 from app.core.config import settings
 from app.llm import LLMResult, Role, Usage
 from app.llm.errors import LLMAuthError, LLMRateLimitError
+from app.models.analysis import Severity
 from app.services.llm_service import MAX_DIFF_CHARS
 from evals import harness, run
 from evals.dataset import CASES_DIR, DatasetError, fingerprint, load_cases
@@ -174,6 +175,67 @@ class TestChunking:
         assert result.score.outcome.status == "incomplete"
         assert result.diff_chars_reviewed < result.diff_chars_total
         assert not result.score.passed
+
+
+class TestModelContribution:
+    PICKED = ("py-unsafe-yaml", "java-sql-concat", "clean-go-extract-helper")
+
+    @pytest.mark.asyncio
+    async def test_a_perfect_model_is_separated_from_the_rules(self, cases):
+        picked = [by_id(cases, i) for i in self.PICKED]
+        results = await harness.run_cases(picked, "fake")
+        report = build_report(results, picked, "fake", {})
+        data = report["metrics"]["model_contribution"]
+        assert data["model_only"]["recall"] == 1.0
+        assert data["model_only"]["passed"] == 3
+        assert (data["rules_only"]["recall"], data["rules_only"]["passed"]) == (0.5, 2)
+        assert data["gain_over_rules"]["recall"] == 0.5
+        # The rules and the model title the YAML bug differently: a duplicate in the
+        # combined review, so only the lenient pass count gains it
+        assert data["combined"]["passed"] == 2
+        assert data["gain_over_rules"]["passed"] == 0
+        assert data["gain_over_rules"]["passed_ignoring_duplicates"] == 1
+        text = summary_markdown(report)
+        assert "Model findings only" in text
+        assert "+50.0 points / +0 / +1" in text
+
+    @pytest.mark.asyncio
+    async def test_a_model_that_fails_gets_no_credit_for_the_rules_findings(self, cases):
+        picked = [by_id(cases, "py-unsafe-yaml")]
+        (result,) = await harness.run_cases(
+            picked, "llm", client_for=lambda c: _Broken(LLMRateLimitError("limited"))
+        )
+        assert result.score.tp == 1  # the rules found it
+        assert result.model_score.tp == 0
+        assert not result.model_score.passed
+        data = build_report([result], picked, "llm", {})["metrics"]["model_contribution"]
+        assert data["model_only"]["recall"] == 0.0
+        assert data["gain_over_rules"]["recall"] == 0.0
+
+    @pytest.mark.asyncio
+    async def test_model_findings_are_not_changed_by_the_apps_merge(self, cases):
+        case = by_id(cases, "py-weak-password-hash")
+
+        class Louder(FakeClient):
+            async def generate(self, role, prompt, **kwargs):
+                result = await super().generate(role, prompt, **kwargs)
+                for item in getattr(result.output, "findings", []):
+                    item.title = "Potential Weak Cryptographic Algorithm md5"
+                    item.severity = Severity.LOW
+                return result
+
+        (result,) = await harness.run_cases([case], "llm", client_for=lambda c: Louder(c.labels))
+        # Merged into the rule finding in the combined review, but still the model's own
+        assert [f.severity for f in result.score.outcome.findings] == ["high"]
+        assert [f.severity for f in result.model_score.outcome.findings] == ["low"]
+
+    @pytest.mark.asyncio
+    async def test_rules_mode_has_no_model_numbers(self, cases):
+        results = await harness.run_cases(cases[:2], "rules")
+        report = build_report(results, cases[:2], "rules", {})
+        assert report["metrics"]["model_contribution"] is None
+        assert report["cases"][0]["model_only"] is None
+        assert "n/a (no model)" in summary_markdown(report)
 
 
 class TestRulesRun:

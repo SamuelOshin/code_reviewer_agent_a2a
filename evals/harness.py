@@ -11,12 +11,11 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 
 from app.llm import LLMClient
-from app.models.analysis import CodeAnalysisResult
 from app.models.github import GitHubUser, PullRequest, PullRequestFile
 from app.services.code_analyzer import CodeAnalyzerService
 from app.services.llm_service import LLMService
 from evals.dataset import Case
-from evals.fake import EmptyClient, FakeClient
+from evals.fake import CATEGORY_OF_REPORT, EmptyClient, FakeClient
 from evals.scoring import DEFAULT_LINE_TOLERANCE, CaseOutcome, CaseScore, Finding, score_case
 
 MODES = ("rules", "fake", "llm")
@@ -30,6 +29,8 @@ class RecordingClient:
         self.calls: list = []  # a Usage per call that returned
         self.models: set[str] = set()
         self.failed: list[str] = []  # error type names
+        # The valid findings the model returned, per category, before any merging
+        self.reported: dict[str, list] = {c: [] for c in CATEGORY_OF_REPORT.values()}
 
     def model_name(self, role):
         return self.client.model_name(role)
@@ -48,6 +49,10 @@ class RecordingClient:
             raise
         self.calls.append(result.usage)
         self.models.add(result.model)
+        category = CATEGORY_OF_REPORT.get(type(result.output))
+        if category:
+            # Copies: the app's merge changes the severity of the objects it is given
+            self.reported[category].extend(f.model_copy() for f in result.output.findings)
         return result
 
     def usage(self) -> dict:
@@ -114,6 +119,14 @@ class _CaseAnalyzer(CodeAnalyzerService):
         )
         return pr, self.case.diff, files
 
+    def model_only_findings(self, reported: dict[str, list]) -> tuple[Finding, ...]:
+        """The model's findings merged as the app would merge them with no rule hits."""
+        return _findings(
+            self._merge_security_issues([], reported["security"]),
+            self._merge_performance_issues([], reported["performance"]),
+            self._merge_best_practice_issues(reported["best_practice"]),
+        )
+
 
 @dataclass(frozen=True)
 class CaseResult:
@@ -127,13 +140,17 @@ class CaseResult:
     diff_chars_total: int | None
     diff_chars_reviewed: int | None
     error: str | None = None  # exception type name when the pipeline raised
+    # With a model (llm and fake modes): the model's findings scored on their own, with
+    # no verdict, and the same case reviewed by the rules alone
+    model_score: CaseScore | None = None
+    rules_score: CaseScore | None = None
 
 
-def _findings(result: CodeAnalysisResult) -> tuple[Finding, ...]:
+def _findings(security: list, performance: list, best_practice: list) -> tuple[Finding, ...]:
     groups = (
-        ("security", result.security_findings),
-        ("performance", result.performance_findings),
-        ("best_practice", result.best_practice_findings),
+        ("security", security),
+        ("performance", performance),
+        ("best_practice", best_practice),
     )
     return tuple(
         Finding(
@@ -169,8 +186,20 @@ async def run_case(
         status=result.status.value if result else "error",
         verdict=result.approval_recommendation.value if result else None,
         labels=case.labels,
-        findings=_findings(result) if result else (),
+        findings=_findings(
+            result.security_findings,
+            result.performance_findings,
+            result.best_practice_findings,
+        )
+        if result
+        else (),
         forbidden_verdicts=case.forbidden_verdicts,
+    )
+    # No verdict: the app derives it from the combined findings only
+    model_only = replace(
+        outcome,
+        findings=analyzer.model_only_findings(recorder.reported),
+        forbidden_verdicts=(),
     )
     return CaseResult(
         case=case,
@@ -183,6 +212,7 @@ async def run_case(
         diff_chars_total=result.diff_chars_total if result else None,
         diff_chars_reviewed=result.diff_chars_reviewed_by_llm if result else None,
         error=error,
+        model_score=score_case(model_only, line_tolerance),
     )
 
 
@@ -196,7 +226,8 @@ async def run_cases(
     """Run the cases one after another, so each latency is measured on its own.
 
     `llm` mode needs `client_for`. `rules` mode makes no model call, so its usage is
-    zero.
+    zero. The other modes also review each case with the rules alone (free), to show
+    what the model adds.
     """
     if mode not in MODES:
         raise ValueError(f"Unknown mode {mode!r}: use one of {MODES}")
@@ -208,10 +239,12 @@ async def run_cases(
             # The empty client stands in for "no model", so there is no usage to report
             result = await run_case(case, EmptyClient(), line_tolerance)
             no_usage = RecordingClient(EmptyClient()).usage()
-            result = replace(result, usage=no_usage, answering_models=[])
+            result = replace(result, usage=no_usage, answering_models=[], model_score=None)
         else:
             client = client_for(case) if client_for else FakeClient(case.labels)
             result = await run_case(case, client, line_tolerance)
+            rules = await run_case(case, EmptyClient(), line_tolerance)
+            result = replace(result, rules_score=rules.score)
         results.append(result)
         if progress:
             progress(result)
