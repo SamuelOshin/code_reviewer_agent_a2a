@@ -28,6 +28,7 @@ from a2a.helpers.proto_helpers import get_artifact_text, new_data_part
 from a2a.types import (
     AgentCard,
     AuthenticationInfo,
+    GetTaskRequest,
     InvalidParamsError,
     Message,
     Part,
@@ -40,6 +41,7 @@ from a2a.types import (
     UnsupportedOperationError,
 )
 from a2a.utils.constants import AGENT_CARD_WELL_KNOWN_PATH
+from a2a.utils.errors import MethodNotFoundError
 from a2a.utils.proto_utils import validate_proto_required_fields, warn_on_missing_required_fields
 from fastapi.testclient import TestClient
 from google.protobuf.json_format import MessageToDict, ParseDict
@@ -743,3 +745,52 @@ async def test_context_id_preserved_and_empty_ids_and_multipart_and_null_shadow(
                 },
             ).json()
             assert res_bad["error"]["code"] == -32602
+
+
+# ---------------------------------------------------------------------------
+# Review follow-ups: /a2a/tasks routes any JSON-RPC method; push auth schemes
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a2a_tasks_unknown_jsonrpc_method_is_method_not_found_not_422():
+    """The advertised /a2a/tasks endpoint must answer GetTask with JSON-RPC -32601, not HTTP 422."""
+    async with _sdk_client(authenticated=True) as (a2a_client, ctx):
+        with pytest.raises(MethodNotFoundError):
+            await a2a_client.get_task(GetTaskRequest(id="task-does-not-exist"), context=ctx)
+
+
+def test_a2a_tasks_unknown_method_matches_rpc_and_bad_bodies_still_422():
+    with TestClient(app) as client:
+        body = {"jsonrpc": "2.0", "id": 7, "method": "GetTask", "params": {"id": "x"}}
+        via_tasks = client.post("/a2a/tasks", json=body, headers=AUTH_HEADERS)
+        via_rpc = client.post("/rpc", json=body, headers=AUTH_HEADERS)
+        assert via_tasks.status_code == 200
+        assert via_tasks.json() == via_rpc.json()
+        assert via_tasks.json()["error"]["code"] == -32601
+        # Neither JSON-RPC 2.0 nor {"message": "<text>"}: still rejected
+        assert client.post("/a2a/tasks", json={"method": "GetTask"}, headers=AUTH_HEADERS).status_code == 422
+        assert client.post("/a2a/tasks", json={"foo": 1}, headers=AUTH_HEADERS).status_code == 422
+
+
+@pytest.mark.parametrize(
+    ("auth", "token", "expected"),
+    [
+        ({"scheme": "Basic", "credentials": "dXNlcjpwYXNz"}, None, "Basic dXNlcjpwYXNz"),
+        ({"schemes": ["Basic", "Bearer"], "credentials": "abc"}, None, "Basic abc"),
+        ({"scheme": "Bearer", "credentials": "abc"}, "tok", "Bearer abc"),
+        ({"schemes": ["Bearer"]}, "tok", "Bearer tok"),
+        ({"scheme": "Basic"}, "tok", None),
+    ],
+)
+def test_push_auth_sends_authorization_for_any_scheme(auth, token, expected):
+    from app.services.message_handler import _apply_push_auth
+
+    config: dict[str, object] = {"url": "https://hooks.example.test/push", "authentication": auth}
+    if token:
+        config["token"] = token
+    headers: dict[str, str] = {}
+    _apply_push_auth(headers, config)
+    assert headers.get("Authorization") == expected
+    if token:
+        assert headers["X-A2A-Notification-Token"] == token
