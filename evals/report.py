@@ -310,6 +310,16 @@ def _notes(report: dict) -> list[str]:
     return notes
 
 
+def _contribution_note(report: dict) -> list[str]:
+    if report["metrics"]["model_contribution"] is None:
+        return []
+    return [
+        "",
+        "Passes of the model's findings alone do not include a verdict: the app derives "
+        "it from the combined findings.",
+    ]
+
+
 def summary_markdown(report: dict) -> str:
     dataset = report["dataset"]
     lines = [
@@ -321,9 +331,7 @@ def summary_markdown(report: dict) -> str:
         "",
         *_notes(report),
         *_table(["Measure", "Value"], [list(row) for row in _headline_rows(report)]),
-        "",
-        "Passes of the model's findings alone do not include a verdict: the app derives "
-        "it from the combined findings.",
+        *_contribution_note(report),
         "",
         "## By case type",
         "",

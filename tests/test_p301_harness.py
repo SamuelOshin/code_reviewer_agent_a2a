@@ -236,6 +236,7 @@ class TestModelContribution:
         assert report["metrics"]["model_contribution"] is None
         assert report["cases"][0]["model_only"] is None
         assert "n/a (no model)" in summary_markdown(report)
+        assert "do not include a verdict" not in summary_markdown(report)
 
 
 class TestRulesRun:
