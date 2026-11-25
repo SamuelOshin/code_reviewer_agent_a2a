@@ -190,7 +190,9 @@ class CodeAnalyzerService:
                 _LLMStep("Best practices analysis", lambda c: self.llm_service.analyze_best_practices(c, files)),
             ]
             deadline = _clock() + settings.LLM_REVIEW_BUDGET_SECONDS
-            parts_reviewed = 0
+            parts_sent = 0
+            # Parts at least one step succeeded on; only these count as coverage (P2-07)
+            reviewed_parts: set[int] = set()
             out_of_time = False
             all_rate_limited = False
             for index, chunk in enumerate(chunked.chunks):
@@ -201,12 +203,18 @@ class CodeAnalyzerService:
                 if index and _clock() >= deadline:
                     out_of_time = True
                     break
+                succeeded_before = sum(step.succeeded for step in steps)
                 for step in steps:
                     await step.run(chunk)
-                parts_reviewed += 1
-            reviewed = sum(chunked.chunk_chars[:parts_reviewed])
-            diff_truncated = chunked.capped or out_of_time or all_rate_limited
-            if diff_truncated:
+                parts_sent += 1
+                if sum(step.succeeded for step in steps) > succeeded_before:
+                    reviewed_parts.add(index)
+            reviewed = sum(chunked.chunk_chars[i] for i in reviewed_parts)
+            diff_truncated = reviewed < chunked.chars_total
+            # With no limit hit and no part reviewed, each step's own "failed" reason
+            # already says nothing ran, so there is no coverage to state
+            limit_hit = chunked.capped or out_of_time or all_rate_limited
+            if diff_truncated and (limit_hit or reviewed_parts):
                 # One statement of coverage, from what actually ran (P2-07)
                 limits = []
                 if chunked.capped:
@@ -216,22 +224,26 @@ class CodeAnalyzerService:
                 if out_of_time:
                     limits.append("the review time limit (LLM_REVIEW_BUDGET_SECONDS)")
                     logger.warning(
-                        f"LLM review time budget ran out after {parts_reviewed} of "
+                        f"LLM review time budget ran out after {parts_sent} of "
                         f"{len(chunked.chunks)} diff parts"
                     )
-                not_fully = chunked.files_total - chunked.files_complete_after[parts_reviewed - 1]
+                causes = [f"stopped by {' and '.join(limits)}"] if limits else []
+                failed_parts = parts_sent - len(reviewed_parts)
+                if failed_parts:
+                    causes.append(f"no step succeeded on {failed_parts} part(s)")
+                not_fully = chunked.files_total - chunked.files_fully_reviewed(reviewed_parts)
                 incomplete_reasons.append(
                     f"The diff is {chunked.chars_total:,} characters in "
                     f"{chunked.files_total} file(s); the LLM reviewed {reviewed:,} of them "
-                    f"({parts_reviewed} of {chunked.chunks_needed} diff parts, stopped by "
-                    f"{' and '.join(limits)}), and {not_fully} file(s) were not fully "
+                    f"({len(reviewed_parts)} of {chunked.chunks_needed} diff parts, "
+                    f"{'; '.join(causes)}), and {not_fully} file(s) were not fully "
                     f"reviewed by the LLM. Rule-based checks covered the whole diff."
                 )
             (
                 (llm_security_issues, security_ran, security_limited),
                 (llm_performance_issues, performance_ran, performance_limited),
                 (llm_best_practice_issues, best_practices_ran, best_practices_limited),
-            ) = (step.finish(parts_reviewed, incomplete_reasons) for step in steps)
+            ) = (step.finish(parts_sent, incomplete_reasons) for step in steps)
 
             logger.info(f"LLM analysis: {len(llm_security_issues)} security, {len(llm_performance_issues)} performance, {len(llm_best_practice_issues)} best practice issues")
             

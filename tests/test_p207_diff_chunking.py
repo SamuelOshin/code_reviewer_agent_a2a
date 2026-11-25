@@ -231,11 +231,15 @@ class TestChunker:
         diff = file_diff("a.js", 3, extra="x = 'a\u2028diff --git b'") + file_diff("b.js", 3)
         assert chunk_diff(diff, 8000, 8).files_total == 2
 
-    def test_files_complete_after_counts_each_file_once(self):
+    def test_files_fully_reviewed_counts_each_file_once(self):
         diff = "".join(file_diff(f"f{i}.py", 150) for i in range(6))
         result = chunk_diff(diff, 8000, 50)
-        assert result.files_complete_after[-1] == 6
-        assert result.files_complete_after == sorted(result.files_complete_after)
+        everything = set(range(len(result.chunks)))
+        counts = [
+            result.files_fully_reviewed(set(range(k))) for k in range(len(result.chunks) + 1)
+        ]
+        assert result.files_fully_reviewed(everything) == len(result.complete_file_chunks) == 6
+        assert counts[0] == 0 and counts[-1] == 6 and counts == sorted(counts)
 
     def test_absurd_hunk_line_numbers_still_fit_the_chunk_size(self):
         huge = "9" * 80
@@ -502,7 +506,7 @@ class TestWholePrReview:
         assert f"reviewed {chunked.chunk_chars[0]:,} of them" in reason
         assert f"(1 of {chunked.chunks_needed} diff parts" in reason
         assert "LLM_MAX_DIFF_CHUNKS" in reason and "LLM_REVIEW_BUDGET_SECONDS" in reason
-        not_fully = chunked.files_total - chunked.files_complete_after[0]
+        not_fully = chunked.files_total - chunked.files_fully_reviewed({0})
         assert f"and {not_fully} file(s) were not fully reviewed" in reason
         assert result.diff_chars_reviewed_by_llm == chunked.chunk_chars[0]
 
@@ -521,8 +525,9 @@ class TestWholePrReview:
         assert [
             len(prompts[r]) for r in (Role.SECURITY, Role.PERFORMANCE, Role.BEST_PRACTICES)
         ] == [1, 1, 1]
-        # Only the part that was sent counts towards coverage
-        assert result.diff_chars_reviewed_by_llm == chunked.chunk_chars[0]
+        # The only part sent was refused by every step, so nothing was reviewed
+        assert result.diff_chars_reviewed_by_llm == 0
+        assert result.diff_truncated is True
         assert result.status == AnalysisStatus.FAILED
 
     @pytest.mark.asyncio
@@ -546,9 +551,10 @@ class TestWholePrReview:
             len(prompts[r]) for r in (Role.SECURITY, Role.PERFORMANCE, Role.BEST_PRACTICES)
         ] == [2, 2, 2]
         assert result.diff_truncated is True
-        assert result.diff_chars_reviewed_by_llm == sum(chunked.chunk_chars[:2])
+        # Part 2 was sent but no step succeeded on it, so only part 1 counts
+        assert result.diff_chars_reviewed_by_llm == chunked.chunk_chars[0]
         reason = next(r for r in result.incomplete_reasons if "diff parts, stopped by" in r)
-        assert f"(2 of {chunked.chunks_needed} diff parts" in reason
+        assert f"(1 of {chunked.chunks_needed} diff parts" in reason
         assert "rate-limited" in reason
         assert result.status == AnalysisStatus.INCOMPLETE
         assert result.approval_recommendation not in APPROVING
@@ -571,6 +577,110 @@ class TestWholePrReview:
         for prompt in prompts[Role.SECURITY]:
             diff_part = prompt.split("```diff\n", 1)[1].rsplit("\n```", 1)[0]
             assert len(diff_part) <= MAX_DIFF_CHARS
+
+
+class TestCoverageCountsOnlyReviewedParts:
+    """S1: a chunk on which every findings step failed was not reviewed."""
+
+    FINDINGS_ROLES = (Role.SECURITY, Role.PERFORMANCE, Role.BEST_PRACTICES)
+
+    @staticmethod
+    def six_files():
+        diff = "".join(file_diff(f"f{i}.py", 150) for i in range(6))
+        chunked = chunk_diff(diff, MAX_DIFF_CHARS, settings.LLM_MAX_DIFF_CHUNKS)
+        assert not chunked.capped and len(chunked.chunks) > 3
+        return diff, chunked
+
+    @staticmethod
+    def files_touched_by(chunk: str) -> set[str]:
+        return set(re.findall(r"^diff --git a/(\S+) ", chunk, re.MULTILINE))
+
+    @pytest.mark.parametrize("failed_call", [1, 2, "last"])
+    @pytest.mark.parametrize("error", [LLMOutputError("bad"), LLMRateLimitError("limited")])
+    @pytest.mark.asyncio
+    async def test_a_part_every_step_failed_on_is_not_counted(self, failed_call, error):
+        diff, chunked = self.six_files()
+        total = len(chunked.chunks)
+        call = total if failed_call == "last" else failed_call
+        analyzer, github, prompts = analyzer_over(
+            diff, fail_on={role: (call, error) for role in self.FINDINGS_ROLES}
+        )
+
+        result = await run(analyzer, github)
+
+        # A rate limit stops every step, so nothing after the failed part is sent
+        limited = isinstance(error, LLMRateLimitError)
+        sent = call if limited else total
+        assert len(prompts[Role.SECURITY]) == sent
+        good = [i for i in range(sent) if i != call - 1]
+        reviewed = sum(chunked.chunk_chars[i] for i in good)
+        assert result.diff_chars_reviewed_by_llm == reviewed
+        assert result.diff_truncated is True
+        reason = next(r for r in result.incomplete_reasons if "characters in" in r)
+        assert f"reviewed {reviewed:,} of them ({len(good)} of {total} diff parts" in reason
+        assert "no step succeeded on 1 part(s)" in reason
+        assert ("rate-limited" in reason) is (limited and call < total)
+        # A file with any text in a failed or unsent part was not fully reviewed. Every
+        # part of a file starts with its header, so the headers name the files in a part.
+        missed = self.files_touched_by(chunked.chunks[call - 1])
+        for i in range(sent, total):
+            missed |= self.files_touched_by(chunked.chunks[i])
+        assert f"and {len(missed)} file(s) were not fully reviewed" in reason
+        assert result.status == (
+            AnalysisStatus.FAILED if not good else AnalysisStatus.INCOMPLETE
+        )
+        assert result.approval_recommendation not in APPROVING
+
+    @pytest.mark.asyncio
+    async def test_all_steps_failing_on_the_last_of_two_parts(self):
+        """The reviewer's probe: it used to report 100% coverage."""
+        chunked = chunk_diff(LONG_DIFF, MAX_DIFF_CHARS, settings.LLM_MAX_DIFF_CHUNKS)
+        assert len(chunked.chunks) == 2
+        error = LLMOutputError("bad output")
+        analyzer, github, _ = analyzer_over(
+            LONG_DIFF, fail_on={role: (2, error) for role in self.FINDINGS_ROLES}
+        )
+
+        result = await run(analyzer, github)
+
+        assert result.diff_chars_reviewed_by_llm == chunked.chunk_chars[0]
+        assert result.diff_chars_reviewed_by_llm < result.diff_chars_total
+        assert result.diff_truncated is True
+        assert any("(1 of 2 diff parts" in r for r in result.incomplete_reasons)
+        assert result.status == AnalysisStatus.INCOMPLETE
+        assert result.approval_recommendation == ApprovalRecommendation.INCOMPLETE
+
+    @pytest.mark.asyncio
+    async def test_when_every_part_fails_the_numbers_are_zero_and_the_steps_explain(self):
+        error = LLMOutputError("bad output")
+        analyzer, github, _ = analyzer_over(
+            LONG_DIFF, fail_on={role: error for role in self.FINDINGS_ROLES}
+        )
+
+        result = await run(analyzer, github)
+
+        assert result.diff_chars_reviewed_by_llm == 0
+        assert result.diff_truncated is True
+        # One reason per step; no extra coverage sentence
+        assert len(result.incomplete_reasons) == 3
+        assert all("analysis failed (LLMOutputError)" in r for r in result.incomplete_reasons)
+        assert result.status == AnalysisStatus.FAILED
+        assert result.approval_recommendation == ApprovalRecommendation.INCOMPLETE
+
+    @pytest.mark.asyncio
+    async def test_one_successful_step_is_enough_to_count_a_part(self):
+        error = LLMOutputError("bad output")
+        analyzer, github, _ = analyzer_over(
+            LONG_DIFF,
+            fail_on={Role.SECURITY: (2, error), Role.PERFORMANCE: (2, error)},
+        )
+
+        result = await run(analyzer, github)
+
+        assert result.diff_chars_reviewed_by_llm == len(LONG_DIFF)
+        assert result.diff_truncated is False
+        assert not any("characters in" in r for r in result.incomplete_reasons)
+        assert result.status == AnalysisStatus.INCOMPLETE
 
 
 class TestConfig:

@@ -49,12 +49,16 @@ class DiffChunks:
     chunks_needed: int
     # Original diff characters in each chunk (repeated headers not counted)
     chunk_chars: list[int]
-    # Files fully reviewed once chunks 0..k have run, for each kept chunk k
-    files_complete_after: list[int]
+    # For each file wholly inside the kept chunks, the chunks that hold its text
+    complete_file_chunks: list[frozenset[int]]
 
     @property
     def capped(self) -> bool:
         return self.chars_reviewed < self.chars_total
+
+    def files_fully_reviewed(self, reviewed_chunks: set[int]) -> int:
+        """Files whose whole text is in `reviewed_chunks` (indices into `chunks`)."""
+        return sum(held <= reviewed_chunks for held in self.complete_file_chunks)
 
 
 @dataclass(frozen=True)
@@ -209,7 +213,8 @@ def chunk_diff(diff: str, max_chars: int, max_chunks: int) -> DiffChunks:
     if len(diff) <= max_chars:
         # One prompt holds it all, including an empty diff (reviewed as before)
         return DiffChunks(
-            [diff], len(diff), len(diff), len(sections), 0, 1, [len(diff)], [len(sections)]
+            [diff], len(diff), len(diff), len(sections), 0, 1, [len(diff)],
+            [frozenset({0})] * len(sections),
         )
 
     pieces = [p for i, s in enumerate(sections) for p in _file_pieces(i, s, max_chars)]
@@ -225,15 +230,15 @@ def chunk_diff(diff: str, max_chars: int, max_chunks: int) -> DiffChunks:
     kept = packed[:max_chunks]
     reviewed = sum(p.original_chars for chunk in kept for p in chunk)
     seen_chars: dict[int, int] = {}
-    complete = 0
-    complete_after: list[int] = []
-    for chunk in kept:
+    held_in: dict[int, set[int]] = {}
+    for k, chunk in enumerate(kept):
         for p in chunk:
-            seen = seen_chars.get(p.file_index, 0) + p.original_chars
-            seen_chars[p.file_index] = seen
-            complete += seen == len(sections[p.file_index]) and p.original_chars > 0
-        complete_after.append(complete)
-    not_fully = len(sections) - complete
+            seen_chars[p.file_index] = seen_chars.get(p.file_index, 0) + p.original_chars
+            held_in.setdefault(p.file_index, set()).add(k)
+    complete = [
+        frozenset(held_in[i]) for i, seen in seen_chars.items() if seen == len(sections[i])
+    ]
+    not_fully = len(sections) - len(complete)
     return DiffChunks(
         chunks=["".join(p.text for p in chunk) for chunk in kept],
         chars_total=len(diff),
@@ -242,5 +247,5 @@ def chunk_diff(diff: str, max_chars: int, max_chunks: int) -> DiffChunks:
         files_not_fully_reviewed=not_fully,
         chunks_needed=len(packed),
         chunk_chars=[sum(p.original_chars for p in chunk) for chunk in kept],
-        files_complete_after=complete_after,
+        complete_file_chunks=complete,
     )
