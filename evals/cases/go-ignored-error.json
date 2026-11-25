@@ -14,8 +14,8 @@
       "title": "Write error is discarded",
       "file": "internal/settings/save.go",
       "lines": [
-        10,
-        10
+        13,
+        13
       ],
       "keywords": [
         "ignored",

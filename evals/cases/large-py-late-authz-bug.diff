@@ -363,7 +363,7 @@ diff --git a/reports/columns.py b/reports/columns.py
 diff --git a/reports/admin_actions.py b/reports/admin_actions.py
 --- a/reports/admin_actions.py
 +++ b/reports/admin_actions.py
-@@ -0,0 +1,10 @@
+@@ -0,0 +1,12 @@
 +from reports.store import reports
 +
 +
@@ -372,5 +372,7 @@ diff --git a/reports/admin_actions.py b/reports/admin_actions.py
 +    report = reports.get(report_id)
 +    if current_user is None:
 +        raise PermissionError("sign in first")
++    if report is None:
++        raise LookupError("no such report")
 +    reports.delete(report.id)
 +    return {"deleted": report.id}

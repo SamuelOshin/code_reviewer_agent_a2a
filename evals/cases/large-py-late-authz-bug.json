@@ -19,8 +19,8 @@
       "title": "Any user can delete any report",
       "file": "reports/admin_actions.py",
       "lines": [
-        9,
-        9
+        11,
+        11
       ],
       "keywords": [
         "authoriz",
