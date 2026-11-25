@@ -29,7 +29,8 @@ async def handle_a2a_task(request: Request):
     A2A task endpoint
 
     Accepts:
-    1. JSON-RPC 2.0 requests with method SendMessage (A2A v1.0) or message/send (A2A v0.3)
+    1. JSON-RPC 2.0 requests (SendMessage / message/send; any other method gets the
+       same JSON-RPC error as /rpc)
     2. Simple requests of the form {"message": "<text>"}, converted to message/send
 
     Args:
@@ -48,8 +49,11 @@ async def handle_a2a_task(request: Request):
     if not isinstance(body, dict):
         raise HTTPException(status_code=422, detail="Invalid request format: expected a JSON object")
 
-    if body.get("jsonrpc") == "2.0" and body.get("method") in ("message/send", "SendMessage"):
-        logger.info("Detected JSON-RPC %s request, forwarding to RPC handler", body.get("method"))
+    method = body.get("method")
+    if body.get("jsonrpc") == "2.0" and isinstance(method, str):
+        # Any method goes to the same handler as /rpc, so unknown methods get the
+        # JSON-RPC -32601 error (the advertised endpoint must not 422 GetTask etc.)
+        logger.info("Detected JSON-RPC %s request, forwarding to RPC handler", method)
         jsonrpc_request = body
     elif isinstance(body.get("message"), str):
         logger.info("Detected simple message request, converting to JSON-RPC message/send")
@@ -74,7 +78,7 @@ async def handle_a2a_task(request: Request):
     else:
         raise HTTPException(
             status_code=422,
-            detail="Invalid request format: expected JSON-RPC SendMessage/message/send or {\"message\": \"<text>\"}"
+            detail="Invalid request format: expected a JSON-RPC 2.0 request or {\"message\": \"<text>\"}"
         )
 
     rpc_handler = getattr(request.app.state, "jsonrpc_handler", None)
